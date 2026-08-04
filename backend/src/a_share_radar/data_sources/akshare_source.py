@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import math
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
@@ -8,10 +9,30 @@ from zoneinfo import ZoneInfo
 import akshare as ak
 import pandas as pd
 
-from a_share_radar.domain.models import Bar, Market, QualityStatus, QuoteSnapshot, Stock
+from a_share_radar.domain.models import (
+    Bar,
+    BarFetchBatch,
+    Market,
+    QualityStatus,
+    QuoteSnapshot,
+    Stock,
+)
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 logger = logging.getLogger(__name__)
+
+
+async def _run_provider_thread[Result](
+    function: Callable[..., Result], *args: object, **kwargs: object
+) -> Result:
+    worker = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        await asyncio.wait({worker})
+        if error := worker.exception():
+            logger.error("取消期间 AKShare 线程执行失败", exc_info=error)
+        raise
 
 
 def _number(value: object) -> float | None:
@@ -51,6 +72,45 @@ def _bar_is_complete(period: str, bar_time: datetime, acquired_at: datetime) -> 
     if period == "1mo":
         return (bar_time.year, bar_time.month) < (acquired_at.year, acquired_at.month)
     return True
+
+
+def _restamp_bars(bars: list[Bar], acquired_at: datetime) -> list[Bar]:
+    stamped: list[Bar] = []
+    for bar in bars:
+        complete = _bar_is_complete(
+            bar.period, bar.bar_time, acquired_at.astimezone(SHANGHAI)
+        )
+        stamped.append(
+            replace(
+                bar,
+                acquired_at=acquired_at,
+                is_complete=complete,
+                quality_status=(
+                    bar.quality_status if complete else QualityStatus.PARTIAL
+                ),
+            )
+        )
+    return stamped
+
+
+def _bar_batch(
+    bars: list[Bar], acquired_at: datetime, source: str, raw_row_count: int
+) -> BarFetchBatch:
+    invalid_row_count = max(0, raw_row_count - len(bars))
+    quality_status = (
+        QualityStatus.PARTIAL
+        if invalid_row_count > 0
+        or any(bar.quality_status is not QualityStatus.OK for bar in bars)
+        else QualityStatus.OK
+    )
+    return BarFetchBatch(
+        bars=tuple(bars),
+        acquired_at=acquired_at,
+        source=source,
+        quality_status=quality_status,
+        raw_row_count=raw_row_count,
+        invalid_row_count=invalid_row_count,
+    )
 
 
 class AkshareSource:
@@ -107,11 +167,28 @@ class AkshareSource:
         result: list[Bar] = []
         batch_is_partial = False
         for row in frame.to_dict("records"):
-            bar_time = pd.Timestamp(row["时间"]).to_pydatetime().replace(tzinfo=SHANGHAI)
-            open_price = float(row["开盘"])
-            high_price = float(row["最高"])
-            low_price = float(row["最低"])
-            close_price = float(row["收盘"])
+            try:
+                bar_time = pd.Timestamp(row["时间"]).to_pydatetime().replace(
+                    tzinfo=SHANGHAI
+                )
+                open_price = float(row["开盘"])
+                high_price = float(row["最高"])
+                low_price = float(row["最低"])
+                close_price = float(row["收盘"])
+                volume = _shares_from_lots(row["成交量"])
+                amount = _number(row["成交额"])
+                if (
+                    volume is None
+                    or volume < 0
+                    or amount is None
+                    or not math.isfinite(amount)
+                    or amount < 0
+                ):
+                    raise ValueError("成交量或成交额不合法")
+            except (KeyError, TypeError, ValueError, OverflowError):
+                logger.warning("过滤分钟 K 线字段异常：%s %s", code, row.get("时间"))
+                batch_is_partial = True
+                continue
             if not _valid_ohlc(open_price, high_price, low_price, close_price):
                 logger.warning("过滤分钟 K 线坏柱：%s %s", code, bar_time.isoformat())
                 batch_is_partial = True
@@ -130,8 +207,8 @@ class AkshareSource:
                     high_price=high_price,
                     low_price=low_price,
                     close_price=close_price,
-                    volume=_shares_from_lots(row["成交量"]) or 0,
-                    amount=float(row["成交额"]),
+                    volume=volume,
+                    amount=amount,
                     source=cls.name,
                     is_complete=is_complete,
                     acquired_at=resolved_acquired_at,
@@ -143,7 +220,7 @@ class AkshareSource:
         return result
 
     async def fetch_market_snapshot(self) -> list[QuoteSnapshot]:
-        frame = await asyncio.to_thread(ak.stock_zh_a_spot_em)
+        frame = await _run_provider_thread(ak.stock_zh_a_spot_em)
         return self.normalize_snapshot(frame, datetime.now(SHANGHAI))
 
     async def fetch_stock_master(self) -> list[Stock]:
@@ -151,7 +228,7 @@ class AkshareSource:
         return [Stock(quote.code, quote.market, quote.name) for quote in quotes]
 
     async def fetch_trading_days(self, start: date, end: date) -> set[date]:
-        frame = await asyncio.to_thread(ak.tool_trade_date_hist_sina)
+        frame = await _run_provider_thread(ak.tool_trade_date_hist_sina)
         values = pd.to_datetime(frame["trade_date"]).dt.date
         return {value for value in values if start <= value <= end}
 
@@ -168,13 +245,28 @@ class AkshareSource:
         result: list[Bar] = []
         batch_is_partial = False
         for row in frame.to_dict("records"):
-            bar_time = datetime.combine(
-                pd.Timestamp(row["日期"]).date(), time(15, 0), tzinfo=SHANGHAI
-            )
-            open_price = float(row["开盘"])
-            high_price = float(row["最高"])
-            low_price = float(row["最低"])
-            close_price = float(row["收盘"])
+            try:
+                bar_time = datetime.combine(
+                    pd.Timestamp(row["日期"]).date(), time(15, 0), tzinfo=SHANGHAI
+                )
+                open_price = float(row["开盘"])
+                high_price = float(row["最高"])
+                low_price = float(row["最低"])
+                close_price = float(row["收盘"])
+                volume = _shares_from_lots(row["成交量"])
+                amount = _number(row["成交额"])
+                if (
+                    volume is None
+                    or volume < 0
+                    or amount is None
+                    or not math.isfinite(amount)
+                    or amount < 0
+                ):
+                    raise ValueError("成交量或成交额不合法")
+            except (KeyError, TypeError, ValueError, OverflowError):
+                logger.warning("过滤历史 K 线字段异常：%s %s", code, row.get("日期"))
+                batch_is_partial = True
+                continue
             if not _valid_ohlc(open_price, high_price, low_price, close_price):
                 logger.warning("过滤历史 K 线坏柱：%s %s", code, bar_time.date())
                 batch_is_partial = True
@@ -193,8 +285,8 @@ class AkshareSource:
                     high_price=high_price,
                     low_price=low_price,
                     close_price=close_price,
-                    volume=_shares_from_lots(row["成交量"]) or 0,
-                    amount=float(row["成交额"]),
+                    volume=volume,
+                    amount=amount,
                     source=cls.name,
                     is_complete=is_complete,
                     acquired_at=resolved_acquired_at,
@@ -212,10 +304,10 @@ class AkshareSource:
         end: date,
         period: str,
         adjustment: str,
-    ) -> list[Bar]:
+    ) -> BarFetchBatch:
         provider_period = {"1d": "daily", "1w": "weekly", "1mo": "monthly"}[period]
         provider_adjustment = "" if adjustment == "none" else adjustment
-        frame = await asyncio.to_thread(
+        frame = await _run_provider_thread(
             ak.stock_zh_a_hist,
             symbol=code,
             period=provider_period,
@@ -223,8 +315,17 @@ class AkshareSource:
             end_date=end.strftime("%Y%m%d"),
             adjust=provider_adjustment,
         )
+        provisional_at = datetime.combine(end, time(23, 59, 59), tzinfo=SHANGHAI)
+        normalized = self.normalize_history_bars(
+            code, frame, period, adjustment, acquired_at=provisional_at
+        )
         acquired_at = datetime.now(SHANGHAI)
-        return self.normalize_history_bars(code, frame, period, adjustment, acquired_at=acquired_at)
+        return _bar_batch(
+            _restamp_bars(normalized, acquired_at),
+            acquired_at,
+            self.name,
+            len(frame),
+        )
 
     async def fetch_minute_bars(
         self,
@@ -233,9 +334,9 @@ class AkshareSource:
         end: datetime,
         period: str,
         adjustment: str,
-    ) -> list[Bar]:
+    ) -> BarFetchBatch:
         provider_adjustment = "" if adjustment == "none" else adjustment
-        frame = await asyncio.to_thread(
+        frame = await _run_provider_thread(
             ak.stock_zh_a_hist_min_em,
             symbol=code,
             start_date=start.strftime("%Y-%m-%d %H:%M:%S"),
@@ -243,5 +344,13 @@ class AkshareSource:
             period=period.removesuffix("m"),
             adjust=provider_adjustment,
         )
+        normalized = self.normalize_minute_bars(
+            code, frame, period, adjustment, acquired_at=end.astimezone(SHANGHAI)
+        )
         acquired_at = datetime.now(SHANGHAI)
-        return self.normalize_minute_bars(code, frame, period, adjustment, acquired_at=acquired_at)
+        return _bar_batch(
+            _restamp_bars(normalized, acquired_at),
+            acquired_at,
+            self.name,
+            len(frame),
+        )

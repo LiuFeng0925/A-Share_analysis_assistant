@@ -13,7 +13,19 @@ from a_share_radar.services.bar_service import BarService, HistoryBootstrapper
 TZ = ZoneInfo("Asia/Shanghai")
 
 
+def _trading_days_ending(end: date, count: int) -> list[date]:
+    days: list[date] = []
+    current = end
+    while len(days) < count:
+        if current.weekday() < 5:
+            days.append(current)
+        current -= timedelta(days=1)
+    return sorted(days)
+
+
 async def test_daily_history_requests_sixty_trading_days(repository, fake_source):
+    trading_days = _trading_days_ending(date(2026, 8, 4), 80)
+    repository.replace_trading_days(set(trading_days))
     service = BarService(fake_source, repository, history_days=60)
 
     await service.ensure_daily_history(
@@ -23,14 +35,19 @@ async def test_daily_history_requests_sixty_trading_days(repository, fake_source
     request = fake_source.daily_requests[0]
     assert request.code == "600519"
     assert request.end == date(2026, 8, 4)
-    assert (request.end - request.start).days >= 84
+    assert request.start == trading_days[-60]
 
 
 async def test_daily_history_only_saves_latest_sixty_bars(repository, fake_source):
     template = fake_source.bar_rows[1]
+    trading_days = _trading_days_ending(date(2026, 8, 4), 80)
+    repository.replace_trading_days(set(trading_days))
     fake_source.bar_rows = [
-        replace(template, bar_time=template.bar_time - timedelta(days=offset))
-        for offset in reversed(range(65))
+        replace(
+            template,
+            bar_time=datetime(day.year, day.month, day.day, 15, 0, tzinfo=TZ),
+        )
+        for day in trading_days[-65:]
     ]
     service = BarService(fake_source, repository, history_days=60)
 
@@ -226,6 +243,9 @@ async def test_cancellation_does_not_cancel_shared_repository_thread(
 async def test_daily_history_write_runs_outside_event_loop(
     monkeypatch, repository, fake_source
 ):
+    repository.replace_trading_days(
+        set(_trading_days_ending(date(2026, 8, 4), 80))
+    )
     event_loop_thread = get_ident()
     write_threads: list[int] = []
     original_upsert_bars = repository.upsert_bars

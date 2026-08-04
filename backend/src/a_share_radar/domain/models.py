@@ -73,3 +73,17 @@ class Bar:
                 "quality_status",
                 QualityStatus.OK if self.is_complete else QualityStatus.PARTIAL,
             )
+
+
+@dataclass(frozen=True, slots=True)
+class BarFetchBatch:
+    bars: tuple[Bar, ...]
+    acquired_at: datetime
+    source: str
+    quality_status: QualityStatus
+    raw_row_count: int
+    invalid_row_count: int
+
+    @property
+    def valid_row_count(self) -> int:
+        return len(self.bars)

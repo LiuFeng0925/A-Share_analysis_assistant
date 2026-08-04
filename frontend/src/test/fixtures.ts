@@ -65,6 +65,11 @@ export const dailyBarsFixture: BarSeries = {
   adjustment: "qfq",
   source: "akshare",
   last_updated_at: "2026-08-04T15:00:00+08:00",
+  fetch_quality_status: "ok",
+  last_fetch_at: "2026-08-04T15:10:00+08:00",
+  fetch_raw_row_count: 1,
+  fetch_valid_row_count: 1,
+  fetch_invalid_row_count: 0,
   items: [
     {
       bar_time: "2026-08-01T15:00:00+08:00",

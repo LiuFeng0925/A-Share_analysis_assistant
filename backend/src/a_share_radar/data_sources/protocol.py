@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Protocol
 
-from a_share_radar.domain.models import Bar, QuoteSnapshot, Stock
+from a_share_radar.domain.models import Bar, BarFetchBatch, QuoteSnapshot, Stock
 
 
 class MarketDataSource(Protocol):
@@ -13,7 +13,7 @@ class MarketDataSource(Protocol):
 
     async def fetch_daily_bars(
         self, code: str, start: date, end: date, period: str, adjustment: str
-    ) -> list[Bar]: ...
+    ) -> list[Bar] | BarFetchBatch: ...
 
     async def fetch_minute_bars(
         self,
@@ -22,4 +22,4 @@ class MarketDataSource(Protocol):
         end: datetime,
         period: str,
         adjustment: str,
-    ) -> list[Bar]: ...
+    ) -> list[Bar] | BarFetchBatch: ...

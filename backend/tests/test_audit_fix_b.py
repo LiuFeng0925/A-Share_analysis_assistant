@@ -17,6 +17,16 @@ from a_share_radar.storage.repository import MarketRepository
 TZ = ZoneInfo("Asia/Shanghai")
 
 
+def _trading_days(end: date, count: int) -> list[date]:
+    days: list[date] = []
+    cursor = end
+    while len(days) < count:
+        if cursor.weekday() < 5:
+            days.append(cursor)
+        cursor -= timedelta(days=1)
+    return list(reversed(days))
+
+
 def _daily_bar(day: date, *, complete: bool = True) -> Bar:
     return Bar(
         code="600519",
@@ -94,7 +104,9 @@ def test_database_migrates_legacy_bar_rows(tmp_path: Path):
 
 
 async def test_daily_restart_fetches_only_gap(repository, fake_source):
-    repository.upsert_bars([_daily_bar(date(2026, 8, 3))])
+    trading_days = _trading_days(date(2026, 8, 4), 60)
+    repository.replace_trading_days(set(trading_days))
+    repository.upsert_bars([_daily_bar(day) for day in trading_days[:-1]])
     fake_source.bar_rows = [_daily_bar(date(2026, 8, 4))]
     service = BarService(fake_source, repository, history_days=60)
 
@@ -105,7 +117,9 @@ async def test_daily_restart_fetches_only_gap(repository, fake_source):
 
 
 async def test_daily_restart_skips_up_to_date_stock(repository, fake_source):
-    repository.upsert_bars([_daily_bar(date(2026, 8, 4))])
+    trading_days = _trading_days(date(2026, 8, 4), 60)
+    repository.replace_trading_days(set(trading_days))
+    repository.upsert_bars([_daily_bar(day) for day in trading_days])
     service = BarService(fake_source, repository, history_days=60)
 
     bars = await service.ensure_daily_history(
@@ -181,7 +195,12 @@ async def test_service_preserves_partial_quality_reported_by_source(
 
 
 async def test_daily_query_marks_pre_close_today_as_incomplete(repository, fake_source):
-    fake_source.bar_rows = [_daily_bar(date(2026, 8, 4))]
+    fake_source.bar_rows = [
+        replace(
+            _daily_bar(date(2026, 8, 4)),
+            acquired_at=datetime(2026, 8, 4, 14, 0, tzinfo=TZ),
+        )
+    ]
     service = BarService(fake_source, repository, history_days=60)
 
     bars = await service.get_bars(
@@ -198,7 +217,12 @@ async def test_daily_query_marks_pre_close_today_as_incomplete(repository, fake_
 
 
 async def test_incomplete_daily_tail_is_refreshed_after_ttl(repository, fake_source):
-    fake_source.bar_rows = [_daily_bar(date(2026, 8, 4))]
+    fake_source.bar_rows = [
+        replace(
+            _daily_bar(date(2026, 8, 4)),
+            acquired_at=datetime(2026, 8, 4, 14, 0, tzinfo=TZ),
+        )
+    ]
     service = BarService(fake_source, repository, history_days=60, query_ttl_seconds=0)
     first_now = datetime(2026, 8, 4, 14, 0, tzinfo=TZ)
 

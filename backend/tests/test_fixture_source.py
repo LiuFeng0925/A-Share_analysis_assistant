@@ -5,6 +5,7 @@ from httpx import ASGITransport, AsyncClient
 
 from a_share_radar.config import Settings
 from a_share_radar.data_sources.fixture_source import FixtureSource
+from a_share_radar.domain.models import BarFetchBatch, QualityStatus
 from a_share_radar.main import create_app
 
 TZ = ZoneInfo("Asia/Shanghai")
@@ -80,6 +81,45 @@ async def test_fixture_lifespan_persists_all_data_without_background_jobs(tmp_pa
         assert isinstance(app.state.source, FixtureSource)
         assert app.state.scheduler is None
         assert app.state.history_task is None
+
+
+async def test_fixture_lifespan_accepts_bar_fetch_batches(tmp_path):
+    delegate = FixtureSource()
+
+    class BatchFixtureSource:
+        fetch_stock_master = delegate.fetch_stock_master
+        fetch_trading_days = delegate.fetch_trading_days
+        fetch_market_snapshot = delegate.fetch_market_snapshot
+
+        async def fetch_daily_bars(self, *args):
+            bars = await delegate.fetch_daily_bars(*args)
+            return BarFetchBatch(
+                tuple(bars),
+                delegate.captured_at,
+                "fixture",
+                QualityStatus.OK,
+                len(bars),
+                0,
+            )
+
+        async def fetch_minute_bars(self, *args):
+            bars = await delegate.fetch_minute_bars(*args)
+            return BarFetchBatch(
+                tuple(bars),
+                delegate.captured_at,
+                "fixture",
+                QualityStatus.OK,
+                len(bars),
+                0,
+            )
+
+    app = create_app(
+        settings=Settings(data_dir=tmp_path, fixture_source=True),
+        source=BatchFixtureSource(),
+    )
+
+    async with app.router.lifespan_context(app):
+        assert app.state.repository.data_status().bar_count == 242
 
 
 async def test_fixture_api_ignores_cross_date_wall_clock_and_stays_deterministic(

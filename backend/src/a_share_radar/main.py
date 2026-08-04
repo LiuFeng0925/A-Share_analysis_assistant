@@ -15,6 +15,7 @@ from a_share_radar.config import Settings
 from a_share_radar.data_sources.akshare_source import AkshareSource
 from a_share_radar.data_sources.fixture_source import FixtureSource
 from a_share_radar.data_sources.protocol import MarketDataSource
+from a_share_radar.domain.models import Bar, BarFetchBatch
 from a_share_radar.services.bar_service import BarService, HistoryBootstrapper
 from a_share_radar.services.market_clock import MarketClock
 from a_share_radar.services.scheduler import create_scheduler, shutdown_scheduler
@@ -34,6 +35,10 @@ async def _run_blocking_safely(function, *args, **kwargs):
     except asyncio.CancelledError:
         await worker
         raise
+
+
+def _batch_bars(result: list[Bar] | BarFetchBatch) -> list[Bar]:
+    return list(result.bars) if isinstance(result, BarFetchBatch) else result
 
 
 async def _persist_fixture_data(
@@ -81,7 +86,8 @@ async def _persist_fixture_data(
             "none",
         )
         await _run_blocking_safely(
-            repository.upsert_bars, [*daily_bars, *minute_bars]
+            repository.upsert_bars,
+            [*_batch_bars(daily_bars), *_batch_bars(minute_bars)],
         )
     return trading_days, fixture_now
 

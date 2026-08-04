@@ -78,6 +78,17 @@ class SnapshotCommitResult:
     finished_at: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class BarIngestionAudit:
+    acquired_at: datetime
+    source: str
+    quality_status: str
+    raw_row_count: int
+    valid_row_count: int
+    invalid_row_count: int
+    status: str
+
+
 SORT_COLUMNS = {
     "code": "s.code",
     "latest_price": "q.latest_price",
@@ -414,6 +425,83 @@ class MarketRepository:
                     error_message,
                 ),
             )
+
+    def record_bar_ingestion(
+        self,
+        *,
+        market: Market,
+        code: str,
+        period: str,
+        adjustment: str,
+        started_at: datetime,
+        acquired_at: datetime,
+        source: str,
+        market_time: datetime | None,
+        raw_row_count: int,
+        valid_row_count: int,
+        invalid_row_count: int,
+        status: str,
+        quality_status: str,
+        error_message: str | None = None,
+    ) -> None:
+        with self.database.lock:
+            self.database.connection.execute(
+                """
+                INSERT INTO ingestion_run (
+                  run_id, kind, started_at, finished_at, source, market_time,
+                  expected_row_count, actual_row_count, row_count, status,
+                  quality_status, error_message, market, code, period,
+                  adjustment, invalid_row_count
+                ) VALUES (?, 'bar', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(uuid4()),
+                    started_at,
+                    acquired_at,
+                    source,
+                    market_time,
+                    raw_row_count,
+                    valid_row_count,
+                    valid_row_count,
+                    status,
+                    quality_status,
+                    error_message,
+                    market.value,
+                    code,
+                    period,
+                    adjustment,
+                    invalid_row_count,
+                ),
+            )
+
+    def latest_bar_ingestion(
+        self, market: Market, code: str, period: str, adjustment: str
+    ) -> BarIngestionAudit | None:
+        with self.database.lock:
+            row = self.database.connection.execute(
+                """
+                SELECT CAST(finished_at AS VARCHAR), source, quality_status,
+                       expected_row_count, actual_row_count,
+                       COALESCE(invalid_row_count, 0), status
+                FROM ingestion_run
+                WHERE kind = 'bar' AND market = ? AND code = ?
+                  AND period = ? AND adjustment = ?
+                ORDER BY finished_at DESC NULLS LAST, started_at DESC, run_id DESC
+                LIMIT 1
+                """,
+                (market.value, code, period, adjustment),
+            ).fetchone()
+        if row is None:
+            return None
+        return BarIngestionAudit(
+            acquired_at=datetime.fromisoformat(row[0]),
+            source=row[1],
+            quality_status=row[2],
+            raw_row_count=row[3],
+            valid_row_count=row[4],
+            invalid_row_count=row[5],
+            status=row[6],
+        )
 
     def replace_trading_days(self, trading_days: set[date]) -> None:
         rows = [(trade_date, datetime.now(UTC)) for trade_date in sorted(trading_days)]

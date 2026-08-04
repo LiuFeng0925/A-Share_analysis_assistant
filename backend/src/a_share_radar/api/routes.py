@@ -12,7 +12,7 @@ from a_share_radar.api.schemas import (
     StockPageResponse,
     StockQuoteResponse,
 )
-from a_share_radar.domain.models import Market
+from a_share_radar.domain.models import Market, QualityStatus
 from a_share_radar.services.bar_service import BarQueryValidationError
 
 router = APIRouter(prefix="/api")
@@ -95,14 +95,24 @@ async def stock_bars(
         )
     except BarQueryValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    ingestion = await request.app.state.bar_service.latest_ingestion(
+        market, code, period, resolved_adjustment
+    )
     return BarSeriesResponse(
         market=market,
         code=code,
         period=period,
         range=range_name,
         adjustment=resolved_adjustment,
-        source=bars[-1].source if bars else None,
+        source=bars[-1].source if bars else ingestion.source if ingestion else None,
         last_updated_at=bars[-1].acquired_at if bars else None,
+        fetch_quality_status=(
+            QualityStatus(ingestion.quality_status) if ingestion else None
+        ),
+        last_fetch_at=ingestion.acquired_at if ingestion else None,
+        fetch_raw_row_count=ingestion.raw_row_count if ingestion else None,
+        fetch_valid_row_count=ingestion.valid_row_count if ingestion else None,
+        fetch_invalid_row_count=ingestion.invalid_row_count if ingestion else None,
         items=[BarResponse.model_validate(bar) for bar in bars],
     )
 

@@ -67,6 +67,11 @@ class BarSeriesResponse(AttributeModel):
     adjustment: str
     source: str | None
     last_updated_at: AwareDatetime | None
+    fetch_quality_status: QualityStatus | None
+    last_fetch_at: AwareDatetime | None
+    fetch_raw_row_count: int | None
+    fetch_valid_row_count: int | None
+    fetch_invalid_row_count: int | None
     items: list[BarResponse]
 
 

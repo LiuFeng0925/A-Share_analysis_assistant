@@ -71,7 +71,12 @@ CREATE TABLE IF NOT EXISTS ingestion_run (
   row_count BIGINT NOT NULL DEFAULT 0,
   status VARCHAR NOT NULL,
   quality_status VARCHAR,
-  error_message VARCHAR
+  error_message VARCHAR,
+  market VARCHAR,
+  code VARCHAR,
+  period VARCHAR,
+  adjustment VARCHAR,
+  invalid_row_count BIGINT
 );
 
 CREATE TABLE IF NOT EXISTS market_summary_batch (
@@ -100,6 +105,11 @@ MIGRATION_SQL = (
     "ALTER TABLE ingestion_run ADD COLUMN IF NOT EXISTS quality_status VARCHAR",
     "ALTER TABLE bar_hot ADD COLUMN IF NOT EXISTS acquired_at TIMESTAMPTZ",
     "ALTER TABLE bar_hot ADD COLUMN IF NOT EXISTS quality_status VARCHAR",
+    "ALTER TABLE ingestion_run ADD COLUMN IF NOT EXISTS market VARCHAR",
+    "ALTER TABLE ingestion_run ADD COLUMN IF NOT EXISTS code VARCHAR",
+    "ALTER TABLE ingestion_run ADD COLUMN IF NOT EXISTS period VARCHAR",
+    "ALTER TABLE ingestion_run ADD COLUMN IF NOT EXISTS adjustment VARCHAR",
+    "ALTER TABLE ingestion_run ADD COLUMN IF NOT EXISTS invalid_row_count BIGINT",
     ("UPDATE ingestion_run SET actual_row_count = row_count WHERE actual_row_count IS NULL"),
     "UPDATE bar_hot SET acquired_at = bar_time WHERE acquired_at IS NULL",
     (

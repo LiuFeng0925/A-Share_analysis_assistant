@@ -77,6 +77,11 @@ export interface BarSeries {
   adjustment: Adjustment;
   source: string | null;
   last_updated_at: string | null;
+  fetch_quality_status: QualityStatus | null;
+  last_fetch_at: string | null;
+  fetch_raw_row_count: number | null;
+  fetch_valid_row_count: number | null;
+  fetch_invalid_row_count: number | null;
   items: Bar[];
 }
 
