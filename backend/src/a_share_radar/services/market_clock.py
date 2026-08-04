@@ -8,6 +8,9 @@ class MarketClock:
     def __init__(self, trading_days: set[date]):
         self.trading_days = trading_days
 
+    def replace_trading_days(self, trading_days: set[date]) -> None:
+        self.trading_days = set(trading_days)
+
     def is_open(self, at: datetime) -> bool:
         if at.tzinfo is None or at.utcoffset() is None:
             raise ValueError("市场时间必须包含时区信息")

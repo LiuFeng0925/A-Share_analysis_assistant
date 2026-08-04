@@ -41,3 +41,17 @@ def archive_snapshots(
             return target
         finally:
             temporary.unlink(missing_ok=True)
+
+
+def archive_pending_snapshots(
+    repository: MarketRepository,
+    data_dir: Path,
+    through_date: date,
+) -> dict[date, str]:
+    failures: dict[date, str] = {}
+    for trade_date in repository.pending_snapshot_dates(through_date):
+        try:
+            archive_snapshots(repository, trade_date, data_dir)
+        except Exception as exc:  # noqa: BLE001 - 单日失败不能阻断其他日期补归档
+            failures[trade_date] = str(exc)
+    return failures

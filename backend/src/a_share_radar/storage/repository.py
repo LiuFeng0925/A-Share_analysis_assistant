@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, Literal
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import pyarrow as pa
@@ -62,6 +63,13 @@ class DataStatus:
     snapshot_count: int
     bar_count: int
     latest_captured_at: datetime | None
+    latest_success_at: datetime | None
+    latest_failure_at: datetime | None
+    latest_market_time: datetime | None
+    snapshot_expected_count: int | None
+    snapshot_actual_count: int | None
+    snapshot_coverage_ratio: float | None
+    snapshot_quality_status: str | None
 
 
 SORT_COLUMNS = {
@@ -165,7 +173,23 @@ class MarketRepository:
                 connection.execute(
                     f"""
                     INSERT OR REPLACE INTO latest_quote
-                    SELECT batch.* EXCLUDE (batch_row)
+                    SELECT
+                      batch.market,
+                      batch.code,
+                      batch.captured_at,
+                      COALESCE(batch.latest_price, current.latest_price),
+                      COALESCE(batch.change_percent, current.change_percent),
+                      COALESCE(batch.change_amount, current.change_amount),
+                      COALESCE(batch.open_price, current.open_price),
+                      COALESCE(batch.high_price, current.high_price),
+                      COALESCE(batch.low_price, current.low_price),
+                      COALESCE(batch.previous_close, current.previous_close),
+                      COALESCE(batch.volume, current.volume),
+                      COALESCE(batch.amount, current.amount),
+                      COALESCE(batch.turnover_rate, current.turnover_rate),
+                      COALESCE(batch.total_market_cap, current.total_market_cap),
+                      batch.source,
+                      batch.quality_status
                     FROM (
                         SELECT *, ROW_NUMBER() OVER (
                             PARTITION BY market, code
@@ -191,6 +215,105 @@ class MarketRepository:
             finally:
                 if registered:
                     connection.unregister(_SNAPSHOT_BATCH_RELATION)
+
+    def snapshot_expectation(self, minimum_expected_count: int) -> int:
+        with self.database.lock:
+            row = self.database.connection.execute(
+                """
+                SELECT
+                  (SELECT COUNT(*) FROM stock_master),
+                  COALESCE((
+                    SELECT actual_row_count
+                    FROM ingestion_run
+                    WHERE kind = 'snapshot' AND status = 'success'
+                    ORDER BY finished_at DESC NULLS LAST, started_at DESC
+                    LIMIT 1
+                  ), 0)
+                """
+            ).fetchone()
+        return max(minimum_expected_count, int(row[0]), int(row[1]))
+
+    def stock_identities(self) -> set[tuple[Market, str]]:
+        with self.database.lock:
+            rows = self.database.connection.execute(
+                "SELECT market, code FROM stock_master"
+            ).fetchall()
+        return {(Market(row[0]), row[1]) for row in rows}
+
+    def refresh_stock_names(self, quotes: Iterable[QuoteSnapshot]) -> None:
+        rows = [(quote.name, datetime.now(UTC), quote.market.value, quote.code) for quote in quotes]
+        if not rows:
+            return
+        with self.database.lock:
+            self._transactional_executemany(
+                """
+                UPDATE stock_master SET name = ?, updated_at = ?
+                WHERE market = ? AND code = ? AND name <> ?
+                """,
+                [(*row, row[0]) for row in rows],
+            )
+
+    def record_ingestion_run(
+        self,
+        *,
+        kind: str,
+        started_at: datetime,
+        finished_at: datetime,
+        source: str,
+        market_time: datetime | None,
+        expected_row_count: int,
+        actual_row_count: int,
+        status: str,
+        quality_status: str,
+        error_message: str | None = None,
+    ) -> None:
+        with self.database.lock:
+            self.database.connection.execute(
+                """
+                INSERT INTO ingestion_run (
+                  run_id, kind, started_at, finished_at, source, market_time,
+                  expected_row_count, actual_row_count, row_count, status,
+                  quality_status, error_message
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(uuid4()),
+                    kind,
+                    started_at,
+                    finished_at,
+                    source,
+                    market_time,
+                    expected_row_count,
+                    actual_row_count,
+                    actual_row_count,
+                    status,
+                    quality_status,
+                    error_message,
+                ),
+            )
+
+    def replace_trading_days(self, trading_days: set[date]) -> None:
+        rows = [(trade_date, datetime.now(UTC)) for trade_date in sorted(trading_days)]
+        with self.database.lock:
+            connection = self.database.connection
+            connection.execute("BEGIN TRANSACTION")
+            try:
+                connection.execute("DELETE FROM trading_calendar")
+                if rows:
+                    connection.executemany(
+                        "INSERT INTO trading_calendar VALUES (?, ?)", rows
+                    )
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+
+    def list_trading_days(self) -> set[date]:
+        with self.database.lock:
+            rows = self.database.connection.execute(
+                "SELECT trade_date FROM trading_calendar"
+            ).fetchall()
+        return {row[0] for row in rows}
 
     def upsert_bars(self, bars: Iterable[Bar]) -> None:
         rows = [
@@ -312,20 +435,46 @@ class MarketRepository:
         if stale_after_seconds < 0:
             raise ValueError("陈旧阈值不能为负数")
         with self.database.lock:
-            row = self.database.connection.execute(
+            successful_market_time = self.database.connection.execute(
                 """
-                SELECT
-                  COUNT(*),
-                  COUNT(*) FILTER (WHERE q.change_percent > 0),
-                  COUNT(*) FILTER (WHERE q.change_percent < 0),
-                  COUNT(*) FILTER (WHERE q.change_percent = 0),
-                  COALESCE(SUM(q.amount), 0.0),
-                  CAST(MAX(q.captured_at) AS VARCHAR)
-                FROM stock_master s
-                LEFT JOIN latest_quote q
-                  ON q.market = s.market AND q.code = s.code
+                SELECT CAST(market_time AS VARCHAR)
+                FROM ingestion_run
+                WHERE kind = 'snapshot' AND status = 'success'
+                  AND market_time IS NOT NULL
+                ORDER BY finished_at DESC NULLS LAST, started_at DESC
+                LIMIT 1
                 """
             ).fetchone()
+            if successful_market_time is not None:
+                row = self.database.connection.execute(
+                    """
+                    SELECT
+                      COUNT(*),
+                      COUNT(*) FILTER (WHERE change_percent > 0),
+                      COUNT(*) FILTER (WHERE change_percent < 0),
+                      COUNT(*) FILTER (WHERE change_percent = 0),
+                      COALESCE(SUM(amount), 0.0),
+                      CAST(MAX(captured_at) AS VARCHAR)
+                    FROM quote_snapshot_hot
+                    WHERE captured_at = ?
+                    """,
+                    [datetime.fromisoformat(successful_market_time[0])],
+                ).fetchone()
+            else:
+                row = self.database.connection.execute(
+                    """
+                    SELECT
+                      COUNT(*),
+                      COUNT(*) FILTER (WHERE q.change_percent > 0),
+                      COUNT(*) FILTER (WHERE q.change_percent < 0),
+                      COUNT(*) FILTER (WHERE q.change_percent = 0),
+                      COALESCE(SUM(q.amount), 0.0),
+                      CAST(MAX(q.captured_at) AS VARCHAR)
+                    FROM stock_master s
+                    LEFT JOIN latest_quote q
+                      ON q.market = s.market AND q.code = s.code
+                    """
+                ).fetchone()
         last_updated_at = None if row[5] is None else datetime.fromisoformat(row[5])
         stale_before = now - timedelta(seconds=stale_after_seconds)
         return MarketSummary(
@@ -351,12 +500,59 @@ class MarketRepository:
                   CAST((SELECT MAX(captured_at) FROM latest_quote) AS VARCHAR)
                 """
             ).fetchone()
+            latest_success = self.database.connection.execute(
+                """
+                SELECT CAST(finished_at AS VARCHAR), CAST(market_time AS VARCHAR)
+                FROM ingestion_run
+                WHERE kind = 'snapshot' AND status = 'success'
+                ORDER BY finished_at DESC NULLS LAST, started_at DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            latest_failure = self.database.connection.execute(
+                """
+                SELECT CAST(finished_at AS VARCHAR)
+                FROM ingestion_run
+                WHERE kind = 'snapshot' AND status = 'failed'
+                ORDER BY finished_at DESC NULLS LAST, started_at DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            latest_run = self.database.connection.execute(
+                """
+                SELECT expected_row_count, actual_row_count, quality_status
+                FROM ingestion_run
+                WHERE kind = 'snapshot'
+                ORDER BY finished_at DESC NULLS LAST, started_at DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        expected = None if latest_run is None else latest_run[0]
+        actual = None if latest_run is None else latest_run[1]
         return DataStatus(
             stock_count=row[0],
             latest_quote_count=row[1],
             snapshot_count=row[2],
             bar_count=row[3],
             latest_captured_at=None if row[4] is None else datetime.fromisoformat(row[4]),
+            latest_success_at=(
+                None if latest_success is None or latest_success[0] is None
+                else datetime.fromisoformat(latest_success[0])
+            ),
+            latest_failure_at=(
+                None if latest_failure is None or latest_failure[0] is None
+                else datetime.fromisoformat(latest_failure[0])
+            ),
+            latest_market_time=(
+                None if latest_success is None or latest_success[1] is None
+                else datetime.fromisoformat(latest_success[1])
+            ),
+            snapshot_expected_count=expected,
+            snapshot_actual_count=actual,
+            snapshot_coverage_ratio=(
+                None if expected in (None, 0) or actual is None else actual / expected
+            ),
+            snapshot_quality_status=None if latest_run is None else latest_run[2],
         )
 
     def get_bars(
@@ -415,6 +611,19 @@ class MarketRepository:
                 """,
                 [trade_date],
             ).fetchone()[0]
+
+    def pending_snapshot_dates(self, through_date: date) -> list[date]:
+        with self.database.lock:
+            rows = self.database.connection.execute(
+                """
+                SELECT DISTINCT CAST(timezone('Asia/Shanghai', captured_at) AS DATE)
+                FROM quote_snapshot_hot
+                WHERE CAST(timezone('Asia/Shanghai', captured_at) AS DATE) <= ?
+                ORDER BY 1
+                """,
+                [through_date],
+            ).fetchall()
+        return [row[0] for row in rows]
 
     def copy_snapshots_to_parquet(self, trade_date: date, path: Path) -> None:
         with self.database.lock:

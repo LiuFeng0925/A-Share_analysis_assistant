@@ -31,6 +31,7 @@ def create_scheduler(
     clock: MarketClock,
     collector: SnapshotCollector,
     archive_callback: Callable[[], Awaitable[None]],
+    maintenance_callback: Callable[[], Awaitable[None]] | None = None,
 ) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=SHANGHAI)
     jobs_idle = asyncio.Event()
@@ -68,6 +69,10 @@ def create_scheduler(
     async def archive_managed() -> None:
         await run_managed(archive_callback)
 
+    async def maintenance_managed() -> None:
+        if maintenance_callback is not None:
+            await run_managed(maintenance_callback)
+
     scheduler.add_job(
         collect_if_open,
         CronTrigger(minute="*", second=5, timezone=SHANGHAI),
@@ -80,6 +85,13 @@ def create_scheduler(
         max_instances=1,
         coalesce=True,
     )
+    if maintenance_callback is not None:
+        scheduler.add_job(
+            maintenance_managed,
+            CronTrigger(minute="*/30", second=20, timezone=SHANGHAI),
+            max_instances=1,
+            coalesce=True,
+        )
     return scheduler
 
 

@@ -19,12 +19,21 @@ from a_share_radar.services.bar_service import BarService, HistoryBootstrapper
 from a_share_radar.services.market_clock import MarketClock
 from a_share_radar.services.scheduler import create_scheduler, shutdown_scheduler
 from a_share_radar.services.snapshot_collector import SnapshotCollector
-from a_share_radar.storage.archive import archive_snapshots
+from a_share_radar.storage.archive import archive_pending_snapshots
 from a_share_radar.storage.database import Database
 from a_share_radar.storage.repository import MarketRepository
 
 logger = logging.getLogger(__name__)
 SHANGHAI = ZoneInfo("Asia/Shanghai")
+
+
+async def _run_blocking_safely(function, *args, **kwargs):
+    worker = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        await worker
+        raise
 
 
 async def _persist_fixture_data(
@@ -38,8 +47,8 @@ async def _persist_fixture_data(
     if fixture_now.tzinfo is None or fixture_now.utcoffset() is None:
         raise RuntimeError("固定数据源的行情快照时间必须包含时区")
     fixture_date = fixture_now.astimezone(SHANGHAI).date()
-    repository.upsert_stocks(stocks)
-    repository.save_snapshot(snapshots)
+    await _run_blocking_safely(repository.upsert_stocks, stocks)
+    await _run_blocking_safely(repository.save_snapshot, snapshots)
 
     trading_days = await source.fetch_trading_days(
         fixture_date - timedelta(days=370), fixture_date
@@ -59,7 +68,9 @@ async def _persist_fixture_data(
             "1m",
             "none",
         )
-        repository.upsert_bars([*daily_bars, *minute_bars])
+        await _run_blocking_safely(
+            repository.upsert_bars, [*daily_bars, *minute_bars]
+        )
     return trading_days, fixture_now
 
 
@@ -121,7 +132,7 @@ def create_app(
             except Exception:
                 logger.exception("加载股票主数据失败，继续使用本地已有数据")
             else:
-                repository.upsert_stocks(stocks)
+                await _run_blocking_safely(repository.upsert_stocks, stocks)
 
             bootstrapper = HistoryBootstrapper(
                 bar_service,
@@ -132,13 +143,22 @@ def create_app(
             app.state.history_task = history_task
 
             today = resolved_now_provider().date()
+            cached_trading_days = await _run_blocking_safely(
+                repository.list_trading_days
+            )
             try:
                 trading_days = await resolved_source.fetch_trading_days(
                     today - timedelta(days=370), today + timedelta(days=370)
                 )
+                if not trading_days:
+                    raise RuntimeError("上游交易日历为空")
             except Exception:
-                logger.exception("加载交易日失败，本轮按闭市处理")
-                trading_days = set()
+                logger.exception("加载交易日失败，继续使用本地交易日历")
+                trading_days = cached_trading_days
+            else:
+                await _run_blocking_safely(
+                    repository.replace_trading_days, trading_days
+                )
 
             clock = MarketClock(trading_days)
             minimum_expected_count = (
@@ -159,16 +179,63 @@ def create_app(
                 except Exception:
                     logger.exception("首次全市场行情采集失败，继续使用本地已有数据")
 
-            async def archive_later() -> None:
-                trade_date = resolved_now_provider().date()
-                await asyncio.to_thread(
-                    archive_snapshots,
+            def archive_through(now: datetime, *, include_today: bool) -> date:
+                if include_today or now.time() >= time(15, 10):
+                    return now.date()
+                return now.date() - timedelta(days=1)
+
+            async def archive_through_date(through_date: date) -> None:
+                failures = await _run_blocking_safely(
+                    archive_pending_snapshots,
                     repository,
-                    trade_date,
                     resolved_settings.data_dir,
+                    through_date,
+                )
+                for trade_date, error in failures.items():
+                    logger.error("归档 %s 失败，保留热数据等待重试：%s", trade_date, error)
+
+            await archive_through_date(
+                archive_through(resolved_now_provider(), include_today=False)
+            )
+
+            async def archive_later() -> None:
+                await archive_through_date(
+                    archive_through(resolved_now_provider(), include_today=True)
                 )
 
-            scheduler = create_scheduler(clock, collector, archive_later)
+            async def maintenance_later() -> None:
+                now = resolved_now_provider()
+                try:
+                    refreshed_stocks = await resolved_source.fetch_stock_master()
+                except Exception:
+                    logger.exception("刷新股票主数据失败，继续使用本地已有数据")
+                else:
+                    await _run_blocking_safely(
+                        repository.upsert_stocks, refreshed_stocks
+                    )
+
+                try:
+                    refreshed_days = await resolved_source.fetch_trading_days(
+                        now.date() - timedelta(days=370),
+                        now.date() + timedelta(days=370),
+                    )
+                    if not refreshed_days:
+                        raise RuntimeError("上游交易日历为空")
+                except Exception:
+                    logger.exception("刷新交易日历失败，继续使用最近有效值")
+                else:
+                    await _run_blocking_safely(
+                        repository.replace_trading_days, refreshed_days
+                    )
+                    clock.replace_trading_days(refreshed_days)
+
+                await archive_through_date(
+                    archive_through(now, include_today=False)
+                )
+
+            scheduler = create_scheduler(
+                clock, collector, archive_later, maintenance_later
+            )
             app.state.scheduler = scheduler
             scheduler.start()
             yield

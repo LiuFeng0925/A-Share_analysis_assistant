@@ -74,3 +74,10 @@ class DataStatusResponse(AttributeModel):
     snapshot_count: int
     bar_count: int
     latest_captured_at: AwareDatetime | None
+    latest_success_at: AwareDatetime | None
+    latest_failure_at: AwareDatetime | None
+    latest_market_time: AwareDatetime | None
+    snapshot_expected_count: int | None
+    snapshot_actual_count: int | None
+    snapshot_coverage_ratio: float | None
+    snapshot_quality_status: str | None

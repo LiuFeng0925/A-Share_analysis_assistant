@@ -73,6 +73,7 @@ async def test_collector_rejects_duplicate_stock_without_overwriting(repository,
 
 
 async def test_collector_retries_transient_source_errors_exactly(repository, fake_source):
+    repository.upsert_stocks(fake_source.stock_rows)
     fake_source.snapshot_failures = 2
     collector = SnapshotCollector(
         fake_source,
@@ -88,6 +89,7 @@ async def test_collector_retries_transient_source_errors_exactly(repository, fak
 
 
 async def test_collector_does_not_retry_storage_errors(monkeypatch, repository, fake_source):
+    repository.upsert_stocks(fake_source.stock_rows)
     collector = SnapshotCollector(fake_source, repository, minimum_expected_count=2)
 
     def fail_storage(quotes):
@@ -278,7 +280,7 @@ async def test_lifespan_treats_trading_day_failure_as_closed(
             assert app.state.clock.trading_days == set()
 
     assert fake_source.snapshot_requests == 0
-    assert "加载交易日失败，本轮按闭市处理" in caplog.text
+    assert "加载交易日失败，继续使用本地交易日历" in caplog.text
 
 
 async def test_lifespan_continues_when_initial_snapshot_fails(
@@ -315,7 +317,7 @@ async def test_lifespan_skips_initial_snapshot_during_lunch_break(
 async def test_default_database_closes_when_scheduler_creation_fails(
     monkeypatch, tmp_path, fake_source
 ):
-    def fail_scheduler_creation(clock, collector, archive_callback):
+    def fail_scheduler_creation(clock, collector, archive_callback, maintenance_callback):
         raise RuntimeError("模拟调度器创建失败")
 
     set_fixed_now(monkeypatch, datetime(2026, 8, 4, 12, 0, tzinfo=TZ))
@@ -343,7 +345,7 @@ async def test_default_database_closes_when_scheduler_start_fails(
     monkeypatch.setattr(
         main_module,
         "create_scheduler",
-        lambda clock, collector, archive_callback: StartFailureScheduler(),
+        lambda clock, collector, archive_callback, maintenance_callback: StartFailureScheduler(),
     )
     settings = Settings(data_dir=tmp_path / "启动失败")
     app = main_module.create_app(settings=settings, source=fake_source)

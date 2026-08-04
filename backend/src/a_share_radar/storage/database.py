@@ -63,11 +63,31 @@ CREATE TABLE IF NOT EXISTS ingestion_run (
   started_at TIMESTAMPTZ NOT NULL,
   finished_at TIMESTAMPTZ,
   source VARCHAR NOT NULL,
+  market_time TIMESTAMPTZ,
+  expected_row_count BIGINT,
+  actual_row_count BIGINT,
   row_count BIGINT NOT NULL DEFAULT 0,
   status VARCHAR NOT NULL,
+  quality_status VARCHAR,
   error_message VARCHAR
 );
+
+CREATE TABLE IF NOT EXISTS trading_calendar (
+  trade_date DATE PRIMARY KEY,
+  updated_at TIMESTAMPTZ NOT NULL
+);
 """
+
+MIGRATION_SQL = (
+    "ALTER TABLE ingestion_run ADD COLUMN IF NOT EXISTS market_time TIMESTAMPTZ",
+    "ALTER TABLE ingestion_run ADD COLUMN IF NOT EXISTS expected_row_count BIGINT",
+    "ALTER TABLE ingestion_run ADD COLUMN IF NOT EXISTS actual_row_count BIGINT",
+    "ALTER TABLE ingestion_run ADD COLUMN IF NOT EXISTS quality_status VARCHAR",
+    (
+        "UPDATE ingestion_run SET actual_row_count = row_count "
+        "WHERE actual_row_count IS NULL"
+    ),
+)
 
 
 class Database:
@@ -80,6 +100,8 @@ class Database:
     def initialize(self) -> None:
         with self.lock:
             self.connection.execute(SCHEMA_SQL)
+            for statement in MIGRATION_SQL:
+                self.connection.execute(statement)
 
     def close(self) -> None:
         with self.lock:

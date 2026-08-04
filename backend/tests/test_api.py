@@ -156,13 +156,32 @@ async def test_data_status_returns_storage_counts(app_with_fixture_data):
     response = await get(app_with_fixture_data, "/api/system/data-status")
 
     assert response.status_code == 200
-    assert response.json() == {
+    body = response.json()
+    assert {
+        key: body[key]
+        for key in (
+            "stock_count",
+            "latest_quote_count",
+            "snapshot_count",
+            "bar_count",
+            "latest_captured_at",
+        )
+    } == {
         "stock_count": 2,
         "latest_quote_count": 2,
         "snapshot_count": 2,
         "bar_count": 2,
         "latest_captured_at": "2026-08-04T10:31:00+08:00",
     }
+    assert {
+        "latest_success_at",
+        "latest_failure_at",
+        "latest_market_time",
+        "snapshot_expected_count",
+        "snapshot_actual_count",
+        "snapshot_coverage_ratio",
+        "snapshot_quality_status",
+    } <= set(body)
 
 
 @pytest.mark.parametrize(
