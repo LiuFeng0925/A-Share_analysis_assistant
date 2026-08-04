@@ -660,13 +660,38 @@ class BarService:
                 raise TypeError("分钟 K 线范围必须使用时间")
             duration_minutes = int(period.removesuffix("m"))
             localized_end = BarService._as_shanghai_time(end)
-            bucket_start = localized_end.replace(
-                minute=localized_end.minute
-                - localized_end.minute % duration_minutes,
-                second=0,
-                microsecond=0,
+            if localized_end.date() < acquired_at.date():
+                return True
+            if localized_end.date() > acquired_at.date():
+                return False
+
+            morning_start = datetime.combine(
+                localized_end.date(), time(9, 30), tzinfo=SHANGHAI
             )
-            return bucket_start + timedelta(minutes=duration_minutes) <= acquired_at
+            morning_end = datetime.combine(
+                localized_end.date(), time(11, 30), tzinfo=SHANGHAI
+            )
+            afternoon_start = datetime.combine(
+                localized_end.date(), time(13, 0), tzinfo=SHANGHAI
+            )
+            afternoon_end = datetime.combine(
+                localized_end.date(), time(15, 0), tzinfo=SHANGHAI
+            )
+            if localized_end < morning_start:
+                return False
+            if localized_end < morning_end:
+                bucket_end = BarService._minute_bucket_end(
+                    localized_end, morning_start, duration_minutes
+                )
+                return bucket_end <= acquired_at
+            if localized_end < afternoon_start:
+                return morning_end <= acquired_at
+            if localized_end < afternoon_end:
+                bucket_end = BarService._minute_bucket_end(
+                    localized_end, afternoon_start, duration_minutes
+                )
+                return bucket_end <= acquired_at
+            return afternoon_end <= acquired_at
 
         if isinstance(end, datetime):
             raise TypeError("历史 K 线范围必须使用日期")
@@ -693,6 +718,18 @@ class BarService:
                 acquired_at.month,
             )
         raise ValueError(f"不支持的历史 K 线周期：{period}")
+
+    @staticmethod
+    def _minute_bucket_end(
+        endpoint: datetime,
+        session_start: datetime,
+        duration_minutes: int,
+    ) -> datetime:
+        elapsed_seconds = (endpoint - session_start).total_seconds()
+        bucket_index = int(elapsed_seconds // (duration_minutes * 60))
+        return session_start + timedelta(
+            minutes=(bucket_index + 1) * duration_minutes
+        )
 
     def _now(self) -> datetime:
         return self._as_shanghai_time(self.now_provider())

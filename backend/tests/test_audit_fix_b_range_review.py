@@ -478,6 +478,143 @@ async def test_dynamic_minute_range_with_data_still_uses_short_expiry(
     ) <= timedelta(seconds=5)
 
 
+async def test_60m_tail_refetches_late_bar_after_session_bucket_closes(
+    repository, fake_source, monkeypatch
+):
+    clock = [datetime(2026, 8, 4, 11, 0, 1, tzinfo=TZ)]
+    calls = 0
+    first_end = datetime(2026, 8, 4, 10, 59, 59, tzinfo=TZ)
+    late_bar = replace(
+        fake_source.bar_rows[0],
+        code="600519",
+        market=Market.SH,
+        period="60m",
+        adjustment="qfq",
+        bar_time=datetime(2026, 8, 4, 10, 30, tzinfo=TZ),
+        acquired_at=datetime(2026, 8, 4, 11, 30, 1, tzinfo=TZ),
+    )
+
+    async def controlled_fetch(code, start, end, period, adjustment):
+        nonlocal calls
+        calls += 1
+        bars = () if calls == 1 else (late_bar,)
+        return BarFetchBatch(
+            bars,
+            clock[0],
+            "fixture",
+            QualityStatus.OK,
+            len(bars),
+            0,
+        )
+
+    monkeypatch.setattr(fake_source, "fetch_minute_bars", controlled_fetch)
+    service = BarService(
+        fake_source,
+        repository,
+        history_days=60,
+        now_provider=lambda: clock[0],
+    )
+
+    await service._fetch_minute_provider(
+        Market.SH,
+        "600519",
+        datetime(2026, 8, 4, 9, 30, tzinfo=TZ),
+        first_end,
+        "60m",
+        "qfq",
+    )
+    with repository.database.lock:
+        checked_text, expires_text = repository.database.connection.execute(
+            "SELECT CAST(checked_at AS VARCHAR), CAST(expires_at AS VARCHAR) "
+            "FROM bar_range_check WHERE range_end = ?",
+            (first_end,),
+        ).fetchone()
+    first_ttl = datetime.fromisoformat(expires_text) - datetime.fromisoformat(
+        checked_text
+    )
+
+    clock[0] = datetime(2026, 8, 4, 11, 30, 1, tzinfo=TZ)
+    await service._fetch_minute_provider(
+        Market.SH,
+        "600519",
+        datetime(2026, 8, 4, 10, 30, tzinfo=TZ),
+        clock[0],
+        "60m",
+        "qfq",
+    )
+    saved = repository.get_bars(
+        Market.SH,
+        "600519",
+        "60m",
+        datetime(2026, 8, 4, 9, 30, tzinfo=TZ),
+        clock[0],
+        "qfq",
+    )
+
+    assert first_ttl <= timedelta(seconds=5)
+    assert calls == 2
+    assert [bar.bar_time for bar in saved] == [late_bar.bar_time]
+
+
+@pytest.mark.parametrize("period", ["5m", "15m", "30m", "60m"])
+@pytest.mark.parametrize(
+    ("range_end", "acquired_at", "expected_long_ttl"),
+    [
+        (
+            datetime(2026, 8, 4, 9, 30, 1, tzinfo=TZ),
+            datetime(2026, 8, 4, 9, 30, 1, tzinfo=TZ),
+            False,
+        ),
+        (
+            datetime(2026, 8, 4, 11, 29, 59, tzinfo=TZ),
+            datetime(2026, 8, 4, 11, 30, 1, tzinfo=TZ),
+            True,
+        ),
+        (
+            datetime(2026, 8, 4, 12, 0, tzinfo=TZ),
+            datetime(2026, 8, 4, 12, 0, 1, tzinfo=TZ),
+            True,
+        ),
+        (
+            datetime(2026, 8, 4, 13, 0, 1, tzinfo=TZ),
+            datetime(2026, 8, 4, 13, 0, 1, tzinfo=TZ),
+            False,
+        ),
+        (
+            datetime(2026, 8, 4, 14, 59, 59, tzinfo=TZ),
+            datetime(2026, 8, 4, 15, 0, 1, tzinfo=TZ),
+            True,
+        ),
+    ],
+)
+def test_minute_range_expiry_uses_a_share_trading_sessions(
+    period,
+    range_end,
+    acquired_at,
+    expected_long_ttl,
+    repository,
+    fake_source,
+):
+    service = BarService(
+        fake_source,
+        repository,
+        history_days=60,
+        query_ttl_seconds=2,
+        range_recheck_seconds=7 * 24 * 60 * 60,
+    )
+
+    expires_at = service._range_expires_at(
+        "minute",
+        period,
+        range_end,
+        acquired_at,
+        QualityStatus.OK,
+    )
+
+    expected_seconds = 7 * 24 * 60 * 60 if expected_long_ttl else 2
+    assert expires_at - acquired_at == timedelta(seconds=expected_seconds)
+
+
 async def test_partial_range_is_persisted_idempotently_and_retried_after_restart(
     repository, fake_source, monkeypatch
 ):
