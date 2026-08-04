@@ -248,14 +248,20 @@ async def test_successful_empty_range_survives_restart_but_expires_for_later_dat
     await second.close()
 
     with repository.database.lock:
-        empty_status = repository.database.connection.execute(
-            "SELECT status FROM bar_range_check"
-        ).fetchone()[0]
+        empty_status, checked_at_text, expires_at_text = (
+            repository.database.connection.execute(
+                "SELECT status, CAST(checked_at AS VARCHAR), "
+                "CAST(expires_at AS VARCHAR) FROM bar_range_check"
+            ).fetchone()
+        )
     assert empty_status == "success_empty"
+    checked_at = datetime.fromisoformat(checked_at_text)
+    expires_at = datetime.fromisoformat(expires_at_text)
+    assert expires_at - checked_at >= timedelta(days=6)
 
     with repository.database.lock:
         repository.database.connection.execute(
-            "UPDATE bar_range_check SET checked_at = ?",
+            "UPDATE bar_range_check SET expires_at = ?",
             (datetime.now(TZ) - timedelta(days=8),),
         )
     returned_bars.append(
@@ -270,6 +276,206 @@ async def test_successful_empty_range_survives_restart_but_expires_for_later_dat
 
     assert calls == 2
     assert [bar.bar_time.date() for bar in bars] == [date(2026, 7, 15)]
+
+
+async def test_morning_empty_daily_range_is_refetched_at_daily_close(
+    repository, fake_source, monkeypatch
+):
+    trading_days: list[date] = []
+    cursor = date(2026, 8, 4)
+    while len(trading_days) < 80:
+        if cursor.weekday() < 5:
+            trading_days.append(cursor)
+        cursor -= timedelta(days=1)
+    trading_days.reverse()
+    repository.replace_trading_days(set(trading_days))
+    clock = [datetime(2026, 8, 4, 10, 0, tzinfo=TZ)]
+    calls = 0
+    formal_bar = replace(
+        fake_source.bar_rows[1],
+        bar_time=datetime(2026, 8, 4, 15, 0, tzinfo=TZ),
+        acquired_at=datetime(2026, 8, 4, 15, 20, tzinfo=TZ),
+    )
+
+    async def controlled_fetch(code, start, end, period, adjustment):
+        nonlocal calls
+        calls += 1
+        bars = () if calls == 1 else (formal_bar,)
+        return BarFetchBatch(
+            bars,
+            clock[0],
+            "fixture",
+            QualityStatus.OK,
+            len(bars),
+            0,
+        )
+
+    monkeypatch.setattr(fake_source, "fetch_daily_bars", controlled_fetch)
+    service = BarService(
+        fake_source,
+        repository,
+        history_days=60,
+        now_provider=lambda: clock[0],
+    )
+    stock = Stock("600519", Market.SH, "贵州茅台")
+
+    await service.ensure_daily_history(stock, date(2026, 8, 4))
+    await asyncio.sleep(0)
+    clock[0] = datetime(2026, 8, 4, 15, 20, tzinfo=TZ)
+    bars = await service.ensure_daily_history(stock, date(2026, 8, 4))
+
+    assert calls == 2
+    assert bars[-1].bar_time == formal_bar.bar_time
+
+
+async def test_empty_current_minute_range_refetches_late_bar_on_next_overlap(
+    repository, fake_source, monkeypatch
+):
+    clock = [datetime(2026, 8, 4, 10, 31, 30, tzinfo=TZ)]
+    calls = 0
+    late_bar = replace(
+        fake_source.bar_rows[0],
+        code="600519",
+        market=Market.SH,
+        period="1m",
+        adjustment="none",
+        bar_time=datetime(2026, 8, 4, 10, 31, tzinfo=TZ),
+        acquired_at=datetime(2026, 8, 4, 10, 32, 5, tzinfo=TZ),
+    )
+
+    async def controlled_fetch(code, start, end, period, adjustment):
+        nonlocal calls
+        calls += 1
+        bars = () if calls == 1 else (late_bar,)
+        return BarFetchBatch(
+            bars,
+            clock[0],
+            "fixture",
+            QualityStatus.OK,
+            len(bars),
+            0,
+        )
+
+    monkeypatch.setattr(fake_source, "fetch_minute_bars", controlled_fetch)
+    service = BarService(
+        fake_source,
+        repository,
+        history_days=60,
+        now_provider=lambda: clock[0],
+    )
+
+    await service._fetch_minute_provider(
+        Market.SH,
+        "600519",
+        datetime(2026, 8, 4, 9, 30, tzinfo=TZ),
+        clock[0],
+        "1m",
+        "none",
+    )
+    clock[0] = datetime(2026, 8, 4, 10, 32, 5, tzinfo=TZ)
+    await service._fetch_minute_provider(
+        Market.SH,
+        "600519",
+        datetime(2026, 8, 4, 10, 30, tzinfo=TZ),
+        clock[0],
+        "1m",
+        "none",
+    )
+    saved = repository.get_bars(
+        Market.SH,
+        "600519",
+        "1m",
+        datetime(2026, 8, 4, 9, 30, tzinfo=TZ),
+        clock[0],
+        "none",
+    )
+
+    assert calls == 2
+    assert [bar.bar_time for bar in saved] == [late_bar.bar_time]
+
+
+@pytest.mark.parametrize("period", ["1d", "1w", "1mo"])
+async def test_current_history_range_uses_short_expiry_even_when_empty(
+    period, repository, fake_source, monkeypatch
+):
+    acquired_at = datetime(2026, 8, 4, 10, 0, tzinfo=TZ)
+
+    async def empty_fetch(code, start, end, requested_period, adjustment):
+        return BarFetchBatch(
+            (), acquired_at, "fixture", QualityStatus.OK, 0, 0
+        )
+
+    monkeypatch.setattr(fake_source, "fetch_daily_bars", empty_fetch)
+    service = BarService(
+        fake_source,
+        repository,
+        history_days=60,
+        now_provider=lambda: acquired_at,
+    )
+
+    await service._fetch_daily_provider(
+        Market.SH,
+        "600519",
+        date(2026, 7, 1),
+        acquired_at.date(),
+        period,
+        "qfq",
+    )
+
+    with repository.database.lock:
+        checked_text, expires_text = repository.database.connection.execute(
+            "SELECT CAST(checked_at AS VARCHAR), CAST(expires_at AS VARCHAR) "
+            "FROM bar_range_check"
+        ).fetchone()
+    assert datetime.fromisoformat(expires_text) - datetime.fromisoformat(
+        checked_text
+    ) <= timedelta(seconds=5)
+
+
+async def test_dynamic_minute_range_with_data_still_uses_short_expiry(
+    repository, fake_source, monkeypatch
+):
+    acquired_at = datetime(2026, 8, 4, 10, 31, 30, tzinfo=TZ)
+    complete_bar = replace(
+        fake_source.bar_rows[0],
+        code="600519",
+        market=Market.SH,
+        period="1m",
+        adjustment="none",
+        bar_time=datetime(2026, 8, 4, 10, 30, tzinfo=TZ),
+        acquired_at=acquired_at,
+    )
+
+    async def data_fetch(code, start, end, period, adjustment):
+        return BarFetchBatch(
+            (complete_bar,), acquired_at, "fixture", QualityStatus.OK, 1, 0
+        )
+
+    monkeypatch.setattr(fake_source, "fetch_minute_bars", data_fetch)
+    service = BarService(
+        fake_source,
+        repository,
+        history_days=60,
+        now_provider=lambda: acquired_at,
+    )
+
+    await service._fetch_minute_provider(
+        Market.SH,
+        "600519",
+        datetime(2026, 8, 4, 9, 30, tzinfo=TZ),
+        acquired_at,
+        "1m",
+        "none",
+    )
+
+    with repository.database.lock:
+        checked_text, expires_text = repository.database.connection.execute(
+            "SELECT CAST(checked_at AS VARCHAR), CAST(expires_at AS VARCHAR) "
+            "FROM bar_range_check"
+        ).fetchone()
+    assert datetime.fromisoformat(expires_text) - datetime.fromisoformat(
+        checked_text
+    ) <= timedelta(seconds=5)
 
 
 async def test_partial_range_is_persisted_idempotently_and_retried_after_restart(
@@ -463,8 +669,40 @@ async def test_provider_lock_pool_stays_bounded_for_many_series(
 
 def test_legacy_database_creates_bar_range_check_migration(tmp_path: Path):
     path = tmp_path / "legacy-range.duckdb"
+    checked_at = datetime(2026, 8, 4, 10, 0, tzinfo=TZ)
     connection = duckdb.connect(str(path))
-    connection.execute("CREATE TABLE legacy_marker (value INTEGER)")
+    connection.execute(
+        """
+        CREATE TABLE bar_range_check (
+          market VARCHAR NOT NULL, code VARCHAR NOT NULL,
+          period VARCHAR NOT NULL, adjustment VARCHAR NOT NULL,
+          range_start TIMESTAMPTZ NOT NULL, range_end TIMESTAMPTZ NOT NULL,
+          checked_at TIMESTAMPTZ NOT NULL, source VARCHAR NOT NULL,
+          status VARCHAR NOT NULL, quality_status VARCHAR NOT NULL,
+          raw_row_count BIGINT NOT NULL, valid_row_count BIGINT NOT NULL,
+          invalid_row_count BIGINT NOT NULL,
+          PRIMARY KEY (market, code, period, adjustment, range_start, range_end)
+        )
+        """
+    )
+    connection.execute(
+        "INSERT INTO bar_range_check VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "SH",
+            "600519",
+            "1d",
+            "qfq",
+            datetime(2026, 7, 1, tzinfo=TZ),
+            datetime(2026, 7, 31, 23, 59, 59, tzinfo=TZ),
+            checked_at,
+            "legacy",
+            "success_empty",
+            "ok",
+            0,
+            0,
+            0,
+        ),
+    )
     connection.close()
 
     database = Database(path)
@@ -475,8 +713,16 @@ def test_legacy_database_creates_bar_range_check_migration(tmp_path: Path):
                 "PRAGMA table_info('bar_range_check')"
             ).fetchall()
         }
+        migrated_expiry = datetime.fromisoformat(
+            database.connection.execute(
+                "SELECT CAST(expires_at AS VARCHAR) FROM bar_range_check"
+            ).fetchone()[0]
+        )
     finally:
         database.close()
+
+    reopened = Database(path)
+    reopened.close()
 
     assert {
         "market",
@@ -486,9 +732,11 @@ def test_legacy_database_creates_bar_range_check_migration(tmp_path: Path):
         "range_start",
         "range_end",
         "checked_at",
+        "expires_at",
         "status",
         "quality_status",
     } <= columns
+    assert migrated_expiry == checked_at
 
 
 async def test_snapshot_captured_at_is_assigned_after_normalization(monkeypatch):

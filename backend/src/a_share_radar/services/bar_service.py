@@ -70,6 +70,7 @@ class BarService:
         query_ttl_seconds: float = 2.0,
         query_cache_max_entries: int = 256,
         range_recheck_seconds: float = 7 * 24 * 60 * 60,
+        now_provider: Callable[[], datetime] | None = None,
     ) -> None:
         self.source = source
         self.repository = repository
@@ -81,6 +82,7 @@ class BarService:
             raise ValueError("K 线范围复查间隔必须大于零")
         self.query_cache_max_entries = query_cache_max_entries
         self.range_recheck_seconds = range_recheck_seconds
+        self.now_provider = now_provider or (lambda: datetime.now(SHANGHAI))
         self._inflight: dict[QueryKey, asyncio.Task[list[Bar]]] = {}
         self._daily_inflight: dict[DailyKey, asyncio.Task[list[Bar]]] = {}
         self._provider_inflight: set[asyncio.Task[list[Bar]]] = set()
@@ -451,9 +453,6 @@ class BarService:
     ) -> list[Bar]:
         async with lock:
             range_start, range_end = self._storage_range(kind, start, end)
-            checked_after = datetime.now(SHANGHAI) - timedelta(
-                seconds=self.range_recheck_seconds
-            )
             confirmed = await _run_repository_call(
                 self.repository.list_confirmed_bar_ranges,
                 market,
@@ -462,7 +461,7 @@ class BarService:
                 adjustment,
                 range_start,
                 range_end,
-                checked_after,
+                self._now(),
             )
             confirmed_values = self._restore_ranges(kind, confirmed)
             remaining = self._subtract_confirmed_ranges(
@@ -556,7 +555,7 @@ class BarService:
         end: RangeValue,
         operation: ProviderOperation,
     ) -> list[Bar]:
-        started_at = datetime.now(SHANGHAI)
+        started_at = self._now()
         source_name = str(
             getattr(self.source, "name", self.source.__class__.__name__)
         )
@@ -565,7 +564,7 @@ class BarService:
         except asyncio.CancelledError:
             raise
         except Exception as error:
-            acquired_at = datetime.now(SHANGHAI)
+            acquired_at = self._now()
             range_start, range_end = self._storage_range(kind, start, end)
             await _run_repository_call(
                 self.repository.record_bar_ingestion,
@@ -585,6 +584,7 @@ class BarService:
                 error_message=type(error).__name__,
                 range_start=range_start,
                 range_end=range_end,
+                expires_at=acquired_at,
             )
             raise
 
@@ -601,6 +601,13 @@ class BarService:
         await _run_repository_call(self.repository.upsert_bars, bars)
         market_time = max((bar.bar_time for bar in bars), default=None)
         range_start, range_end = self._storage_range(kind, start, end)
+        expires_at = self._range_expires_at(
+            kind,
+            period,
+            end,
+            batch.acquired_at,
+            quality_status,
+        )
         await _run_repository_call(
             self.repository.record_bar_ingestion,
             market=market,
@@ -619,8 +626,82 @@ class BarService:
             error_message=None,
             range_start=range_start,
             range_end=range_end,
+            expires_at=expires_at,
         )
         return bars
+
+    def _range_expires_at(
+        self,
+        kind: str,
+        period: str,
+        end: RangeValue,
+        acquired_at: datetime,
+        quality_status: QualityStatus,
+    ) -> datetime:
+        acquired_at = self._as_shanghai_time(acquired_at)
+        if quality_status is not QualityStatus.OK:
+            return acquired_at
+        ttl_seconds = (
+            self.range_recheck_seconds
+            if self._is_range_tail_closed(kind, period, end, acquired_at)
+            else self.query_ttl_seconds
+        )
+        return acquired_at + timedelta(seconds=ttl_seconds)
+
+    @staticmethod
+    def _is_range_tail_closed(
+        kind: str,
+        period: str,
+        end: RangeValue,
+        acquired_at: datetime,
+    ) -> bool:
+        if kind == "minute":
+            if not isinstance(end, datetime):
+                raise TypeError("分钟 K 线范围必须使用时间")
+            duration_minutes = int(period.removesuffix("m"))
+            localized_end = BarService._as_shanghai_time(end)
+            bucket_start = localized_end.replace(
+                minute=localized_end.minute
+                - localized_end.minute % duration_minutes,
+                second=0,
+                microsecond=0,
+            )
+            return bucket_start + timedelta(minutes=duration_minutes) <= acquired_at
+
+        if isinstance(end, datetime):
+            raise TypeError("历史 K 线范围必须使用日期")
+        if period == "1d":
+            return end < acquired_at.date() or (
+                end == acquired_at.date() and acquired_at.time() >= time(15, 20)
+            )
+        if period == "1w":
+            endpoint_week = end.isocalendar()[:2]
+            acquired_week = acquired_at.isocalendar()[:2]
+            return endpoint_week < acquired_week or (
+                endpoint_week == acquired_week
+                and (
+                    acquired_at.weekday() > 4
+                    or (
+                        acquired_at.weekday() == 4
+                        and acquired_at.time() >= time(15, 20)
+                    )
+                )
+            )
+        if period == "1mo":
+            return (end.year, end.month) < (
+                acquired_at.year,
+                acquired_at.month,
+            )
+        raise ValueError(f"不支持的历史 K 线周期：{period}")
+
+    def _now(self) -> datetime:
+        return self._as_shanghai_time(self.now_provider())
+
+    @staticmethod
+    def _as_shanghai_time(value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("K 线范围时间必须包含时区")
+        return value.astimezone(SHANGHAI)
 
     @staticmethod
     def _bars_in_requested_range(

@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS bar_range_check (
   range_start TIMESTAMPTZ NOT NULL,
   range_end TIMESTAMPTZ NOT NULL,
   checked_at TIMESTAMPTZ NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
   source VARCHAR NOT NULL,
   status VARCHAR NOT NULL,
   quality_status VARCHAR NOT NULL,
@@ -129,7 +130,9 @@ MIGRATION_SQL = (
     "ALTER TABLE ingestion_run ADD COLUMN IF NOT EXISTS period VARCHAR",
     "ALTER TABLE ingestion_run ADD COLUMN IF NOT EXISTS adjustment VARCHAR",
     "ALTER TABLE ingestion_run ADD COLUMN IF NOT EXISTS invalid_row_count BIGINT",
+    "ALTER TABLE bar_range_check ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ",
     ("UPDATE ingestion_run SET actual_row_count = row_count WHERE actual_row_count IS NULL"),
+    "UPDATE bar_range_check SET expires_at = checked_at WHERE expires_at IS NULL",
     "UPDATE bar_hot SET acquired_at = bar_time WHERE acquired_at IS NULL",
     (
         "UPDATE bar_hot SET quality_status = "

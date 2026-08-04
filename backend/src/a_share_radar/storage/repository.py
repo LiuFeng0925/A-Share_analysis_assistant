@@ -450,6 +450,7 @@ class MarketRepository:
         error_message: str | None = None,
         range_start: datetime | None = None,
         range_end: datetime | None = None,
+        expires_at: datetime | None = None,
     ) -> None:
         with self.database.lock:
             connection = self.database.connection
@@ -491,13 +492,15 @@ class MarketRepository:
                         """
                         INSERT INTO bar_range_check (
                           market, code, period, adjustment, range_start,
-                          range_end, checked_at, source, status, quality_status,
-                          raw_row_count, valid_row_count, invalid_row_count
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                          range_end, checked_at, expires_at, source, status,
+                          quality_status, raw_row_count, valid_row_count,
+                          invalid_row_count
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT (
                           market, code, period, adjustment, range_start, range_end
                         ) DO UPDATE SET
                           checked_at = EXCLUDED.checked_at,
+                          expires_at = EXCLUDED.expires_at,
                           source = EXCLUDED.source,
                           status = EXCLUDED.status,
                           quality_status = EXCLUDED.quality_status,
@@ -513,6 +516,7 @@ class MarketRepository:
                             range_start,
                             range_end,
                             acquired_at,
+                            expires_at or acquired_at,
                             source,
                             range_status,
                             quality_status,
@@ -544,7 +548,7 @@ class MarketRepository:
         adjustment: str,
         range_start: datetime,
         range_end: datetime,
-        checked_after: datetime,
+        at: datetime,
     ) -> list[tuple[datetime, datetime]]:
         with self.database.lock:
             rows = self.database.connection.execute(
@@ -553,7 +557,7 @@ class MarketRepository:
                 FROM bar_range_check
                 WHERE market = ? AND code = ? AND period = ? AND adjustment = ?
                   AND status IN ('success', 'success_empty')
-                  AND quality_status = 'ok' AND checked_at >= ?
+                  AND quality_status = 'ok' AND expires_at > ?
                   AND range_end >= ? AND range_start <= ?
                 ORDER BY range_start, range_end
                 """,
@@ -562,7 +566,7 @@ class MarketRepository:
                     code,
                     period,
                     adjustment,
-                    checked_after,
+                    at,
                     range_start,
                     range_end,
                 ),
