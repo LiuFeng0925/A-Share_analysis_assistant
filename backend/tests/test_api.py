@@ -4,6 +4,9 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
 
+from a_share_radar.config import Settings
+from a_share_radar.main import create_app
+
 
 async def get(app, path, *, params=None, headers=None):
     async with AsyncClient(
@@ -295,7 +298,6 @@ async def test_cors_allows_only_exact_local_frontend_origins(app_with_fixture_da
     allowed_origins = [
         "http://127.0.0.1:5173",
         "http://localhost:5173",
-        "http://127.0.0.1:4173",
     ]
     for origin in allowed_origins:
         response = await get(
@@ -305,10 +307,29 @@ async def test_cors_allows_only_exact_local_frontend_origins(app_with_fixture_da
         )
         assert response.headers["access-control-allow-origin"] == origin
 
+    for rejected_origin in ["http://127.0.0.1:4173", "http://localhost:4173"]:
+        response = await get(
+            app_with_fixture_data,
+            "/api/health",
+            headers={"Origin": rejected_origin},
+        )
+        assert "access-control-allow-origin" not in response.headers
+
+
+async def test_cors_uses_configured_frontend_port_for_both_local_hosts(
+    tmp_path, fake_source
+):
+    app = create_app(
+        settings=Settings(data_dir=tmp_path, frontend_port=15173),
+        source=fake_source,
+    )
+
+    for origin in ["http://127.0.0.1:15173", "http://localhost:15173"]:
+        response = await get(app, "/api/health", headers={"Origin": origin})
+        assert response.headers["access-control-allow-origin"] == origin
+
     response = await get(
-        app_with_fixture_data,
-        "/api/health",
-        headers={"Origin": "http://localhost:4173"},
+        app, "/api/health", headers={"Origin": "http://127.0.0.1:5173"}
     )
     assert "access-control-allow-origin" not in response.headers
 

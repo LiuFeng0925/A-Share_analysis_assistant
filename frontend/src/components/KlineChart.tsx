@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import * as echarts from "echarts";
 import type { ECharts, EChartsOption } from "echarts";
 import type { BarSeries } from "../api/types";
@@ -149,7 +149,16 @@ export function KlineChart({ series }: KlineChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<ECharts | null>(null);
   const zoomRef = useRef<ZoomWindow>({ start: DEFAULT_ZOOM_START, end: DEFAULT_ZOOM_END });
+  const [zoomWindow, setZoomWindow] = useState<ZoomWindow>({
+    start: DEFAULT_ZOOM_START,
+    end: DEFAULT_ZOOM_END,
+  });
   const identityRef = useRef("");
+
+  const commitZoomWindow = useCallback((next: ZoomWindow) => {
+    zoomRef.current = next;
+    setZoomWindow(next);
+  }, []);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -161,7 +170,7 @@ export function KlineChart({ series }: KlineChartProps) {
       const event = rawEvent as DataZoomEvent;
       const next = event.batch?.[0] ?? event;
       if (isFiniteNumber(next.start) && isFiniteNumber(next.end)) {
-        zoomRef.current = { start: next.start, end: next.end };
+        commitZoomWindow({ start: next.start, end: next.end });
       }
     };
     chart.on("datazoom", handleDataZoom);
@@ -176,27 +185,27 @@ export function KlineChart({ series }: KlineChartProps) {
       chart.dispose();
       chartRef.current = null;
     };
-  }, []);
+  }, [commitZoomWindow]);
 
   useEffect(() => {
     const identity = seriesIdentity(series);
     if (identityRef.current !== identity) {
       identityRef.current = identity;
-      zoomRef.current = { start: DEFAULT_ZOOM_START, end: DEFAULT_ZOOM_END };
+      commitZoomWindow({ start: DEFAULT_ZOOM_START, end: DEFAULT_ZOOM_END });
     }
     chartRef.current?.setOption(buildKlineOption(series, zoomRef.current), true);
-  }, [series]);
+  }, [commitZoomWindow, series]);
 
   const updateZoom = useCallback((nextStart: number, nextEnd: number) => {
     const boundedStart = Math.min(95, Math.max(0, nextStart));
     const boundedEnd = Math.min(100, Math.max(boundedStart + 5, nextEnd));
-    zoomRef.current = { start: boundedStart, end: boundedEnd };
+    commitZoomWindow({ start: boundedStart, end: boundedEnd });
     chartRef.current?.dispatchAction({
       type: "dataZoom",
       start: boundedStart,
       end: boundedEnd,
     });
-  }, []);
+  }, [commitZoomWindow]);
 
   const zoomOut = () => {
     const { start, end } = zoomRef.current;
@@ -215,6 +224,15 @@ export function KlineChart({ series }: KlineChartProps) {
         <button type="button" aria-label="缩小 K 线" onClick={zoomOut}>−</button>
         <button type="button" aria-label="显示全部 K 线" onClick={() => updateZoom(0, 100)}>100%</button>
         <button type="button" aria-label="放大 K 线" onClick={zoomIn}>＋</button>
+        <output
+          className="sr-only"
+          aria-label="K 线当前可见区间"
+          data-start={zoomWindow.start}
+          data-end={zoomWindow.end}
+          data-window={zoomWindow.end - zoomWindow.start}
+        >
+          当前显示 {zoomWindow.start}% 至 {zoomWindow.end}%，窗口宽度 {zoomWindow.end - zoomWindow.start}%
+        </output>
       </div>
       <div
         ref={containerRef}

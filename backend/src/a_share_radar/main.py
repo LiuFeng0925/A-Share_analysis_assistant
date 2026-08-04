@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
@@ -27,13 +28,12 @@ SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
 async def _persist_fixture_data(
-    source: MarketDataSource, repository: MarketRepository
+    source: MarketDataSource, repository: MarketRepository, fixture_date: date
 ) -> set[date]:
     stocks = await source.fetch_stock_master()
     repository.upsert_stocks(stocks)
     repository.save_snapshot(await source.fetch_market_snapshot())
 
-    fixture_date = getattr(source, "trade_date", datetime.now(SHANGHAI).date())
     trading_days = await source.fetch_trading_days(
         fixture_date - timedelta(days=370), fixture_date
     )
@@ -60,11 +60,23 @@ def create_app(
     settings: Settings | None = None,
     source: MarketDataSource | None = None,
     database: Database | None = None,
+    now_provider: Callable[[], datetime] | None = None,
 ) -> FastAPI:
     resolved_settings = settings or Settings()
     resolved_source = source or (
         FixtureSource() if resolved_settings.fixture_source else AkshareSource()
     )
+    fixture_now = getattr(resolved_source, "captured_at", None)
+
+    def system_now() -> datetime:
+        return datetime.now(SHANGHAI)
+
+    if resolved_settings.fixture_source and isinstance(fixture_now, datetime):
+        def resolved_now_provider() -> datetime:
+            return fixture_now
+    else:
+        resolved_now_provider = now_provider or system_now
+
     injected_repository = MarketRepository(database) if database is not None else None
     injected_bar_service = (
         BarService(resolved_source, injected_repository, resolved_settings.history_days)
@@ -86,7 +98,9 @@ def create_app(
             app.state.bar_service = bar_service
 
             if resolved_settings.fixture_source:
-                trading_days = await _persist_fixture_data(resolved_source, repository)
+                trading_days = await _persist_fixture_data(
+                    resolved_source, repository, resolved_now_provider().date()
+                )
                 app.state.clock = MarketClock(trading_days)
                 yield
                 return
@@ -106,7 +120,7 @@ def create_app(
             history_task = asyncio.create_task(bootstrapper.run())
             app.state.history_task = history_task
 
-            today = datetime.now(SHANGHAI).date()
+            today = resolved_now_provider().date()
             try:
                 trading_days = await resolved_source.fetch_trading_days(
                     today - timedelta(days=370), today + timedelta(days=370)
@@ -127,7 +141,7 @@ def create_app(
             app.state.clock = clock
             app.state.collector = collector
 
-            now = datetime.now(SHANGHAI)
+            now = resolved_now_provider()
             if clock.is_open(now):
                 try:
                     await collector.collect_once(now)
@@ -135,7 +149,7 @@ def create_app(
                     logger.exception("首次全市场行情采集失败，继续使用本地已有数据")
 
             async def archive_later() -> None:
-                trade_date = datetime.now(SHANGHAI).date()
+                trade_date = resolved_now_provider().date()
                 await asyncio.to_thread(
                     archive_snapshots,
                     repository,
@@ -169,9 +183,8 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[
-            "http://127.0.0.1:5173",
-            "http://localhost:5173",
-            "http://127.0.0.1:4173",
+            f"http://127.0.0.1:{resolved_settings.frontend_port}",
+            f"http://localhost:{resolved_settings.frontend_port}",
         ],
         allow_credentials=False,
         allow_methods=["GET"],
@@ -184,6 +197,7 @@ def create_app(
     app.state.clock = None
     app.state.scheduler = None
     app.state.history_task = None
+    app.state.now_provider = resolved_now_provider
 
     @app.exception_handler(RequestValidationError)
     async def request_validation_error(

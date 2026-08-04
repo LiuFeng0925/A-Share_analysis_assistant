@@ -15,6 +15,7 @@ export default defineConfig({
       env: {
         A_SHARE_FIXTURE_SOURCE: "true",
         A_SHARE_DATA_DIR: "../data/e2e",
+        A_SHARE_FRONTEND_PORT: "4173",
       },
       reuseExistingServer: false,
     },

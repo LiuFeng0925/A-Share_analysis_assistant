@@ -100,8 +100,12 @@ class FixtureSource:
 
     @classmethod
     def _trading_days(cls) -> list[date]:
+        return [*cls._daily_bar_days(), cls.trade_date]
+
+    @classmethod
+    def _daily_bar_days(cls) -> list[date]:
         days: list[date] = []
-        cursor = cls.trade_date
+        cursor = cls.trade_date - timedelta(days=1)
         while len(days) < 60:
             if cursor.weekday() < 5:
                 days.append(cursor)
@@ -115,7 +119,7 @@ class FixtureSource:
         step = 1.35 if code == "600519" else 0.012
         volume_base = 2_500_000 if code == "600519" else 35_000_000
         result: list[Bar] = []
-        for index, trading_day in enumerate(cls._trading_days()):
+        for index, trading_day in enumerate(cls._daily_bar_days()):
             open_price = base_price + index * step
             close_price = open_price + (4.2 if index % 2 == 0 else -2.1) * (
                 1 if code == "600519" else 0.01

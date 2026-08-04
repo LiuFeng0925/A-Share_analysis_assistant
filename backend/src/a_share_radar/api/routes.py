@@ -1,7 +1,6 @@
 from dataclasses import replace
 from datetime import datetime
 from typing import Annotated, Literal
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
@@ -17,7 +16,6 @@ from a_share_radar.domain.models import Market
 from a_share_radar.services.bar_service import BarQueryValidationError
 
 router = APIRouter(prefix="/api")
-SHANGHAI = ZoneInfo("Asia/Shanghai")
 SortField = Literal[
     "code",
     "latest_price",
@@ -32,9 +30,13 @@ Range = Literal["today", "5d", "60d", "6mo", "ytd", "1y", "5y", "all"]
 Adjustment = Literal["none", "qfq", "hfq"]
 
 
+def request_now(request: Request) -> datetime:
+    return request.app.state.now_provider()
+
+
 @router.get("/market/summary", response_model=MarketSummaryResponse)
 def market_summary(request: Request):
-    now = datetime.now(SHANGHAI)
+    now = request_now(request)
     summary = request.app.state.repository.market_summary(
         request.app.state.settings.stale_after_seconds, now
     )
@@ -89,7 +91,7 @@ async def stock_bars(
             period,
             range_name,
             resolved_adjustment,
-            datetime.now(SHANGHAI),
+            request_now(request),
         )
     except BarQueryValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

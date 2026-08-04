@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pydantic import computed_field
+from pydantic import Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     history_days: int = 60
     history_request_delay_seconds: float = 0.5
     fixture_source: bool = False
+    frontend_port: int = Field(default=5173, ge=1, le=65535)
 
     @computed_field
     @property

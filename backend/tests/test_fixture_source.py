@@ -1,6 +1,8 @@
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
+from httpx import ASGITransport, AsyncClient
+
 from a_share_radar.config import Settings
 from a_share_radar.data_sources.fixture_source import FixtureSource
 from a_share_radar.main import create_app
@@ -36,6 +38,7 @@ async def test_fixture_source_returns_deterministic_complete_mvp_data():
     assert all(snapshot.source == "fixture" for snapshot in snapshots)
     assert len(daily_bars) == 60
     assert all(bar.period == "1d" and bar.adjustment == "qfq" for bar in daily_bars)
+    assert daily_bars[-1].bar_time == datetime(2026, 8, 3, 15, 0, tzinfo=TZ)
     assert len(minute_bars) == 61
     assert all(bar.period == "1m" and bar.adjustment == "none" for bar in minute_bars)
     assert minute_bars[0].bar_time == datetime(2026, 8, 4, 9, 30, tzinfo=TZ)
@@ -75,3 +78,32 @@ async def test_fixture_lifespan_persists_all_data_without_background_jobs(tmp_pa
         assert isinstance(app.state.source, FixtureSource)
         assert app.state.scheduler is None
         assert app.state.history_task is None
+
+
+async def test_fixture_api_ignores_cross_date_wall_clock_and_stays_deterministic(
+    tmp_path,
+):
+    crossed_wall_clock = lambda: datetime(2030, 1, 2, 10, 30, tzinfo=TZ)
+    app = create_app(
+        settings=Settings(data_dir=tmp_path, fixture_source=True),
+        now_provider=crossed_wall_clock,
+    )
+
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            summary_response = await client.get("/api/market/summary")
+            bars_response = await client.get(
+                "/api/stocks/SH/600519/bars",
+                params={"period": "1m", "range": "today", "adjustment": "none"},
+            )
+
+        assert app.state.now_provider() == FixtureSource.captured_at
+        assert summary_response.status_code == 200
+        assert summary_response.json()["market_status"] == "open"
+        assert summary_response.json()["stale"] is False
+        assert bars_response.status_code == 200
+        assert len(bars_response.json()["items"]) == 61
+        assert bars_response.json()["items"][0]["bar_time"].startswith("2026-08-04")
+        assert bars_response.json()["items"][-1]["bar_time"].startswith("2026-08-04")

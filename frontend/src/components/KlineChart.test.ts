@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import * as echarts from "echarts";
 import { createElement } from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -113,12 +113,19 @@ describe("KlineChart", () => {
     const { rerender, unmount } = render(createElement(KlineChart, { series: todayBarsFixture }));
     expect(chart.setOption).toHaveBeenCalledWith(expect.any(Object), true);
     expect(observe).toHaveBeenCalledTimes(1);
+    const visibleRange = screen.getByLabelText("K 线当前可见区间");
+    expect(visibleRange).toHaveAttribute("data-start", "70");
+    expect(visibleRange).toHaveAttribute("data-end", "100");
+    expect(visibleRange).toHaveAttribute("data-window", "30");
 
-    dataZoomHandler?.({ start: 20, end: 80 });
+    act(() => dataZoomHandler?.({ start: 20, end: 80 }));
     fireEvent.click(screen.getByRole("button", { name: "放大 K 线" }));
     expect(chart.dispatchAction).toHaveBeenLastCalledWith(
       expect.objectContaining({ type: "dataZoom", start: 30, end: 70 }),
     );
+    expect(visibleRange).toHaveAttribute("data-start", "30");
+    expect(visibleRange).toHaveAttribute("data-end", "70");
+    expect(visibleRange).toHaveAttribute("data-window", "40");
 
     rerender(createElement(KlineChart, {
       series: {
@@ -135,6 +142,7 @@ describe("KlineChart", () => {
     expect(chart.dispatchAction).toHaveBeenCalledWith(
       expect.objectContaining({ type: "dataZoom", start: 0, end: 100 }),
     );
+    expect(visibleRange).toHaveAttribute("data-window", "100");
     resizeCallback?.();
     expect(chart.resize).toHaveBeenCalledTimes(1);
 

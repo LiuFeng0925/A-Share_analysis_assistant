@@ -36,6 +36,7 @@ if ! command -v pnpm >/dev/null 2>&1; then
 fi
 
 A_SHARE_DATA_DIR="${A_SHARE_DATA_DIR:-$PROJECT_DIR/data}" \
+  A_SHARE_FRONTEND_PORT="$FRONTEND_PORT" \
   "$PROJECT_DIR/backend/.venv/bin/uvicorn" a_share_radar.main:app \
   --app-dir "$PROJECT_DIR/backend/src" --reload \
   --reload-dir "$PROJECT_DIR/backend/src" \
