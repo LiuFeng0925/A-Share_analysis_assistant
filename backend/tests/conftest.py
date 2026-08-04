@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -114,13 +115,21 @@ class FakeSource:
         self.minute_requests: list[MinuteRequest] = []
         self.snapshot_requests = 0
         self.snapshot_failures = 0
+        self.stock_error: Exception | None = None
+        self.trading_day_error: Exception | None = None
+        self.snapshot_started: asyncio.Event | None = None
+        self.snapshot_release: asyncio.Event | None = None
         self.minute_error: Exception | None = None
 
     async def fetch_stock_master(self):
+        if self.stock_error is not None:
+            raise self.stock_error
         return list(self.stock_rows)
 
     async def fetch_trading_days(self, start, end):
         self.trading_day_requests.append((start, end))
+        if self.trading_day_error is not None:
+            raise self.trading_day_error
         return {date(2026, 8, 4)}
 
     async def fetch_market_snapshot(self):
@@ -128,6 +137,10 @@ class FakeSource:
         if self.snapshot_failures > 0:
             self.snapshot_failures -= 1
             raise RuntimeError("模拟上游瞬时失败")
+        if self.snapshot_started is not None:
+            self.snapshot_started.set()
+        if self.snapshot_release is not None:
+            await self.snapshot_release.wait()
         return list(self.snapshot_rows)
 
     async def fetch_daily_bars(self, code, start, end, period, adjustment):

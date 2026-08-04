@@ -1,4 +1,7 @@
 from datetime import date, datetime, time
+from zoneinfo import ZoneInfo
+
+SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
 class MarketClock:
@@ -6,7 +9,10 @@ class MarketClock:
         self.trading_days = trading_days
 
     def is_open(self, at: datetime) -> bool:
-        if at.date() not in self.trading_days:
+        if at.tzinfo is None or at.utcoffset() is None:
+            raise ValueError("市场时间必须包含时区信息")
+        shanghai_at = at.astimezone(SHANGHAI)
+        if shanghai_at.date() not in self.trading_days:
             return False
-        current = at.timetz().replace(tzinfo=None)
+        current = time(shanghai_at.hour, shanghai_at.minute)
         return time(9, 30) <= current <= time(11, 30) or time(13, 0) <= current <= time(15, 0)
