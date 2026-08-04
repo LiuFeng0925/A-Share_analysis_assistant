@@ -139,9 +139,9 @@ export function StockDetailPage() {
     const keepsCurrentChart = loadedBarsKeyRef.current === key && barsRef.current !== null;
     const sequence = ++barsRequestSequence.current;
     activeBarsRequestKeyRef.current = key;
+    setBarsRefreshError((current) => current?.key === key ? null : current);
     if (keepsCurrentChart) {
       setBarsRefreshingKey(key);
-      setBarsRefreshError((current) => current?.key === key ? null : current);
     } else {
       setBarsLoadingKey(key);
       setBarsError((current) => current?.key === key ? null : current);
@@ -196,6 +196,9 @@ export function StockDetailPage() {
       pollInFlightRef.current = true;
       try {
         const summary = await marketApi.getSummary();
+        if (mounted.current && selectedBarsKeyRef.current === key) {
+          setBarsRefreshError((current) => current?.key === key ? null : current);
+        }
         if (
           mounted.current
           && selectedBarsKeyRef.current === key
@@ -296,7 +299,10 @@ export function StockDetailPage() {
                 type="button"
                 key={option.label}
                 aria-pressed={selectedPeriod.label === option.label}
-                onClick={() => setSelectedPeriod(option)}
+                onClick={() => {
+                  setBarsRefreshError(null);
+                  setSelectedPeriod(option);
+                }}
               >
                 {option.label}
               </button>

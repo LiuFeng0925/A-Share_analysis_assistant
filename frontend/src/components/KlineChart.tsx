@@ -2,7 +2,12 @@ import { useCallback, useEffect, useRef } from "react";
 import * as echarts from "echarts";
 import type { ECharts, EChartsOption } from "echarts";
 import type { BarSeries } from "../api/types";
-import { formatMarketNumber, formatShanghaiDateTime, isFiniteNumber } from "../utils/marketFormat";
+import {
+  formatMarketNumber,
+  formatShanghaiAxisLabel,
+  formatShanghaiDateTime,
+  isFiniteNumber,
+} from "../utils/marketFormat";
 
 const DEFAULT_ZOOM_START = 70;
 const DEFAULT_ZOOM_END = 100;
@@ -50,6 +55,8 @@ export function buildKlineOption(
     value: bar.volume,
     itemStyle: { color: bar.close_price >= bar.open_price ? "#e5484d" : "#16a36f" },
   }));
+  const axisLabelFormatter = (value: string) =>
+    formatShanghaiAxisLabel(value, series.period, series.range);
 
   return {
     animation: false,
@@ -73,14 +80,14 @@ export function buildKlineOption(
         boundaryGap: false,
         gridIndex: 0,
         axisLine: { lineStyle: { color: "#dce2ec" } },
-        axisLabel: { color: "#687386", hideOverlap: true },
+        axisLabel: { color: "#687386", hideOverlap: true, formatter: axisLabelFormatter },
       },
       {
         type: "category",
         data: categories,
         boundaryGap: false,
         gridIndex: 1,
-        axisLabel: { show: false },
+        axisLabel: { show: false, formatter: axisLabelFormatter },
         axisLine: { lineStyle: { color: "#dce2ec" } },
       },
     ],

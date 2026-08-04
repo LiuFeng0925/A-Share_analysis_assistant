@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import * as echarts from "echarts";
 import { createElement } from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { todayBarsFixture } from "../test/fixtures";
+import { dailyBarsFixture, todayBarsFixture } from "../test/fixtures";
 import { buildKlineOption, KlineChart } from "./KlineChart";
 
 vi.mock("echarts", () => ({ init: vi.fn() }));
@@ -57,6 +57,30 @@ describe("KlineChart", () => {
     expect(content).toContain("成交量 82,100");
     expect(content).toContain("成交额 109,400,000.00");
     expect(content).toContain("动态柱");
+  });
+
+  test("两个横轴把非东八区时间统一显示为上海时间标签", () => {
+    const utcSeries = {
+      ...todayBarsFixture,
+      items: [{ ...todayBarsFixture.items[0], bar_time: "2026-08-04T02:31:00Z" }],
+    };
+    const option = buildKlineOption(utcSeries);
+    const axes = option.xAxis as Array<{
+      data: string[];
+      axisLabel: { formatter: (value: string) => string };
+    }>;
+
+    expect(axes[0].data[0]).toBe("2026-08-04T02:31:00Z");
+    expect(axes[0].axisLabel.formatter(axes[0].data[0])).toBe("10:31");
+    expect(axes[1].axisLabel.formatter(axes[1].data[0])).toBe("10:31");
+    expect(axes[0].axisLabel.formatter("非法时间")).toBe("时间未知");
+
+    const dailyOption = buildKlineOption({
+      ...dailyBarsFixture,
+      items: [{ ...dailyBarsFixture.items[0], bar_time: "2026-08-03T16:30:00Z" }],
+    });
+    const dailyAxis = (dailyOption.xAxis as typeof axes)[0];
+    expect(dailyAxis.axisLabel.formatter(dailyAxis.data[0])).toBe("2026-08-04");
   });
 
   test("创建图表、响应容器尺寸、支持按钮缩放并在卸载时释放", async () => {

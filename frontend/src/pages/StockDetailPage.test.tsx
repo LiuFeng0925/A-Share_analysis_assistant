@@ -184,6 +184,34 @@ test("后端判定开市时每 60 秒刷新且不会请求重入", async () => {
   expect(marketApi.getBars).toHaveBeenCalledTimes(4);
 });
 
+test("市场状态恢复成功会清除旧刷新错误，切换周期也不会让错误重现", async () => {
+  vi.useFakeTimers();
+  vi.mocked(marketApi.getSummary)
+    .mockRejectedValueOnce(new Error("状态服务暂不可用"))
+    .mockResolvedValue({ ...summaryFixture, market_status: "closed" });
+  vi.mocked(marketApi.getBars)
+    .mockResolvedValueOnce(dailyBarsFixture)
+    .mockResolvedValueOnce(todayBarsFixture)
+    .mockResolvedValue(dailyBarsFixture);
+  renderDetail();
+  await act(async () => Promise.resolve());
+  fireEvent.click(screen.getByRole("button", { name: "今日" }));
+  await act(async () => Promise.resolve());
+
+  await act(async () => vi.advanceTimersByTime(60_000));
+  expect(screen.getByRole("alert")).toHaveTextContent("自动刷新状态检查失败");
+  await act(async () => vi.advanceTimersByTime(60_000));
+  expect(screen.queryByText(/自动刷新状态检查失败/)).not.toBeInTheDocument();
+
+  vi.mocked(marketApi.getSummary).mockRejectedValueOnce(new Error("再次失败"));
+  await act(async () => vi.advanceTimersByTime(60_000));
+  expect(screen.getByRole("alert")).toHaveTextContent("再次失败");
+  fireEvent.click(screen.getByRole("button", { name: "日K" }));
+  await act(async () => Promise.resolve());
+  fireEvent.click(screen.getByRole("button", { name: "今日" }));
+  expect(screen.queryByText(/再次失败/)).not.toBeInTheDocument();
+});
+
 test("显示上海时间、数据来源与质量状态，非法时间使用占位", async () => {
   vi.mocked(marketApi.getStock).mockResolvedValue({
     ...stockDetailFixture,

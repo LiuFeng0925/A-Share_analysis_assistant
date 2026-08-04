@@ -30,3 +30,18 @@ export function formatShanghaiDateTime(value: string | null | undefined) {
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}:${values.second}`;
 }
+
+export function formatShanghaiAxisLabel(
+  value: string,
+  period: string,
+  range: string,
+) {
+  const formatted = formatShanghaiDateTime(value);
+  if (formatted === "时间未知") return formatted;
+  const [date, time] = formatted.split(" ");
+  if (period.endsWith("m")) {
+    const minute = time.slice(0, 5);
+    return range === "today" ? minute : `${date.slice(5)} ${minute}`;
+  }
+  return period === "1mo" ? date.slice(0, 7) : date;
+}
