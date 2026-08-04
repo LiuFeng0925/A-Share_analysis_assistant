@@ -3,37 +3,61 @@ import { constants } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const scriptsDirectory = path.dirname(fileURLToPath(import.meta.url));
-const projectDirectory = path.dirname(scriptsDirectory);
-const virtualEnvironmentDirectory = path.join(projectDirectory, "backend", ".venv");
-const pythonExecutable = process.env.A_SHARE_E2E_PYTHON ?? path.join(
-  virtualEnvironmentDirectory,
-  process.platform === "win32" ? "Scripts" : "bin",
-  process.platform === "win32" ? "python.exe" : "python",
-);
-const runner = path.join(scriptsDirectory, "run_e2e.py");
-const child = spawn(pythonExecutable, [runner], {
-  detached: process.platform !== "win32",
-  env: process.env,
-  stdio: "inherit",
-});
+export const unsupportedPlatformMessage =
+  "E2E 测试 runner 当前仅支持 macOS 和 Linux，暂不支持 Windows。";
 
-for (const signalName of ["SIGTERM", "SIGINT"]) {
-  process.on(signalName, () => {
-    if (child.exitCode === null && child.signalCode === null) child.kill(signalName);
-  });
+export function resolveRuntimePlatform(actualPlatform, testPlatform) {
+  if (actualPlatform === "win32") return actualPlatform;
+  return testPlatform ?? actualPlatform;
 }
 
-child.on("error", (error) => {
-  console.error(`无法启动 E2E Python 进程：${error.message}`);
-  process.exitCode = 1;
-});
+const runtimePlatform = resolveRuntimePlatform(
+  process.platform,
+  process.env.A_SHARE_E2E_TEST_PLATFORM,
+);
 
-child.on("exit", (code, signalName) => {
-  if (code !== null) {
-    process.exitCode = code;
-    return;
+if (runtimePlatform === "win32") {
+  console.error(unsupportedPlatformMessage);
+  process.exitCode = 1;
+} else {
+  const scriptsDirectory = path.dirname(fileURLToPath(import.meta.url));
+  const projectDirectory = path.dirname(scriptsDirectory);
+  const virtualEnvironmentDirectory = path.join(
+    projectDirectory,
+    "backend",
+    ".venv",
+  );
+  const pythonExecutable = process.env.A_SHARE_E2E_PYTHON ?? path.join(
+    virtualEnvironmentDirectory,
+    "bin",
+    "python",
+  );
+  const runner = path.join(scriptsDirectory, "run_e2e.py");
+  const child = spawn(pythonExecutable, [runner], {
+    detached: true,
+    env: process.env,
+    stdio: "inherit",
+  });
+
+  for (const signalName of ["SIGTERM", "SIGINT"]) {
+    process.on(signalName, () => {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill(signalName);
+      }
+    });
   }
-  const signalNumber = signalName ? constants.signals[signalName] : undefined;
-  process.exitCode = 128 + (signalNumber ?? 1);
-});
+
+  child.on("error", (error) => {
+    console.error(`无法启动 E2E Python 进程：${error.message}`);
+    process.exitCode = 1;
+  });
+
+  child.on("exit", (code, signalName) => {
+    if (code !== null) {
+      process.exitCode = code;
+      return;
+    }
+    const signalNumber = signalName ? constants.signals[signalName] : undefined;
+    process.exitCode = 128 + (signalNumber ?? 1);
+  });
+}

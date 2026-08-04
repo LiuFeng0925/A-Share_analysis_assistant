@@ -25,6 +25,9 @@ READY_TIMEOUT_SECONDS = 15.0
 SIGNAL_GRACE_SECONDS = 5.0
 TERMINATE_GRACE_SECONDS = 2.0
 PORT_RELEASE_TIMEOUT_SECONDS = 5.0
+UNSUPPORTED_PLATFORM_MESSAGE = (
+    "E2E 测试 runner 当前仅支持 macOS 和 Linux，暂不支持 Windows。"
+)
 
 
 @dataclass
@@ -78,16 +81,11 @@ def default_playwright_command() -> list[str]:
 def _start_process(
     command: Sequence[str], *, cwd: Path, environment: dict[str, str]
 ) -> subprocess.Popen[bytes]:
-    options: dict[str, object] = {}
-    if os.name == "nt":
-        options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-    else:
-        options["start_new_session"] = True
     return subprocess.Popen(
         list(command),
         cwd=cwd,
         env=environment,
-        **options,
+        start_new_session=True,
     )
 
 
@@ -103,44 +101,22 @@ def _start_owned_process(
     return process
 
 
-def _taskkill(process_id: int, *, force: bool) -> None:
-    command = ["taskkill", "/PID", str(process_id), "/T"]
-    if force:
-        command.append("/F")
-    subprocess.run(command, check=False, capture_output=True, timeout=5)
-
-
 def _send_tree_signal(process: subprocess.Popen[bytes], sent_signal: int) -> None:
     try:
-        if os.name == "nt":
-            if process.poll() is not None:
-                return
-            if sent_signal == signal.SIGINT and hasattr(signal, "CTRL_BREAK_EVENT"):
-                process.send_signal(signal.CTRL_BREAK_EVENT)
-            else:
-                _taskkill(process.pid, force=False)
-        else:
-            os.killpg(process.pid, sent_signal)
+        os.killpg(process.pid, sent_signal)
     except ProcessLookupError:
         return
 
 
 def _kill_tree(process: subprocess.Popen[bytes]) -> None:
     try:
-        if os.name == "nt":
-            if process.poll() is not None:
-                return
-            _taskkill(process.pid, force=True)
-        else:
-            os.killpg(process.pid, signal.SIGKILL)
+        os.killpg(process.pid, signal.SIGKILL)
     except ProcessLookupError:
         return
 
 
 def _tree_exists(process: subprocess.Popen[bytes]) -> bool:
     process.poll()
-    if os.name == "nt":
-        return process.returncode is None
     try:
         os.killpg(process.pid, 0)
         return True
@@ -250,7 +226,10 @@ def run(
     *,
     temp_root: Path | None = None,
     playwright_command: Sequence[str] | None = None,
+    operating_system_name: str | None = None,
 ) -> int:
+    if (operating_system_name or os.name) == "nt":
+        raise RuntimeError(UNSUPPORTED_PLATFORM_MESSAGE)
     shutdown_state = ShutdownState()
     result_code = 1
     uvicorn_process: subprocess.Popen[bytes] | None = None
@@ -384,9 +363,16 @@ def run(
     return result_code
 
 
-def main() -> int:
+def main(
+    *,
+    operating_system_name: str | None = None,
+    runner: Callable[[], int] = run,
+) -> int:
+    if (operating_system_name or os.name) == "nt":
+        print(UNSUPPORTED_PLATFORM_MESSAGE, file=sys.stderr)
+        return 1
     try:
-        return run()
+        return runner()
     except RuntimeError as error:
         print(f"E2E 运行失败：{error}", file=sys.stderr)
         return 1

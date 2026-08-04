@@ -20,6 +20,9 @@ PACKAGE_JSON = PROJECT_DIR / "frontend" / "package.json"
 REPOSITORY_E2E_DATA = PROJECT_DIR / "data" / "e2e"
 SERVICE_PORTS = (18000, 4173)
 PID_LABELS = ("runner", "Uvicorn", "Vite", "Playwright")
+UNSUPPORTED_PLATFORM_MESSAGE = (
+    "E2E 测试 runner 当前仅支持 macOS 和 Linux，暂不支持 Windows。"
+)
 
 
 def load_runner():
@@ -129,6 +132,80 @@ def test_playwright_config_has_no_webserver_and_uses_parent_runner():
     assert "uvicorn" not in config
     assert "A_SHARE_E2E_DATA_DIR" not in config
     assert "../data/e2e" not in config
+
+
+@pytest.mark.skipif(os.name == "nt", reason="在 POSIX 注入 win32 平台分支")
+def test_node_launcher_win32_fails_before_spawning_or_creating_data(tmp_path):
+    node = shutil.which("node")
+    assert node is not None
+    marker = tmp_path / "错误启动了子进程"
+    fake_python = tmp_path / "不应启动的 Python"
+    fake_python.write_text(
+        f"#!/bin/sh\ntouch '{marker}'\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    files_before = set(tmp_path.iterdir())
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "A_SHARE_E2E_PYTHON": str(fake_python),
+            "A_SHARE_E2E_TEST_PLATFORM": "win32",
+            "TMPDIR": str(tmp_path),
+        }
+    )
+
+    result = subprocess.run(
+        [node, str(RUNNER_LAUNCHER)],
+        cwd=PROJECT_DIR,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert result.stderr.strip() == UNSUPPORTED_PLATFORM_MESSAGE
+    assert result.stdout == ""
+    assert not marker.exists()
+    assert set(tmp_path.iterdir()) == files_before
+
+
+def test_python_runner_win32_fails_before_run_or_creating_data(capsys, tmp_path):
+    module = load_runner()
+    run_called = False
+
+    def unexpected_run() -> int:
+        nonlocal run_called
+        run_called = True
+        (tmp_path / "错误创建了运行文件").touch()
+        return 0
+
+    result = module.main(operating_system_name="nt", runner=unexpected_run)
+
+    assert result == 1
+    assert capsys.readouterr().err.strip() == UNSUPPORTED_PLATFORM_MESSAGE
+    assert not run_called
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_python_run_win32_fails_before_creating_data(tmp_path):
+    module = load_runner()
+
+    with pytest.raises(RuntimeError, match=f"^{UNSUPPORTED_PLATFORM_MESSAGE}$"):
+        module.run(temp_root=tmp_path, operating_system_name="nt")
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_runner_source_and_readme_only_claim_posix_e2e_support():
+    runner_source = RUNNER_PATH.read_text(encoding="utf-8")
+    readme = (PROJECT_DIR / "README.md").read_text(encoding="utf-8")
+
+    assert "taskkill" not in runner_source
+    assert "CREATE_NEW_PROCESS_GROUP" not in runner_source
+    assert "E2E 测试 runner 当前支持 macOS 和 Linux，Windows 尚未支持" in readme
 
 
 def test_default_commands_resolve_three_runner_owned_processes():
