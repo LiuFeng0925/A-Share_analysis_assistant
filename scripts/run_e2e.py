@@ -228,7 +228,7 @@ def run(
     playwright_command: Sequence[str] | None = None,
     operating_system_name: str | None = None,
 ) -> int:
-    if (operating_system_name or os.name) == "nt":
+    if os.name == "nt" or operating_system_name == "nt":
         raise RuntimeError(UNSUPPORTED_PLATFORM_MESSAGE)
     shutdown_state = ShutdownState()
     result_code = 1
@@ -368,7 +368,7 @@ def main(
     operating_system_name: str | None = None,
     runner: Callable[[], int] = run,
 ) -> int:
-    if (operating_system_name or os.name) == "nt":
+    if os.name == "nt" or operating_system_name == "nt":
         print(UNSUPPORTED_PLATFORM_MESSAGE, file=sys.stderr)
         return 1
     try:

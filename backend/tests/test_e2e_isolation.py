@@ -199,6 +199,65 @@ def test_python_run_win32_fails_before_creating_data(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
+def test_actual_windows_cannot_be_overridden_for_python_main(
+    monkeypatch, capsys, tmp_path
+):
+    module = load_runner()
+    touched: list[str] = []
+
+    def unexpected_runner() -> int:
+        touched.append("runner")
+        (tmp_path / "错误调用了 runner").touch()
+        return 0
+
+    monkeypatch.setattr(module.os, "name", "nt")
+
+    result = module.main(
+        operating_system_name="posix",
+        runner=unexpected_runner,
+    )
+
+    assert result == 1
+    assert capsys.readouterr().err.strip() == UNSUPPORTED_PLATFORM_MESSAGE
+    assert touched == []
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_actual_windows_cannot_be_overridden_for_python_run(monkeypatch, tmp_path):
+    module = load_runner()
+    touched: list[str] = []
+
+    def forbidden(label: str):
+        def record_forbidden_call(*_args, **_kwargs):
+            touched.append(label)
+            raise AssertionError(f"平台守卫后错误触发：{label}")
+
+        return record_forbidden_call
+
+    monkeypatch.setattr(module.os, "name", "nt")
+    for function_name in (
+        "default_uvicorn_command",
+        "default_vite_command",
+        "default_playwright_command",
+        "_ensure_ports_are_free",
+        "_start_process",
+        "_start_owned_process",
+    ):
+        monkeypatch.setattr(module, function_name, forbidden(function_name))
+    monkeypatch.setattr(module.signal, "getsignal", forbidden("signal.getsignal"))
+    monkeypatch.setattr(module.signal, "signal", forbidden("signal.signal"))
+    monkeypatch.setattr(module.tempfile, "mkdtemp", forbidden("tempfile.mkdtemp"))
+
+    with pytest.raises(RuntimeError, match=f"^{UNSUPPORTED_PLATFORM_MESSAGE}$"):
+        module.run(
+            temp_root=tmp_path,
+            operating_system_name="posix",
+        )
+
+    assert touched == []
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_runner_source_and_readme_only_claim_posix_e2e_support():
     runner_source = RUNNER_PATH.read_text(encoding="utf-8")
     readme = (PROJECT_DIR / "README.md").read_text(encoding="utf-8")
