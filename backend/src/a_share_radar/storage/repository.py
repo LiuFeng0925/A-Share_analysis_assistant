@@ -1,7 +1,10 @@
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from datetime import UTC, date, datetime, time, timedelta
+from typing import Any, Literal
+from zoneinfo import ZoneInfo
+
+import pyarrow as pa
 
 from a_share_radar.domain.models import Bar, Market, QualityStatus, QuoteSnapshot, Stock
 from a_share_radar.storage.database import Database
@@ -43,8 +46,11 @@ class MarketSummary:
     total: int
     rising: int
     falling: int
-    unchanged: int
-    stale: int
+    flat: int
+    amount: float
+    market_status: Literal["open", "closed"]
+    last_updated_at: datetime | None
+    stale: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,7 +79,27 @@ _QUOTE_COLUMNS = """
     q.source, q.quality_status
 """
 
-_QUOTE_VALUES_SQL = "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+_SNAPSHOT_BATCH_RELATION = "snapshot_batch_input"
+_SNAPSHOT_SCHEMA = pa.schema(
+    [
+        ("market", pa.string()),
+        ("code", pa.string()),
+        ("captured_at", pa.timestamp("us", tz="UTC")),
+        ("latest_price", pa.float64()),
+        ("change_percent", pa.float64()),
+        ("change_amount", pa.float64()),
+        ("open_price", pa.float64()),
+        ("high_price", pa.float64()),
+        ("low_price", pa.float64()),
+        ("previous_close", pa.float64()),
+        ("volume", pa.int64()),
+        ("amount", pa.float64()),
+        ("turnover_rate", pa.float64()),
+        ("total_market_cap", pa.float64()),
+        ("source", pa.string()),
+        ("quality_status", pa.string()),
+    ]
+)
 
 
 class MarketRepository:
@@ -108,31 +134,59 @@ class MarketRepository:
         rows = [self._quote_values(quote) for quote in quotes]
         if not rows:
             return
+        batch = self._snapshot_batch(rows)
         with self.database.lock:
             connection = self.database.connection
-            connection.execute("BEGIN TRANSACTION")
+            registered = False
+            transaction_started = False
             try:
-                connection.executemany(
-                    f"INSERT OR REPLACE INTO quote_snapshot_hot VALUES {_QUOTE_VALUES_SQL}",
-                    rows,
-                )
-                for row in rows:
-                    connection.execute(
-                        f"""
-                        INSERT OR REPLACE INTO latest_quote
-                        SELECT * FROM (VALUES {_QUOTE_VALUES_SQL})
-                        WHERE NOT EXISTS (
-                            SELECT 1 FROM latest_quote WHERE market = ? AND code = ?
-                        ) OR ? >= (
-                            SELECT captured_at FROM latest_quote WHERE market = ? AND code = ?
-                        )
-                        """,
-                        (*row, row[0], row[1], row[2], row[0], row[1]),
+                connection.register(_SNAPSHOT_BATCH_RELATION, batch)
+                registered = True
+                connection.execute("BEGIN TRANSACTION")
+                transaction_started = True
+                connection.execute(
+                    f"""
+                    INSERT OR REPLACE INTO quote_snapshot_hot
+                    SELECT * EXCLUDE (batch_row)
+                    FROM (
+                        SELECT *, ROW_NUMBER() OVER (
+                            PARTITION BY market, code, captured_at
+                            ORDER BY captured_at DESC
+                        ) AS batch_row
+                        FROM {_SNAPSHOT_BATCH_RELATION}
                     )
+                    WHERE batch_row = 1
+                    """
+                )
+                connection.execute(
+                    f"""
+                    INSERT OR REPLACE INTO latest_quote
+                    SELECT batch.* EXCLUDE (batch_row)
+                    FROM (
+                        SELECT *, ROW_NUMBER() OVER (
+                            PARTITION BY market, code
+                            ORDER BY captured_at DESC
+                        ) AS batch_row
+                        FROM {_SNAPSHOT_BATCH_RELATION}
+                    ) AS batch
+                    LEFT JOIN latest_quote AS current
+                      ON current.market = batch.market AND current.code = batch.code
+                    WHERE batch.batch_row = 1
+                      AND (
+                        current.captured_at IS NULL
+                        OR batch.captured_at >= current.captured_at
+                      )
+                    """
+                )
                 connection.execute("COMMIT")
+                transaction_started = False
             except Exception:
-                connection.execute("ROLLBACK")
+                if transaction_started:
+                    connection.execute("ROLLBACK")
                 raise
+            finally:
+                if registered:
+                    connection.unregister(_SNAPSHOT_BATCH_RELATION)
 
     def upsert_bars(self, bars: Iterable[Bar]) -> None:
         rows = [
@@ -253,7 +307,6 @@ class MarketRepository:
     def market_summary(self, stale_after_seconds: int, now: datetime) -> MarketSummary:
         if stale_after_seconds < 0:
             raise ValueError("陈旧阈值不能为负数")
-        stale_before = now - timedelta(seconds=stale_after_seconds)
         with self.database.lock:
             row = self.database.connection.execute(
                 """
@@ -262,16 +315,25 @@ class MarketRepository:
                   COUNT(*) FILTER (WHERE q.change_percent > 0),
                   COUNT(*) FILTER (WHERE q.change_percent < 0),
                   COUNT(*) FILTER (WHERE q.change_percent = 0),
-                  COUNT(*) FILTER (
-                    WHERE q.captured_at IS NULL OR q.captured_at < ?
-                  )
+                  COALESCE(SUM(q.amount), 0.0),
+                  CAST(MAX(q.captured_at) AS VARCHAR)
                 FROM stock_master s
                 LEFT JOIN latest_quote q
                   ON q.market = s.market AND q.code = s.code
-                """,
-                (stale_before,),
+                """
             ).fetchone()
-        return MarketSummary(*row)
+        last_updated_at = None if row[5] is None else datetime.fromisoformat(row[5])
+        stale_before = now - timedelta(seconds=stale_after_seconds)
+        return MarketSummary(
+            total=row[0],
+            rising=row[1],
+            falling=row[2],
+            flat=row[3],
+            amount=float(row[4]),
+            market_status="open" if self._is_market_open(now) else "closed",
+            last_updated_at=last_updated_at,
+            stale=last_updated_at is None or last_updated_at < stale_before,
+        )
 
     def data_status(self) -> DataStatus:
         with self.database.lock:
@@ -372,6 +434,15 @@ class MarketRepository:
         )
 
     @staticmethod
+    def _snapshot_batch(rows: list[tuple[Any, ...]]) -> pa.Table:
+        columns = zip(*rows, strict=True)
+        arrays = [
+            pa.array(column, type=field.type)
+            for column, field in zip(columns, _SNAPSHOT_SCHEMA, strict=True)
+        ]
+        return pa.Table.from_arrays(arrays, schema=_SNAPSHOT_SCHEMA)
+
+    @staticmethod
     def _stock_quote_row(row: tuple[Any, ...]) -> StockQuoteRow:
         return StockQuoteRow(
             code=row[0], market=Market(row[1]), name=row[2], list_status=row[3], list_date=row[4],
@@ -380,4 +451,13 @@ class MarketRepository:
             open_price=row[9], high_price=row[10], low_price=row[11], previous_close=row[12],
             volume=row[13], amount=row[14], turnover_rate=row[15], total_market_cap=row[16],
             source=row[17], quality_status=None if row[18] is None else QualityStatus(row[18]),
+        )
+
+    @staticmethod
+    def _is_market_open(now: datetime) -> bool:
+        shanghai_now = now.astimezone(ZoneInfo("Asia/Shanghai"))
+        current_time = shanghai_now.time()
+        return shanghai_now.weekday() < 5 and (
+            time(9, 30) <= current_time <= time(11, 30)
+            or time(13) <= current_time <= time(15)
         )

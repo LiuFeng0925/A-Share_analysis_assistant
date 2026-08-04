@@ -8,6 +8,34 @@ import pytest
 from a_share_radar.domain.models import Bar, Market, QualityStatus, QuoteSnapshot, Stock
 
 
+class CountingConnection:
+    def __init__(self, connection):
+        self.connection = connection
+        self.history_writes = 0
+        self.latest_writes = 0
+
+    def execute(self, sql, parameters=None):
+        normalized_sql = " ".join(sql.split()).lower()
+        self._count_write(normalized_sql)
+        if parameters is None:
+            return self.connection.execute(sql)
+        return self.connection.execute(sql, parameters)
+
+    def executemany(self, sql, parameters):
+        normalized_sql = " ".join(sql.split()).lower()
+        self._count_write(normalized_sql)
+        return self.connection.executemany(sql, parameters)
+
+    def _count_write(self, normalized_sql):
+        if "insert or replace into quote_snapshot_hot" in normalized_sql:
+            self.history_writes += 1
+        if "insert or replace into latest_quote" in normalized_sql:
+            self.latest_writes += 1
+
+    def __getattr__(self, name):
+        return getattr(self.connection, name)
+
+
 def quote(price: float, captured_at: datetime) -> QuoteSnapshot:
     return QuoteSnapshot(
         code="600519",
@@ -116,14 +144,44 @@ def test_market_summary_counts_price_direction_and_stale_quotes(repository):
         name="平安银行",
         change_percent=1.25,
     )
-    repository.save_snapshot([falling, rising])
+    flat = replace(
+        quote(8.5, datetime(2026, 8, 4, 10, 32, tzinfo=tz)),
+        code="430047",
+        market=Market.BJ,
+        name="诺思兰德",
+        change_percent=0.0,
+        amount=None,
+    )
+    repository.save_snapshot([falling, rising, flat])
 
     summary = repository.market_summary(stale_after_seconds=120, now=now)
     assert summary.total == 3
     assert summary.rising == 1
     assert summary.falling == 1
-    assert summary.unchanged == 0
-    assert summary.stale == 2
+    assert summary.flat == 1
+    assert summary.amount == falling.amount + rising.amount
+    assert summary.market_status == "open"
+    assert summary.last_updated_at == falling.captured_at
+    assert summary.stale is False
+
+
+def test_market_summary_without_quotes_is_closed_and_stale(repository):
+    tz = ZoneInfo("Asia/Shanghai")
+    repository.upsert_stocks([Stock("600519", Market.SH, "贵州茅台")])
+
+    summary = repository.market_summary(
+        stale_after_seconds=120,
+        now=datetime(2026, 8, 8, 10, 35, tzinfo=tz),
+    )
+
+    assert summary.total == 1
+    assert summary.rising == 0
+    assert summary.falling == 0
+    assert summary.flat == 0
+    assert summary.amount == 0.0
+    assert summary.market_status == "closed"
+    assert summary.last_updated_at is None
+    assert summary.stale is True
 
 
 def test_data_status_reports_storage_counts_and_latest_capture(repository):
@@ -185,3 +243,34 @@ def test_save_snapshot_is_idempotent_keeps_newest_and_rolls_back_batch(repositor
     with pytest.raises(duckdb.ConstraintException):
         repository.save_snapshot([replace(newer, code="601318"), invalid])
     assert repository.snapshot_count() == 2
+
+
+def test_save_snapshot_updates_latest_with_two_set_based_writes(repository):
+    tz = ZoneInfo("Asia/Shanghai")
+    existing = quote(1330.06, datetime(2026, 8, 4, 10, 31, tzinfo=tz))
+    repository.upsert_stocks(
+        [
+            Stock("600519", Market.SH, "贵州茅台"),
+            Stock("000001", Market.SZ, "平安银行"),
+        ]
+    )
+    repository.save_snapshot([existing])
+
+    counting_connection = CountingConnection(repository.database.connection)
+    repository.database.connection = counting_connection
+    older = replace(existing, latest_price=1331.0, captured_at=datetime(2026, 8, 4, 10, 30, tzinfo=tz))
+    newer = replace(existing, latest_price=1329.0, captured_at=datetime(2026, 8, 4, 10, 32, tzinfo=tz))
+    another = replace(
+        existing,
+        code="000001",
+        market=Market.SZ,
+        name="平安银行",
+        latest_price=10.5,
+    )
+
+    repository.save_snapshot([older, newer, another])
+
+    assert counting_connection.history_writes == 1
+    assert counting_connection.latest_writes == 1
+    assert repository.get_stock(Market.SH, "600519").latest_price == 1329.0
+    assert repository.get_stock(Market.SZ, "000001").latest_price == 10.5
