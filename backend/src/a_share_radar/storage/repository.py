@@ -1,10 +1,12 @@
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
+from pathlib import Path
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 import pyarrow as pa
+import pyarrow.parquet as pq
 
 from a_share_radar.domain.models import Bar, Market, QualityStatus, QuoteSnapshot, Stock
 from a_share_radar.storage.database import Database
@@ -401,6 +403,42 @@ class MarketRepository:
             return self.database.connection.execute(
                 "SELECT COUNT(*) FROM quote_snapshot_hot"
             ).fetchone()[0]
+
+    def snapshot_count_for_date(self, trade_date: date) -> int:
+        with self.database.lock:
+            return self.database.connection.execute(
+                """
+                SELECT COUNT(*) FROM quote_snapshot_hot
+                WHERE CAST(timezone('Asia/Shanghai', captured_at) AS DATE) = ?
+                """,
+                [trade_date],
+            ).fetchone()[0]
+
+    def copy_snapshots_to_parquet(self, trade_date: date, path: Path) -> None:
+        with self.database.lock:
+            table = self.database.connection.execute(
+                """
+                SELECT * FROM quote_snapshot_hot
+                WHERE CAST(timezone('Asia/Shanghai', captured_at) AS DATE) = ?
+                ORDER BY market, code, captured_at
+                """,
+                [trade_date],
+            ).to_arrow_table()
+        pq.write_table(table, path)
+
+    @staticmethod
+    def parquet_count(path: Path) -> int:
+        return pq.read_metadata(path).num_rows
+
+    def delete_snapshots_for_date(self, trade_date: date) -> None:
+        with self.database.lock:
+            self.database.connection.execute(
+                """
+                DELETE FROM quote_snapshot_hot
+                WHERE CAST(timezone('Asia/Shanghai', captured_at) AS DATE) = ?
+                """,
+                [trade_date],
+            )
 
     def _transactional_executemany(self, sql: str, rows: list[tuple[Any, ...]]) -> None:
         connection = self.database.connection

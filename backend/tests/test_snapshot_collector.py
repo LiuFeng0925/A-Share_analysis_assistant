@@ -183,7 +183,70 @@ def test_create_app_defers_default_database_until_lifespan(tmp_path, fake_source
     app = main_module.create_app(settings=settings, source=fake_source)
 
     assert app.state.repository is None
+    assert app.state.bar_service is None
     assert settings.database_path.exists() is False
+
+
+async def test_lifespan_archives_snapshots_with_real_callback(
+    monkeypatch, tmp_path, repository, fake_source
+):
+    fixed_now = datetime(2026, 8, 4, 12, 0, tzinfo=TZ)
+    set_fixed_now(monkeypatch, fixed_now)
+    repository.save_snapshot(fake_source.snapshot_rows[:1])
+    settings = Settings(data_dir=tmp_path / "生命周期归档")
+    app = main_module.create_app(
+        settings=settings, source=fake_source, database=repository.database
+    )
+
+    async with app.router.lifespan_context(app):
+        archive_job = next(
+            job
+            for job in app.state.scheduler.get_jobs()
+            if job.func.__name__ == "archive_managed"
+        )
+        await archive_job.func()
+
+    target = (
+        settings.data_dir
+        / "snapshots"
+        / "trade_date=2026-08-04"
+        / "part-000.parquet"
+    )
+    assert target.exists()
+    assert repository.snapshot_count_for_date(fixed_now.date()) == 0
+
+
+async def test_lifespan_cancels_bootstrap_before_scheduler_shutdown(
+    monkeypatch, repository, fake_source
+):
+    bootstrap_started = asyncio.Event()
+    bootstrap_cancelled = asyncio.Event()
+
+    class BlockingBootstrapper:
+        def __init__(self, bar_service, repository, delay_seconds):
+            pass
+
+        async def run(self):
+            bootstrap_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                bootstrap_cancelled.set()
+                raise
+
+    async def assert_bootstrap_stopped(scheduler):
+        assert bootstrap_cancelled.is_set()
+        scheduler.shutdown(wait=False)
+
+    monkeypatch.setattr(main_module, "HistoryBootstrapper", BlockingBootstrapper)
+    monkeypatch.setattr(main_module, "shutdown_scheduler", assert_bootstrap_stopped)
+    set_fixed_now(monkeypatch, datetime(2026, 8, 4, 12, 0, tzinfo=TZ))
+    app = main_module.create_app(source=fake_source, database=repository.database)
+
+    async with app.router.lifespan_context(app):
+        await bootstrap_started.wait()
+
+    assert bootstrap_cancelled.is_set()
 
 
 async def test_lifespan_preserves_local_stocks_when_stock_source_fails(
