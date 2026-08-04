@@ -40,12 +40,33 @@ describe("KlineChart", () => {
     );
   });
 
+  test("提示框显示上海时间、完整行情和动态柱状态", () => {
+    const dynamicSeries = {
+      ...todayBarsFixture,
+      items: [{ ...todayBarsFixture.items[0], is_complete: false }],
+    };
+    const option = buildKlineOption(dynamicSeries);
+    const formatter = (option.tooltip as { formatter: (params: Array<{ dataIndex: number }>) => string }).formatter;
+    const content = formatter([{ dataIndex: 0 }]);
+
+    expect(content).toContain("2026-08-04 10:31:00");
+    expect(content).toContain("开 1,334.20");
+    expect(content).toContain("高 1,335.08");
+    expect(content).toContain("低 1,330.04");
+    expect(content).toContain("收 1,330.06");
+    expect(content).toContain("成交量 82,100");
+    expect(content).toContain("成交额 109,400,000.00");
+    expect(content).toContain("动态柱");
+  });
+
   test("创建图表、响应容器尺寸、支持按钮缩放并在卸载时释放", async () => {
     const chart = {
       setOption: vi.fn(),
       dispatchAction: vi.fn(),
       resize: vi.fn(),
       dispose: vi.fn(),
+      on: vi.fn(),
+      off: vi.fn(),
     };
     let resizeCallback: (() => void) | undefined;
     const observe = vi.fn();
@@ -61,9 +82,30 @@ describe("KlineChart", () => {
     } as unknown as typeof ResizeObserver;
     vi.mocked(echarts.init).mockReturnValue(chart as never);
 
-    const { unmount } = render(createElement(KlineChart, { series: todayBarsFixture }));
+    let dataZoomHandler: ((event: { start: number; end: number }) => void) | undefined;
+    chart.on.mockImplementation((event, handler) => {
+      if (event === "datazoom") dataZoomHandler = handler;
+    });
+    const { rerender, unmount } = render(createElement(KlineChart, { series: todayBarsFixture }));
     expect(chart.setOption).toHaveBeenCalledWith(expect.any(Object), true);
     expect(observe).toHaveBeenCalledTimes(1);
+
+    dataZoomHandler?.({ start: 20, end: 80 });
+    fireEvent.click(screen.getByRole("button", { name: "放大 K 线" }));
+    expect(chart.dispatchAction).toHaveBeenLastCalledWith(
+      expect.objectContaining({ type: "dataZoom", start: 30, end: 70 }),
+    );
+
+    rerender(createElement(KlineChart, {
+      series: {
+        ...todayBarsFixture,
+        items: [todayBarsFixture.items[0], { ...todayBarsFixture.items[0], bar_time: "2026-08-04T10:32:00+08:00" }],
+      },
+    }));
+    const refreshedOption = chart.setOption.mock.calls.at(-1)?.[0] as {
+      dataZoom: Array<{ start: number; end: number }>;
+    };
+    expect(refreshedOption.dataZoom[0]).toEqual(expect.objectContaining({ start: 30, end: 70 }));
 
     fireEvent.click(screen.getByRole("button", { name: "显示全部 K 线" }));
     expect(chart.dispatchAction).toHaveBeenCalledWith(
@@ -73,8 +115,33 @@ describe("KlineChart", () => {
     expect(chart.resize).toHaveBeenCalledTimes(1);
 
     unmount();
+    expect(chart.off).toHaveBeenCalledWith("datazoom", dataZoomHandler);
     expect(disconnect).toHaveBeenCalledTimes(1);
     expect(chart.dispose).toHaveBeenCalledTimes(1);
     globalThis.ResizeObserver = previousResizeObserver;
+  });
+
+  test("为每根数据柱提供屏幕阅读器可读摘要", () => {
+    const chart = {
+      setOption: vi.fn(),
+      dispatchAction: vi.fn(),
+      resize: vi.fn(),
+      dispose: vi.fn(),
+      on: vi.fn(),
+      off: vi.fn(),
+    };
+    vi.mocked(echarts.init).mockReturnValue(chart as never);
+    render(createElement(KlineChart, {
+      series: {
+        ...todayBarsFixture,
+        items: [{ ...todayBarsFixture.items[0], is_complete: false }],
+      },
+    }));
+
+    const table = screen.getByRole("table", { name: "K 线数据明细" });
+    expect(table).toHaveTextContent("2026-08-04 10:31:00");
+    expect(table).toHaveTextContent("1334.20");
+    expect(table).toHaveTextContent("109400000.00");
+    expect(table).toHaveTextContent("动态柱");
   });
 });

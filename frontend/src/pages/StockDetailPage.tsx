@@ -7,9 +7,11 @@ import type {
   BarRange,
   BarSeries,
   Market,
+  QualityStatus,
   StockQuote,
 } from "../api/types";
 import { KlineChart } from "../components/KlineChart";
+import { formatMarketNumber, formatShanghaiDateTime, isFiniteNumber } from "../utils/marketFormat";
 
 interface PeriodOption {
   label: string;
@@ -37,44 +39,45 @@ function asMarket(value: string | undefined): Market | null {
   return value && MARKETS.has(value as Market) ? (value as Market) : null;
 }
 
-function formatNumber(value: number | null, digits = 2) {
-  return value === null ? "—" : value.toLocaleString("zh-CN", {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  });
+function formatCompact(value: number | null | undefined) {
+  if (!isFiniteNumber(value)) return "—";
+  if (Math.abs(value) >= 100_000_000) return `${formatMarketNumber(value / 100_000_000)} 亿`;
+  if (Math.abs(value) >= 10_000) return `${formatMarketNumber(value / 10_000)} 万`;
+  return formatMarketNumber(value, 0);
 }
 
-function formatCompact(value: number | null) {
-  if (value === null) return "—";
-  if (Math.abs(value) >= 100_000_000) return `${formatNumber(value / 100_000_000)} 亿`;
-  if (Math.abs(value) >= 10_000) return `${formatNumber(value / 10_000)} 万`;
-  return formatNumber(value, 0);
-}
-
-function movement(value: number | null) {
-  if (value === null || value === 0) return { className: "", label: "平盘", prefix: "" };
+function movement(value: number | null | undefined) {
+  if (!isFiniteNumber(value)) return { className: "", label: "未知", prefix: "" };
+  if (value === 0) return { className: "", label: "平盘", prefix: "" };
   return value > 0
     ? { className: "up", label: "上涨", prefix: "+" }
     : { className: "down", label: "下跌", prefix: "" };
 }
 
+function formatSigned(value: number | null | undefined, suffix = "") {
+  const direction = movement(value);
+  return isFiniteNumber(value)
+    ? `${direction.prefix}${formatMarketNumber(value)}${suffix}`
+    : "—";
+}
+
+function qualityMeta(status: QualityStatus | null) {
+  const values: Record<QualityStatus, { label: string; className: string }> = {
+    ok: { label: "质量正常", className: "is-ok" },
+    partial: { label: "数据不完整", className: "is-warning" },
+    stale: { label: "数据已过期", className: "is-warning" },
+    error: { label: "数据异常", className: "is-error" },
+  };
+  return status ? values[status] : { label: "质量未知", className: "is-warning" };
+}
+
+function periodKey(market: Market, code: string, option: PeriodOption) {
+  return `${market}/${code}/${option.period}/${option.range}/${option.adjustment}`;
+}
+
 function readableError(error: unknown, scope: "股票" | "K 线") {
   const message = error instanceof Error ? error.message : "未知错误";
   return `${scope}加载失败：${message}`;
-}
-
-export function isAShareTradingTime(now = new Date()) {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Asia/Shanghai",
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(now);
-  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  if (value.weekday === "Sat" || value.weekday === "Sun") return false;
-  const minute = Number(value.hour) * 60 + Number(value.minute);
-  return (minute >= 570 && minute <= 690) || (minute >= 780 && minute <= 900);
 }
 
 export function StockDetailPage() {
@@ -84,13 +87,23 @@ export function StockDetailPage() {
   const [selectedPeriod, setSelectedPeriod] = useState<(typeof PERIODS)[number]>(DEFAULT_PERIOD);
   const [stock, setStock] = useState<StockQuote | null>(null);
   const [bars, setBars] = useState<BarSeries | null>(null);
+  const [loadedBarsKey, setLoadedBarsKey] = useState<string | null>(null);
   const [stockLoading, setStockLoading] = useState(Boolean(market && code));
-  const [barsLoading, setBarsLoading] = useState(Boolean(market && code));
+  const [barsLoadingKey, setBarsLoadingKey] = useState<string | null>(null);
+  const [barsRefreshingKey, setBarsRefreshingKey] = useState<string | null>(null);
   const [stockError, setStockError] = useState<string | null>(null);
-  const [barsError, setBarsError] = useState<string | null>(null);
+  const [barsError, setBarsError] = useState<{ key: string; message: string } | null>(null);
+  const [barsRefreshError, setBarsRefreshError] = useState<{ key: string; message: string } | null>(null);
   const stockRequestSequence = useRef(0);
   const barsRequestSequence = useRef(0);
+  const barsRef = useRef<BarSeries | null>(null);
+  const loadedBarsKeyRef = useRef<string | null>(null);
+  const activeBarsRequestKeyRef = useRef<string | null>(null);
+  const selectedBarsKeyRef = useRef<string | null>(null);
+  const pollInFlightRef = useRef(false);
   const mounted = useRef(true);
+  const selectedBarsKey = market && code ? periodKey(market, code, selectedPeriod) : null;
+  selectedBarsKeyRef.current = selectedBarsKey;
 
   useEffect(() => {
     mounted.current = true;
@@ -106,6 +119,7 @@ export function StockDetailPage() {
     const sequence = ++stockRequestSequence.current;
     setStockLoading(true);
     setStockError(null);
+    setStock(null);
     try {
       const nextStock = await marketApi.getStock(market, code);
       if (mounted.current && sequence === stockRequestSequence.current) setStock(nextStock);
@@ -121,10 +135,17 @@ export function StockDetailPage() {
 
   const loadBars = useCallback(async () => {
     if (!market || !code) return;
+    const key = periodKey(market, code, selectedPeriod);
+    const keepsCurrentChart = loadedBarsKeyRef.current === key && barsRef.current !== null;
     const sequence = ++barsRequestSequence.current;
-    setBarsLoading(true);
-    setBarsError(null);
-    setBars(null);
+    activeBarsRequestKeyRef.current = key;
+    if (keepsCurrentChart) {
+      setBarsRefreshingKey(key);
+      setBarsRefreshError((current) => current?.key === key ? null : current);
+    } else {
+      setBarsLoadingKey(key);
+      setBarsError((current) => current?.key === key ? null : current);
+    }
     try {
       const nextBars = await marketApi.getBars({
         market,
@@ -133,14 +154,29 @@ export function StockDetailPage() {
         range: selectedPeriod.range,
         adjustment: selectedPeriod.adjustment,
       });
-      if (mounted.current && sequence === barsRequestSequence.current) setBars(nextBars);
+      if (mounted.current && sequence === barsRequestSequence.current) {
+        barsRef.current = nextBars;
+        loadedBarsKeyRef.current = key;
+        setBars(nextBars);
+        setLoadedBarsKey(key);
+        setBarsError(null);
+        setBarsRefreshError(null);
+      }
     } catch (error) {
       if (mounted.current && sequence === barsRequestSequence.current) {
-        setBars(null);
-        setBarsError(readableError(error, "K 线"));
+        const message = readableError(error, "K 线");
+        if (keepsCurrentChart) {
+          setBarsRefreshError({ key, message: `刷新失败：${message}` });
+        } else {
+          setBarsError({ key, message });
+        }
       }
     } finally {
-      if (mounted.current && sequence === barsRequestSequence.current) setBarsLoading(false);
+      if (mounted.current && sequence === barsRequestSequence.current) {
+        setBarsLoadingKey((current) => current === key ? null : current);
+        setBarsRefreshingKey((current) => current === key ? null : current);
+        if (activeBarsRequestKeyRef.current === key) activeBarsRequestKeyRef.current = null;
+      }
     }
   }, [code, market, selectedPeriod]);
 
@@ -154,11 +190,33 @@ export function StockDetailPage() {
 
   useEffect(() => {
     if (selectedPeriod.label !== "今日") return;
-    const timer = window.setInterval(() => {
-      if (isAShareTradingTime()) void loadBars();
+    const key = selectedBarsKey;
+    const timer = window.setInterval(async () => {
+      if (!key || pollInFlightRef.current || activeBarsRequestKeyRef.current === key) return;
+      pollInFlightRef.current = true;
+      try {
+        const summary = await marketApi.getSummary();
+        if (
+          mounted.current
+          && selectedBarsKeyRef.current === key
+          && summary.market_status === "open"
+          && activeBarsRequestKeyRef.current !== key
+        ) {
+          await loadBars();
+        }
+      } catch (error) {
+        if (mounted.current && selectedBarsKeyRef.current === key) {
+          setBarsRefreshError({
+            key,
+            message: `自动刷新状态检查失败：${error instanceof Error ? error.message : "未知错误"}`,
+          });
+        }
+      } finally {
+        pollInFlightRef.current = false;
+      }
     }, 60_000);
     return () => window.clearInterval(timer);
-  }, [loadBars, selectedPeriod.label]);
+  }, [loadBars, selectedBarsKey, selectedPeriod.label]);
 
   if (!market || !code) {
     return (
@@ -172,17 +230,28 @@ export function StockDetailPage() {
     );
   }
 
-  const change = movement(stock?.change_percent ?? null);
-  const latestBar = bars?.items.at(-1);
+  const change = movement(stock?.change_percent);
+  const changeAmount = movement(stock?.change_amount);
+  const changePercent = movement(stock?.change_percent);
+  const quality = qualityMeta(stock?.quality_status ?? null);
+  const visibleBars = loadedBarsKey === selectedBarsKey ? bars : null;
+  const matchingBarsError = barsError?.key === selectedBarsKey ? barsError.message : null;
+  const matchingRefreshError = barsRefreshError?.key === selectedBarsKey
+    ? barsRefreshError.message
+    : null;
+  const barsLoading = barsLoadingKey === selectedBarsKey
+    || (!visibleBars && !matchingBarsError);
+  const barsRefreshing = barsRefreshingKey === selectedBarsKey;
+  const latestBar = visibleBars?.items.at(-1);
   const quoteFields = [
-    ["最新价", formatNumber(stock?.latest_price ?? null)],
-    ["涨跌额", stock?.change_amount == null ? "—" : `${change.prefix}${formatNumber(stock.change_amount)}`],
-    ["涨跌幅", stock?.change_percent == null ? "—" : `${change.prefix}${formatNumber(stock.change_percent)}%`],
-    ["今开", formatNumber(stock?.open_price ?? null)],
-    ["最高", formatNumber(stock?.high_price ?? null)],
-    ["最低", formatNumber(stock?.low_price ?? null)],
-    ["成交量", formatCompact(stock?.volume ?? null)],
-    ["成交额", formatCompact(stock?.amount ?? null)],
+    { label: "最新价", value: formatMarketNumber(stock?.latest_price), className: change.className },
+    { label: "涨跌额", value: formatSigned(stock?.change_amount), className: changeAmount.className, direction: changeAmount.label },
+    { label: "涨跌幅", value: formatSigned(stock?.change_percent, "%"), className: changePercent.className, direction: changePercent.label },
+    { label: "今开", value: formatMarketNumber(stock?.open_price), className: "" },
+    { label: "最高", value: formatMarketNumber(stock?.high_price), className: "" },
+    { label: "最低", value: formatMarketNumber(stock?.low_price), className: "" },
+    { label: "成交量", value: formatCompact(stock?.volume), className: "" },
+    { label: "成交额", value: formatCompact(stock?.amount), className: "" },
   ];
 
   return (
@@ -196,6 +265,10 @@ export function StockDetailPage() {
           <span className="page-kicker">STOCK / {market}.{code}</span>
           <h1>{stock?.name ?? (stockLoading ? "正在读取股票…" : `${market}.${code}`)}</h1>
           <p className="stock-code data-value">{market}.{code} · {change.label}</p>
+          <div className="detail-data-meta" aria-label="股票数据状态">
+            <span>股票快照 {formatShanghaiDateTime(stock?.captured_at)}</span>
+            <strong className={quality.className}>{quality.label}</strong>
+          </div>
         </div>
         {stockError && (
           <div className="stock-error" role="alert">
@@ -206,11 +279,11 @@ export function StockDetailPage() {
       </header>
 
       <div className="quote-grid" aria-label="核心行情">
-        {quoteFields.map(([label, value], index) => (
-          <div className="quote-item" key={label}>
-            <span>{label}</span>
-            <strong className={`data-value ${index < 3 ? change.className : ""}`}>{value}</strong>
-            {index === 2 && <small>{change.label}</small>}
+        {quoteFields.map((field) => (
+          <div className="quote-item" key={field.label}>
+            <span>{field.label}</span>
+            <strong className={`data-value ${field.className}`}>{field.value}</strong>
+            {field.direction && <small>{field.direction}</small>}
           </div>
         ))}
       </div>
@@ -231,36 +304,45 @@ export function StockDetailPage() {
           </div>
           <div className="period-caption">
             {selectedPeriod.label === "今日" ? <strong>一分钟一根</strong> : <span>{selectedPeriod.adjustment === "qfq" ? "前复权" : "不复权"}</span>}
-            {barsLoading && <span role="status">正在更新…</span>}
+            {barsRefreshing && <span role="status">正在刷新 K 线…</span>}
+            {matchingRefreshError && <span className="refresh-error" role="alert">{matchingRefreshError}</span>}
           </div>
         </div>
 
-        {latestBar && !barsError && !barsLoading && (
+        {visibleBars && (
+          <div className="bars-data-meta" aria-label="K 线数据状态">
+            <span>K 线来源 {visibleBars.source?.trim() || "未知"}</span>
+            <span>最后更新 {formatShanghaiDateTime(visibleBars.last_updated_at)}</span>
+          </div>
+        )}
+
+        {latestBar && !matchingBarsError && (
           <div className="ohlc-strip" aria-label="最新一根 K 线">
-            <span>开 <b>{formatNumber(latestBar.open_price)}</b></span>
-            <span>高 <b>{formatNumber(latestBar.high_price)}</b></span>
-            <span>低 <b>{formatNumber(latestBar.low_price)}</b></span>
-            <span>收 <b>{formatNumber(latestBar.close_price)}</b></span>
+            <span>开 <b>{formatMarketNumber(latestBar.open_price)}</b></span>
+            <span>高 <b>{formatMarketNumber(latestBar.high_price)}</b></span>
+            <span>低 <b>{formatMarketNumber(latestBar.low_price)}</b></span>
+            <span>收 <b>{formatMarketNumber(latestBar.close_price)}</b></span>
             <span>量 <b>{formatCompact(latestBar.volume)}</b></span>
+            {!latestBar.is_complete && <strong className="dynamic-bar">动态柱</strong>}
           </div>
         )}
 
         <div className="chart-state">
-          {barsLoading ? (
+          {barsLoading && !visibleBars ? (
             <div className="empty-state" role="status">正在加载 K 线数据…</div>
-          ) : barsError ? (
+          ) : matchingBarsError ? (
             <div className="chart-error" role="alert">
               <strong>暂时无法读取 K 线</strong>
-              <p>{barsError}</p>
+              <p>{matchingBarsError}</p>
               <button type="button" onClick={() => void loadBars()}>重新加载 K 线</button>
             </div>
-          ) : bars && bars.items.length === 0 ? (
+          ) : visibleBars && visibleBars.items.length === 0 ? (
             <div className="empty-state">
               <strong>当前周期暂无 K 线数据</strong>
               <span>可尝试切换其他周期或稍后重试。</span>
             </div>
-          ) : bars ? (
-            <KlineChart series={bars} />
+          ) : visibleBars ? (
+            <KlineChart series={visibleBars} />
           ) : null}
         </div>
         <footer className="chart-note">
