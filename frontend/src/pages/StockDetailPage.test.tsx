@@ -6,7 +6,8 @@ import { dailyBarsFixture, stockDetailFixture, summaryFixture, todayBarsFixture 
 import { StockDetailPage } from "./StockDetailPage";
 
 vi.mock("../api/client", () => ({
-  marketApi: { getStock: vi.fn(), getBars: vi.fn(), getSummary: vi.fn() },
+  isAbortError: (error: unknown) => error instanceof DOMException && error.name === "AbortError",
+  marketApi: { getStock: vi.fn(), getBars: vi.fn(), getSummary: vi.fn(), getStocks: vi.fn() },
 }));
 
 vi.mock("../components/KlineChart", () => ({
@@ -19,6 +20,12 @@ beforeEach(() => {
   vi.mocked(marketApi.getStock).mockReset().mockResolvedValue(stockDetailFixture);
   vi.mocked(marketApi.getBars).mockReset().mockResolvedValue(dailyBarsFixture);
   vi.mocked(marketApi.getSummary).mockReset().mockResolvedValue(summaryFixture);
+  vi.mocked(marketApi.getStocks).mockReset().mockResolvedValue({
+    total: 0,
+    page: 1,
+    page_size: 10,
+    items: [],
+  });
 });
 
 afterEach(() => {
@@ -39,14 +46,21 @@ test("默认请求最近 60 个交易日的前复权日 K", async () => {
   renderDetail();
 
   expect(await screen.findByRole("heading", { name: /贵州茅台/ })).toBeInTheDocument();
-  expect(marketApi.getStock).toHaveBeenCalledWith("SH", "600519");
-  expect(marketApi.getBars).toHaveBeenCalledWith({
-    market: "SH",
-    code: "600519",
-    period: "1d",
-    range: "60d",
-    adjustment: "qfq",
-  });
+  expect(marketApi.getStock).toHaveBeenCalledWith(
+    "SH",
+    "600519",
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
+  expect(marketApi.getBars).toHaveBeenCalledWith(
+    {
+      market: "SH",
+      code: "600519",
+      period: "1d",
+      range: "60d",
+      adjustment: "qfq",
+    },
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
   expect(screen.getByRole("button", { name: "日K" })).toHaveAttribute("aria-pressed", "true");
 });
 
@@ -60,6 +74,7 @@ test("今日按钮请求当天原生一分钟 K 并解释颗粒度", async () =>
   await waitFor(() =>
     expect(marketApi.getBars).toHaveBeenLastCalledWith(
       expect.objectContaining({ period: "1m", range: "today", adjustment: "none" }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     ),
   );
   expect(screen.getByText("一分钟一根")).toBeInTheDocument();
@@ -157,7 +172,7 @@ test("后端判定闭市或节假日时不重复请求今日 K 线", async () =>
 
   await act(async () => vi.advanceTimersByTime(60_000));
   await act(async () => vi.advanceTimersByTime(60_000));
-  expect(marketApi.getSummary).toHaveBeenCalledTimes(2);
+  expect(marketApi.getSummary).toHaveBeenCalledTimes(3);
   expect(marketApi.getBars).toHaveBeenCalledTimes(2);
 });
 
@@ -187,6 +202,7 @@ test("后端判定开市时每 60 秒刷新且不会请求重入", async () => {
 test("市场状态恢复成功会清除旧刷新错误，切换周期也不会让错误重现", async () => {
   vi.useFakeTimers();
   vi.mocked(marketApi.getSummary)
+    .mockResolvedValueOnce(summaryFixture)
     .mockRejectedValueOnce(new Error("状态服务暂不可用"))
     .mockResolvedValue({ ...summaryFixture, market_status: "closed" });
   vi.mocked(marketApi.getBars)
@@ -252,4 +268,79 @@ test("涨跌额与涨跌幅分别按自身数值显示方向和正负号", async
   expect(percent).toHaveClass("up");
   expect(amount.parentElement).toHaveTextContent("下跌");
   expect(percent.parentElement).toHaveTextContent("上涨");
+});
+
+test("详情展示完整快照字段和来自统一摘要的开闭市状态", async () => {
+  renderDetail();
+
+  expect(await screen.findByText("昨收")).toBeInTheDocument();
+  expect(screen.getByText("1,552.32")).toBeInTheDocument();
+  expect(screen.getByText("换手率")).toBeInTheDocument();
+  expect(screen.getByText("0.30%")).toBeInTheDocument();
+  expect(screen.getByText("总市值")).toBeInTheDocument();
+  expect(screen.getByText("1.995 万亿")).toBeInTheDocument();
+  expect(screen.getByText("开市（交易中）")).toBeInTheDocument();
+
+  vi.mocked(marketApi.getSummary).mockResolvedValue({
+    ...summaryFixture,
+    market_status: "closed",
+  });
+  const { unmount } = renderDetail("/stocks/SZ/000001");
+  expect(await screen.findByText("闭市（已收盘）")).toBeInTheDocument();
+  unmount();
+});
+
+test("搜索其他股票支持键盘选择并切换详情", async () => {
+  vi.mocked(marketApi.getStocks).mockResolvedValue({
+    total: 1,
+    page: 1,
+    page_size: 10,
+    items: [{ ...stockDetailFixture, market: "SZ", code: "000001", name: "平安银行" }],
+  });
+  renderDetail();
+  const input = screen.getByRole("combobox", { name: "搜索其他股票" });
+
+  fireEvent.change(input, { target: { value: "平安" } });
+  const option = await screen.findByRole("option", { name: /平安银行 000001/ });
+  expect(option).toBeInTheDocument();
+  fireEvent.keyDown(input, { key: "ArrowDown" });
+  fireEvent.keyDown(input, { key: "Enter" });
+
+  await waitFor(() => expect(marketApi.getStock).toHaveBeenLastCalledWith(
+    "SZ",
+    "000001",
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  ));
+});
+
+test("切股搜索会取消旧请求并忽略迟到结果，卸载时也清理在途请求", async () => {
+  let resolveFirst: ((value: { total: number; page: number; page_size: number; items: typeof stockDetailFixture[] }) => void) | undefined;
+  vi.mocked(marketApi.getStocks)
+    .mockReturnValueOnce(new Promise((resolve) => { resolveFirst = resolve; }))
+    .mockResolvedValueOnce({
+      total: 1,
+      page: 1,
+      page_size: 10,
+      items: [{ ...stockDetailFixture, market: "SZ", code: "000001", name: "平安银行" }],
+    });
+  const { unmount } = renderDetail();
+  const input = screen.getByRole("combobox", { name: "搜索其他股票" });
+
+  fireEvent.change(input, { target: { value: "茅" } });
+  await waitFor(() => expect(marketApi.getStocks).toHaveBeenCalledTimes(1));
+  const firstSignal = vi.mocked(marketApi.getStocks).mock.calls[0][1]?.signal;
+  fireEvent.change(input, { target: { value: "平安" } });
+  await waitFor(() => expect(marketApi.getStocks).toHaveBeenCalledTimes(2));
+  expect(firstSignal?.aborted).toBe(true);
+  resolveFirst?.({
+    total: 1,
+    page: 1,
+    page_size: 10,
+    items: [stockDetailFixture],
+  });
+  expect(await screen.findByRole("option", { name: /平安银行/ })).toBeInTheDocument();
+
+  const secondSignal = vi.mocked(marketApi.getStocks).mock.calls[1][1]?.signal;
+  unmount();
+  expect(secondSignal?.aborted).toBe(true);
 });

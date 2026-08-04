@@ -5,6 +5,7 @@ import { summaryFixture, stockPageFixture } from "../test/fixtures";
 import { StockListPage } from "./StockListPage";
 
 vi.mock("../api/client", () => ({
+  isAbortError: (error: unknown) => error instanceof DOMException && error.name === "AbortError",
   marketApi: { getSummary: vi.fn(), getStocks: vi.fn() },
 }));
 
@@ -31,6 +32,7 @@ test("一只股票只占一行并在防抖后按名称搜索", async () => {
   await waitFor(() =>
     expect(marketApi.getStocks).toHaveBeenLastCalledWith(
       expect.objectContaining({ query: "茅台", page: 1 }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     ),
   );
 });
@@ -83,6 +85,7 @@ test("支持市场筛选、排序和分页", async () => {
   await waitFor(() =>
     expect(marketApi.getStocks).toHaveBeenLastCalledWith(
       expect.objectContaining({ market: "SH", page: 1 }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     ),
   );
 
@@ -90,6 +93,7 @@ test("支持市场筛选、排序和分页", async () => {
   await waitFor(() =>
     expect(marketApi.getStocks).toHaveBeenLastCalledWith(
       expect.objectContaining({ sortBy: "change_percent", sortOrder: "desc" }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     ),
   );
 
@@ -97,6 +101,7 @@ test("支持市场筛选、排序和分页", async () => {
   await waitFor(() =>
     expect(marketApi.getStocks).toHaveBeenLastCalledWith(
       expect.objectContaining({ page: 2 }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     ),
   );
 });
@@ -181,4 +186,39 @@ test("较早的异步响应不会覆盖较新的查询结果", async () => {
   await Promise.resolve();
   expect(screen.getByText("更新后的贵州茅台")).toBeInTheDocument();
   expect(screen.queryByText(/^贵州茅台$/)).not.toBeInTheDocument();
+});
+
+test("查询条件变化会取消上一批列表与摘要请求", async () => {
+  let resolveFirst: ((value: typeof stockPageFixture) => void) | undefined;
+  vi.mocked(marketApi.getStocks)
+    .mockReturnValueOnce(new Promise((resolve) => { resolveFirst = resolve; }))
+    .mockResolvedValue(stockPageFixture);
+  render(
+    <MemoryRouter>
+      <StockListPage />
+    </MemoryRouter>,
+  );
+  const firstOptions = vi.mocked(marketApi.getStocks).mock.calls[0][1] as { signal: AbortSignal };
+
+  fireEvent.change(screen.getByPlaceholderText("搜索股票代码或名称"), {
+    target: { value: "600519" },
+  });
+
+  await waitFor(() => expect(marketApi.getStocks).toHaveBeenCalledTimes(2));
+  expect(firstOptions.signal.aborted).toBe(true);
+  resolveFirst?.(stockPageFixture);
+});
+
+test("取消请求不会显示为行情错误", async () => {
+  vi.mocked(marketApi.getStocks).mockRejectedValueOnce(
+    new DOMException("请求已取消", "AbortError"),
+  );
+  render(
+    <MemoryRouter>
+      <StockListPage />
+    </MemoryRouter>,
+  );
+
+  await waitFor(() => expect(marketApi.getStocks).toHaveBeenCalled());
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });

@@ -57,6 +57,25 @@ async def test_fixture_source_filters_unknown_stock_and_out_of_range_bars():
         )
         == []
     )
+
+
+async def test_fixture_source_returns_weekly_and_monthly_periods_for_e2e():
+    source = FixtureSource()
+
+    weekly = await source.fetch_daily_bars(
+        "000001", date(2025, 8, 1), date(2026, 8, 4), "1w", "qfq"
+    )
+    monthly = await source.fetch_daily_bars(
+        "000001", date(2021, 8, 1), date(2026, 8, 4), "1mo", "qfq"
+    )
+
+    assert len(weekly) >= 12
+    assert 2 <= len(monthly) <= 4
+    assert all(bar.period == "1w" for bar in weekly)
+    assert all(bar.period == "1mo" for bar in monthly)
+    assert weekly[-1].volume > 35_000_000
+    assert weekly[-1].low_price <= weekly[-1].open_price <= weekly[-1].high_price
+    assert monthly[-1].low_price <= monthly[-1].close_price <= monthly[-1].high_price
     assert (
         await source.fetch_minute_bars(
             "600519",

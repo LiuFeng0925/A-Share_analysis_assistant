@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
-import { marketApi } from "../api/client";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { isAbortError, marketApi } from "../api/client";
 import type {
   Adjustment,
   BarPeriod,
   BarRange,
   BarSeries,
   Market,
+  MarketSummary,
   QualityStatus,
   StockQuote,
 } from "../api/types";
 import { KlineChart } from "../components/KlineChart";
+import { usePolling } from "../hooks/usePolling";
 import { formatMarketNumber, formatShanghaiDateTime, isFiniteNumber } from "../utils/marketFormat";
 
 interface PeriodOption {
@@ -41,6 +43,7 @@ function asMarket(value: string | undefined): Market | null {
 
 function formatCompact(value: number | null | undefined) {
   if (!isFiniteNumber(value)) return "—";
+  if (Math.abs(value) >= 1_000_000_000_000) return `${formatMarketNumber(value / 1_000_000_000_000, 3)} 万亿`;
   if (Math.abs(value) >= 100_000_000) return `${formatMarketNumber(value / 100_000_000)} 亿`;
   if (Math.abs(value) >= 10_000) return `${formatMarketNumber(value / 10_000)} 万`;
   return formatMarketNumber(value, 0);
@@ -80,12 +83,157 @@ function readableError(error: unknown, scope: "股票" | "K 线") {
   return `${scope}加载失败：${message}`;
 }
 
+function StockSwitcher({ onSelect }: { onSelect: (stock: StockQuote) => void }) {
+  const [query, setQuery] = useState("");
+  const [candidates, setCandidates] = useState<StockQuote[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const [open, setOpen] = useState(false);
+  const requestSequence = useRef(0);
+
+  useEffect(() => {
+    const keyword = query.trim();
+    const sequence = ++requestSequence.current;
+    const controller = new AbortController();
+    if (!keyword) {
+      setCandidates([]);
+      setLoading(false);
+      setError(null);
+      setActiveIndex(-1);
+      return () => controller.abort();
+    }
+
+    const timer = window.setTimeout(async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const result = await marketApi.getStocks({
+          query: keyword,
+          page: 1,
+          pageSize: 10,
+          sortBy: "code",
+          sortOrder: "asc",
+        }, { signal: controller.signal });
+        if (sequence !== requestSequence.current) return;
+        setCandidates(result.items);
+        setActiveIndex(result.items.length > 0 ? 0 : -1);
+        setOpen(true);
+      } catch (searchError) {
+        if (sequence !== requestSequence.current || isAbortError(searchError)) return;
+        setCandidates([]);
+        setActiveIndex(-1);
+        setError("暂时无法搜索股票，请稍后重试");
+        setOpen(true);
+      } finally {
+        if (sequence === requestSequence.current) setLoading(false);
+      }
+    }, 220);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [query]);
+
+  const selectCandidate = (candidate: StockQuote) => {
+    setQuery("");
+    setCandidates([]);
+    setOpen(false);
+    onSelect(candidate);
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Escape") {
+      setOpen(false);
+      return;
+    }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      if (candidates.length === 0) return;
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      setActiveIndex((current) => {
+        if (current < 0) return direction > 0 ? 0 : candidates.length - 1;
+        return (current + direction + candidates.length) % candidates.length;
+      });
+      setOpen(true);
+      return;
+    }
+    if (event.key === "Enter" && open) {
+      const candidate = candidates[activeIndex] ?? candidates[0];
+      if (candidate) {
+        event.preventDefault();
+        selectCandidate(candidate);
+      }
+    }
+  };
+
+  const listboxId = "stock-switcher-options";
+  return (
+    <div className="stock-switcher">
+      <label>
+        <span className="sr-only">搜索其他股票</span>
+        <input
+          role="combobox"
+          aria-label="搜索其他股票"
+          aria-autocomplete="list"
+          aria-controls={listboxId}
+          aria-expanded={open && Boolean(query.trim())}
+          aria-activedescendant={activeIndex >= 0 ? `stock-switch-option-${activeIndex}` : undefined}
+          value={query}
+          placeholder="输入代码或名称切换股票"
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setOpen(Boolean(event.target.value.trim()));
+          }}
+          onFocus={() => setOpen(Boolean(query.trim()))}
+          onKeyDown={handleKeyDown}
+        />
+      </label>
+      {open && query.trim() && (
+        <div className="stock-switch-popover">
+          {loading ? (
+            <span className="stock-switch-state" role="status">正在搜索股票…</span>
+          ) : error ? (
+            <span className="stock-switch-state is-error" role="alert">{error}</span>
+          ) : candidates.length === 0 ? (
+            <span className="stock-switch-state">没有匹配的股票</span>
+          ) : (
+            <ul id={listboxId} role="listbox" aria-label="股票搜索结果">
+              {candidates.map((candidate, index) => (
+                <li
+                  id={`stock-switch-option-${index}`}
+                  key={`${candidate.market}-${candidate.code}`}
+                  role="option"
+                  aria-label={`${candidate.name} ${candidate.code} ${candidate.market}`}
+                  aria-selected={activeIndex === index}
+                  onMouseEnter={() => setActiveIndex(index)}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    selectCandidate(candidate);
+                  }}
+                >
+                  <strong>{candidate.name}</strong>
+                  <span className="data-value">{candidate.code}</span>
+                  <small>{candidate.market}</small>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function StockDetailPage() {
   const params = useParams();
+  const navigate = useNavigate();
   const market = useMemo(() => asMarket(params.market), [params.market]);
   const code = params.code?.trim() ?? "";
   const [selectedPeriod, setSelectedPeriod] = useState<(typeof PERIODS)[number]>(DEFAULT_PERIOD);
   const [stock, setStock] = useState<StockQuote | null>(null);
+  const [marketSummary, setMarketSummary] = useState<MarketSummary | null>(null);
   const [bars, setBars] = useState<BarSeries | null>(null);
   const [loadedBarsKey, setLoadedBarsKey] = useState<string | null>(null);
   const [stockLoading, setStockLoading] = useState(Boolean(market && code));
@@ -96,11 +244,11 @@ export function StockDetailPage() {
   const [barsRefreshError, setBarsRefreshError] = useState<{ key: string; message: string } | null>(null);
   const stockRequestSequence = useRef(0);
   const barsRequestSequence = useRef(0);
+  const summaryRequestSequence = useRef(0);
   const barsRef = useRef<BarSeries | null>(null);
   const loadedBarsKeyRef = useRef<string | null>(null);
   const activeBarsRequestKeyRef = useRef<string | null>(null);
   const selectedBarsKeyRef = useRef<string | null>(null);
-  const pollInFlightRef = useRef(false);
   const mounted = useRef(true);
   const selectedBarsKey = market && code ? periodKey(market, code, selectedPeriod) : null;
   selectedBarsKeyRef.current = selectedBarsKey;
@@ -114,17 +262,18 @@ export function StockDetailPage() {
     };
   }, []);
 
-  const loadStock = useCallback(async () => {
+  const loadStock = useCallback(async (signal?: AbortSignal) => {
     if (!market || !code) return;
     const sequence = ++stockRequestSequence.current;
     setStockLoading(true);
     setStockError(null);
     setStock(null);
     try {
-      const nextStock = await marketApi.getStock(market, code);
+      const nextStock = await marketApi.getStock(market, code, { signal });
       if (mounted.current && sequence === stockRequestSequence.current) setStock(nextStock);
     } catch (error) {
       if (mounted.current && sequence === stockRequestSequence.current) {
+        if (isAbortError(error)) return;
         setStock(null);
         setStockError(readableError(error, "股票"));
       }
@@ -133,7 +282,21 @@ export function StockDetailPage() {
     }
   }, [code, market]);
 
-  const loadBars = useCallback(async () => {
+  const loadMarketSummary = useCallback(async (signal?: AbortSignal) => {
+    const sequence = ++summaryRequestSequence.current;
+    try {
+      const summary = await marketApi.getSummary({ signal });
+      if (mounted.current && sequence === summaryRequestSequence.current) {
+        setMarketSummary(summary);
+      }
+      return summary;
+    } catch (error) {
+      if (isAbortError(error)) return null;
+      return null;
+    }
+  }, []);
+
+  const loadBars = useCallback(async (signal?: AbortSignal) => {
     if (!market || !code) return;
     const key = periodKey(market, code, selectedPeriod);
     const keepsCurrentChart = loadedBarsKeyRef.current === key && barsRef.current !== null;
@@ -153,7 +316,7 @@ export function StockDetailPage() {
         period: selectedPeriod.period,
         range: selectedPeriod.range,
         adjustment: selectedPeriod.adjustment,
-      });
+      }, { signal });
       if (mounted.current && sequence === barsRequestSequence.current) {
         barsRef.current = nextBars;
         loadedBarsKeyRef.current = key;
@@ -164,6 +327,7 @@ export function StockDetailPage() {
       }
     } catch (error) {
       if (mounted.current && sequence === barsRequestSequence.current) {
+        if (isAbortError(error)) return;
         const message = readableError(error, "K 线");
         if (keepsCurrentChart) {
           setBarsRefreshError({ key, message: `刷新失败：${message}` });
@@ -181,45 +345,44 @@ export function StockDetailPage() {
   }, [code, market, selectedPeriod]);
 
   useEffect(() => {
-    void loadStock();
-  }, [loadStock]);
+    const controller = new AbortController();
+    void loadStock(controller.signal);
+    void loadMarketSummary(controller.signal);
+    return () => controller.abort();
+  }, [loadMarketSummary, loadStock]);
 
   useEffect(() => {
-    void loadBars();
+    const controller = new AbortController();
+    void loadBars(controller.signal);
+    return () => controller.abort();
   }, [loadBars]);
 
-  useEffect(() => {
-    if (selectedPeriod.label !== "今日") return;
-    const key = selectedBarsKey;
-    const timer = window.setInterval(async () => {
-      if (!key || pollInFlightRef.current || activeBarsRequestKeyRef.current === key) return;
-      pollInFlightRef.current = true;
-      try {
-        const summary = await marketApi.getSummary();
-        if (mounted.current && selectedBarsKeyRef.current === key) {
-          setBarsRefreshError((current) => current?.key === key ? null : current);
-        }
-        if (
-          mounted.current
-          && selectedBarsKeyRef.current === key
-          && summary.market_status === "open"
-          && activeBarsRequestKeyRef.current !== key
-        ) {
-          await loadBars();
-        }
-      } catch (error) {
-        if (mounted.current && selectedBarsKeyRef.current === key) {
-          setBarsRefreshError({
-            key,
-            message: `自动刷新状态检查失败：${error instanceof Error ? error.message : "未知错误"}`,
-          });
-        }
-      } finally {
-        pollInFlightRef.current = false;
+  const pollToday = useCallback(async (signal: AbortSignal) => {
+    const key = selectedBarsKeyRef.current;
+    if (!key || activeBarsRequestKeyRef.current === key) return;
+    try {
+      const summary = await marketApi.getSummary({ signal });
+      if (!mounted.current || selectedBarsKeyRef.current !== key) return;
+      setMarketSummary(summary);
+      setBarsRefreshError((current) => current?.key === key ? null : current);
+      if (summary.market_status === "open" && activeBarsRequestKeyRef.current !== key) {
+        await loadBars(signal);
       }
-    }, 60_000);
-    return () => window.clearInterval(timer);
-  }, [loadBars, selectedBarsKey, selectedPeriod.label]);
+    } catch (error) {
+      if (isAbortError(error)) return;
+      if (mounted.current && selectedBarsKeyRef.current === key) {
+        setBarsRefreshError({
+          key,
+          message: `自动刷新状态检查失败：${error instanceof Error ? error.message : "未知错误"}`,
+        });
+      }
+    }
+  }, [loadBars]);
+
+  usePolling(pollToday, 60_000, {
+    enabled: selectedPeriod.label === "今日",
+    immediate: false,
+  });
 
   if (!market || !code) {
     return (
@@ -237,6 +400,11 @@ export function StockDetailPage() {
   const changeAmount = movement(stock?.change_amount);
   const changePercent = movement(stock?.change_percent);
   const quality = qualityMeta(stock?.quality_status ?? null);
+  const marketStatus = marketSummary?.market_status === "open"
+    ? { label: "开市（交易中）", className: "is-open" }
+    : marketSummary?.market_status === "closed"
+      ? { label: "闭市（已收盘）", className: "is-closed" }
+      : { label: "市场状态确认中", className: "is-pending" };
   const visibleBars = loadedBarsKey === selectedBarsKey ? bars : null;
   const matchingBarsError = barsError?.key === selectedBarsKey ? barsError.message : null;
   const matchingRefreshError = barsRefreshError?.key === selectedBarsKey
@@ -251,10 +419,13 @@ export function StockDetailPage() {
     { label: "涨跌额", value: formatSigned(stock?.change_amount), className: changeAmount.className, direction: changeAmount.label },
     { label: "涨跌幅", value: formatSigned(stock?.change_percent, "%"), className: changePercent.className, direction: changePercent.label },
     { label: "今开", value: formatMarketNumber(stock?.open_price), className: "" },
+    { label: "昨收", value: formatMarketNumber(stock?.previous_close), className: "" },
     { label: "最高", value: formatMarketNumber(stock?.high_price), className: "" },
     { label: "最低", value: formatMarketNumber(stock?.low_price), className: "" },
     { label: "成交量（股）", value: formatCompact(stock?.volume), className: "" },
     { label: "成交额", value: formatCompact(stock?.amount), className: "" },
+    { label: "换手率", value: isFiniteNumber(stock?.turnover_rate) ? `${formatMarketNumber(stock.turnover_rate)}%` : "—", className: "" },
+    { label: "总市值", value: formatCompact(stock?.total_market_cap), className: "" },
   ];
 
   return (
@@ -263,7 +434,10 @@ export function StockDetailPage() {
         <div>
           <div className="detail-links">
             <Link to="/">← 返回全部股票</Link>
-            <Link to="/">搜索其他股票</Link>
+            <StockSwitcher onSelect={(candidate) => {
+              setSelectedPeriod(DEFAULT_PERIOD);
+              navigate(`/stocks/${candidate.market}/${candidate.code}`);
+            }} />
           </div>
           <span className="page-kicker">STOCK / {market}.{code}</span>
           <h1>{stock?.name ?? (stockLoading ? "正在读取股票…" : `${market}.${code}`)}</h1>
@@ -271,6 +445,10 @@ export function StockDetailPage() {
           <div className="detail-data-meta" aria-label="股票数据状态">
             <span>股票快照 {formatShanghaiDateTime(stock?.captured_at)}</span>
             <strong className={quality.className}>{quality.label}</strong>
+            <strong className={`detail-market-state ${marketStatus.className}`}>
+              {marketStatus.label}
+            </strong>
+            {marketSummary?.stale && <strong className="is-warning">市场摘要已过期</strong>}
           </div>
         </div>
         {stockError && (

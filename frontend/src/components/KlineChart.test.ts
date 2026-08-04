@@ -23,6 +23,9 @@ describe("KlineChart", () => {
         expect.objectContaining({ type: "slider" }),
       ]),
     );
+    const yAxes = option.yAxis as Array<{ min?: number; scale?: boolean }>;
+    expect(yAxes[0]).toEqual(expect.objectContaining({ scale: true }));
+    expect(yAxes[1]).toEqual(expect.objectContaining({ min: 0 }));
   });
 
   test("上涨与下跌使用 A 股红涨绿跌并同时保留数值含义", () => {

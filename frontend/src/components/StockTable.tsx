@@ -39,6 +39,28 @@ function tone(value: number | null) {
   return value > 0 ? "up" : "down";
 }
 
+function formatRange(low: number | null, high: number | null) {
+  if (low === null || high === null || !Number.isFinite(low) || !Number.isFinite(high)) {
+    return "--";
+  }
+  return `${formatNumber(low)} — ${formatNumber(high)}`;
+}
+
+function formatCapturedAt(value: string | null) {
+  if (!value) return "--";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "--";
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    timeZone: "Asia/Shanghai",
+  }).format(date).replaceAll("/", "-");
+}
+
 function SortButton({
   field,
   label,
@@ -90,8 +112,7 @@ export function StockTable({ stocks, sortBy, sortOrder, onSort }: StockTableProp
             </th>
             <th scope="col">涨跌额</th>
             <th scope="col">今开</th>
-            <th scope="col">最高</th>
-            <th scope="col">最低</th>
+            <th scope="col">今日区间</th>
             <th scope="col">成交量（股）</th>
             <th scope="col" aria-sort={ariaSort("amount")}>
               <SortButton field="amount" label="成交额" {...{ sortBy, sortOrder, onSort }} />
@@ -102,6 +123,7 @@ export function StockTable({ stocks, sortBy, sortOrder, onSort }: StockTableProp
             <th scope="col" aria-sort={ariaSort("total_market_cap")}>
               <SortButton field="total_market_cap" label="总市值" {...{ sortBy, sortOrder, onSort }} />
             </th>
+            <th scope="col">更新时间</th>
           </tr>
         </thead>
         <tbody>
@@ -152,8 +174,7 @@ export function StockTable({ stocks, sortBy, sortOrder, onSort }: StockTableProp
                   {signed(stock.change_amount)}
                 </td>
                 <td className="data-value">{formatNumber(stock.open_price)}</td>
-                <td className="data-value">{formatNumber(stock.high_price)}</td>
-                <td className="data-value">{formatNumber(stock.low_price)}</td>
+                <td className="data-value range-cell">{formatRange(stock.low_price, stock.high_price)}</td>
                 <td className="data-value">{formatCompact(stock.volume)}</td>
                 <td className="data-value">{formatCompact(stock.amount)}</td>
                 <td className="data-value">
@@ -162,6 +183,7 @@ export function StockTable({ stocks, sortBy, sortOrder, onSort }: StockTableProp
                     : `${formatNumber(stock.turnover_rate)}%`}
                 </td>
                 <td className="data-value">{formatCompact(stock.total_market_cap)}</td>
+                <td className="data-value update-cell">{formatCapturedAt(stock.captured_at)}</td>
               </tr>
             );
           })}

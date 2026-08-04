@@ -99,7 +99,7 @@ export function buildKlineOption(
         axisLabel: { color: "#687386" },
       },
       {
-        scale: true,
+        min: 0,
         gridIndex: 1,
         splitLine: { show: false },
         axisLabel: { color: "#687386" },

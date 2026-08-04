@@ -10,13 +10,8 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: "../backend/.venv/bin/uvicorn a_share_radar.main:app --app-dir ../backend/src --host 127.0.0.1 --port 18000",
+      command: "../backend/.venv/bin/python ../scripts/e2e_backend.py",
       url: "http://127.0.0.1:18000/api/health",
-      env: {
-        A_SHARE_FIXTURE_SOURCE: "true",
-        A_SHARE_DATA_DIR: "../data/e2e",
-        A_SHARE_FRONTEND_PORT: "4173",
-      },
       reuseExistingServer: false,
     },
     {

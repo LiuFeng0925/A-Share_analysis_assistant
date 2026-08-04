@@ -76,11 +76,11 @@ class FixtureSource:
     ) -> list[Bar]:
         if code not in {stock.code for stock in self._stocks}:
             return []
-        if period != "1d" or adjustment != "qfq":
+        if period not in {"1d", "1w", "1mo"} or adjustment != "qfq":
             return []
         return [
             bar
-            for bar in self._daily_bars(code)
+            for bar in self._history_bars(code, period)
             if start <= bar.bar_time.date() <= end
         ]
 
@@ -142,6 +142,43 @@ class FixtureSource:
                     amount=round(volume * close_price, 2),
                     source=cls.name,
                     is_complete=True,
+                    acquired_at=cls.captured_at,
+                )
+            )
+        return result
+
+    @classmethod
+    def _history_bars(cls, code: str, period: str) -> list[Bar]:
+        daily_bars = cls._daily_bars(code)
+        if period == "1d":
+            return daily_bars
+        grouped: dict[tuple[int, int], list[Bar]] = {}
+        for bar in daily_bars:
+            if period == "1w":
+                iso = bar.bar_time.isocalendar()
+                key = (iso.year, iso.week)
+            else:
+                key = (bar.bar_time.year, bar.bar_time.month)
+            grouped.setdefault(key, []).append(bar)
+
+        result: list[Bar] = []
+        for bars in grouped.values():
+            first, last = bars[0], bars[-1]
+            result.append(
+                Bar(
+                    code=code,
+                    market=first.market,
+                    period=period,
+                    adjustment="qfq",
+                    bar_time=last.bar_time,
+                    open_price=first.open_price,
+                    high_price=max(bar.high_price for bar in bars),
+                    low_price=min(bar.low_price for bar in bars),
+                    close_price=last.close_price,
+                    volume=sum(bar.volume for bar in bars),
+                    amount=round(sum(bar.amount for bar in bars), 2),
+                    source=cls.name,
+                    is_complete=all(bar.is_complete for bar in bars),
                     acquired_at=cls.captured_at,
                 )
             )

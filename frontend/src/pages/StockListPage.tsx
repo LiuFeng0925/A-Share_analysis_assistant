@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { marketApi } from "../api/client";
+import { isAbortError, marketApi } from "../api/client";
 import type { Market, MarketSummary as MarketSummaryData, StockPage, StockQuery } from "../api/types";
 import { MarketSummary } from "../components/MarketSummary";
 import { StockTable } from "../components/StockTable";
@@ -56,13 +56,13 @@ export function StockListPage() {
     };
   }, []);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     const sequence = ++requestSequence.current;
     setLoading(true);
     setError(null);
     try {
       const [nextSummary, nextPage] = await Promise.all([
-        marketApi.getSummary(),
+        marketApi.getSummary({ signal }),
         marketApi.getStocks({
           query: query || undefined,
           market: market || undefined,
@@ -70,13 +70,14 @@ export function StockListPage() {
           pageSize: PAGE_SIZE,
           sortBy,
           sortOrder,
-        }),
+        }, { signal }),
       ]);
       if (!mounted.current || sequence !== requestSequence.current) return;
       setSummary(nextSummary);
       setStockPage(nextPage);
     } catch (loadError) {
       if (!mounted.current || sequence !== requestSequence.current) return;
+      if (isAbortError(loadError)) return;
       setError(readableError(loadError));
     } finally {
       if (mounted.current && sequence === requestSequence.current) setLoading(false);

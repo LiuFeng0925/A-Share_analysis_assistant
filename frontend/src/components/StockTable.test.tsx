@@ -5,7 +5,7 @@ import { StockTable } from "./StockTable";
 
 const stock = stockPageFixture.items[0];
 
-test("按亿元和万亿元边界格式化成交额及市值，并展示成交量列", () => {
+test("一行展示今日区间、更新时间，并按亿元和万亿元格式化关键字段", () => {
   render(
     <MemoryRouter>
       <StockTable
@@ -29,14 +29,16 @@ test("按亿元和万亿元边界格式化成交额及市值，并展示成交�
       "涨跌幅",
       "涨跌额",
       "今开",
-      "最高",
-      "最低",
+      "今日区间",
       "成交量（股）",
       "成交额",
       "换手率",
       "总市值",
+      "更新时间",
     ]);
   expect(screen.getByRole("columnheader", { name: "成交量（股）" })).toBeInTheDocument();
+  expect(screen.getByText("1,551.01 — 1,599.90")).toBeInTheDocument();
+  expect(screen.getByText("08-04 10:26:00")).toBeInTheDocument();
   expect(screen.getByText("1 亿")).toBeInTheDocument();
   expect(screen.getByText("1,000 亿")).toBeInTheDocument();
   expect(screen.getByText("1 万亿")).toBeInTheDocument();

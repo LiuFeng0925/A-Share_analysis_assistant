@@ -9,24 +9,55 @@ import type {
 } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+const DEFAULT_TIMEOUT_MS = 10_000;
 
-async function request<T>(path: string): Promise<T> {
-  let response: Response;
+export interface RequestOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
+export function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
+function abortError(): DOMException {
+  return new DOMException("请求已取消", "AbortError");
+}
+
+class ApiHttpError extends Error {}
+
+async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const abortFromCaller = () => controller.abort(options.signal?.reason);
+  if (options.signal?.aborted) abortFromCaller();
+  else options.signal?.addEventListener("abort", abortFromCaller, { once: true });
+  const timeout = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
   try {
-    response = await fetch(`${API_BASE}${path}`);
-  } catch {
+    const response = await fetch(`${API_BASE}${path}`, { signal: controller.signal });
+    if (!response.ok) {
+      throw new ApiHttpError(`行情接口失败：${response.status}`);
+    }
+    return await response.json() as T;
+  } catch (error) {
+    if (options.signal?.aborted) throw abortError();
+    if (timedOut) throw new Error("行情请求超时，请稍后重试");
+    if (error instanceof ApiHttpError) throw error;
+    if (isAbortError(error)) throw error;
     throw new Error("无法连接行情服务，请检查后端是否已启动");
+  } finally {
+    window.clearTimeout(timeout);
+    options.signal?.removeEventListener("abort", abortFromCaller);
   }
-
-  if (!response.ok) {
-    throw new Error(`行情接口失败：${response.status}`);
-  }
-  return response.json() as Promise<T>;
 }
 
 export const marketApi = {
-  getSummary: () => request<MarketSummary>("/api/market/summary"),
-  getStocks: (params: StockQuery) => {
+  getSummary: (options?: RequestOptions) => request<MarketSummary>("/api/market/summary", options),
+  getStocks: (params: StockQuery, options?: RequestOptions) => {
     const query = new URLSearchParams();
     if (params.query) query.set("query", params.query);
     if (params.market) query.set("market", params.market);
@@ -34,11 +65,11 @@ export const marketApi = {
     query.set("page_size", String(params.pageSize));
     query.set("sort_by", params.sortBy);
     query.set("sort_order", params.sortOrder);
-    return request<StockPage>(`/api/market/stocks?${query}`);
+    return request<StockPage>(`/api/market/stocks?${query}`, options);
   },
-  getStock: (market: Market, code: string) =>
-    request<StockQuote>(`/api/stocks/${market}/${encodeURIComponent(code)}`),
-  getBars: (params: BarQuery) => {
+  getStock: (market: Market, code: string, options?: RequestOptions) =>
+    request<StockQuote>(`/api/stocks/${market}/${encodeURIComponent(code)}`, options),
+  getBars: (params: BarQuery, options?: RequestOptions) => {
     const query = new URLSearchParams({
       period: params.period,
       range: params.range,
@@ -46,6 +77,7 @@ export const marketApi = {
     });
     return request<BarSeries>(
       `/api/stocks/${params.market}/${encodeURIComponent(params.code)}/bars?${query}`,
+      options,
     );
   },
 };

@@ -114,6 +114,13 @@ async def test_stock_detail_returns_latest_quote(app_with_fixture_data):
     assert body["market"] == "SH"
     assert body["name"] == "贵州茅台"
     assert body["latest_price"] == 1330.06
+    assert body["previous_close"] == 1358.98
+    assert body["turnover_rate"] == 0.27
+    assert body["total_market_cap"] == 1670000000000.0
+    assert body["volume"] == 33455
+    assert body["amount"] == 4472998836.0
+    assert body["captured_at"].endswith("+08:00")
+    assert body["quality_status"] == "ok"
 
 
 async def test_stock_detail_returns_404_when_stock_does_not_exist(

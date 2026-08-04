@@ -365,7 +365,7 @@ tr:focus-visible {
 
 .stock-table {
   width: 100%;
-  min-width: 1210px;
+  min-width: 1380px;
   border-collapse: collapse;
   table-layout: fixed;
 }
@@ -660,6 +660,7 @@ tr:focus-visible {
 
 .detail-links {
   display: flex;
+  align-items: center;
   gap: 16px;
   margin-bottom: 18px;
 }
@@ -673,6 +674,91 @@ tr:focus-visible {
 
 .detail-links a:hover {
   color: var(--brand);
+}
+
+.stock-switcher {
+  position: relative;
+  z-index: 20;
+  width: 250px;
+}
+
+.stock-switcher input {
+  width: 100%;
+  height: 34px;
+  padding: 0 11px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+  outline: none;
+}
+
+.stock-switcher input::placeholder {
+  color: var(--muted);
+}
+
+.stock-switcher input:focus {
+  border-color: #9cb0ef;
+  box-shadow: 0 0 0 3px rgba(49, 87, 213, 0.09);
+}
+
+.stock-switch-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 290px;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 14px 34px rgba(26, 43, 74, 0.16);
+}
+
+.stock-switch-popover ul {
+  max-height: 280px;
+  margin: 0;
+  padding: 5px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.stock-switch-popover li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 38px;
+  padding: 0 9px;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.stock-switch-popover li[aria-selected="true"] {
+  background: var(--brand-soft);
+}
+
+.stock-switch-popover li strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stock-switch-popover li span,
+.stock-switch-popover li small {
+  color: var(--muted);
+}
+
+.stock-switch-state {
+  display: block;
+  padding: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.stock-switch-state.is-error {
+  color: #8d311f;
 }
 
 .detail-header h1 {
@@ -717,6 +803,17 @@ tr:focus-visible {
   background: #eaf8f1;
 }
 
+.detail-data-meta .detail-market-state.is-open {
+  color: #147a55;
+  background: #eaf8f1;
+}
+
+.detail-data-meta .detail-market-state.is-closed,
+.detail-data-meta .detail-market-state.is-pending {
+  color: #596579;
+  background: #eef1f5;
+}
+
 .detail-data-meta .is-warning {
   color: #9a6714;
   background: #fff7df;
@@ -756,7 +853,7 @@ tr:focus-visible {
 
 .quote-grid {
   display: grid;
-  grid-template-columns: repeat(8, minmax(108px, 1fr));
+  grid-template-columns: repeat(11, minmax(108px, 1fr));
   margin-bottom: 14px;
   overflow-x: auto;
   background: var(--surface);
@@ -1082,7 +1179,7 @@ tr:focus-visible {
   }
 
   .quote-grid {
-    grid-template-columns: repeat(8, 128px);
+    grid-template-columns: repeat(11, 128px);
   }
 
   .period-toolbar {
