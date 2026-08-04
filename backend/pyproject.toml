@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling==1.31.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "a-share-radar"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi==0.141.1",
+  "uvicorn[standard]==0.52.1",
+  "duckdb==1.5.5",
+  "akshare==1.18.81",
+  "pandas==3.0.5",
+  "pyarrow==25.0.0",
+  "pydantic==2.13.4",
+  "pydantic-settings==2.14.2",
+  "apscheduler==3.11.3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.1.1",
+  "pytest-asyncio==1.4.0",
+  "httpx==0.28.1",
+  "ruff==0.16.1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/a_share_radar"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
