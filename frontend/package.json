@@ -9,7 +9,7 @@
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "e2e": "../backend/.venv/bin/python ../scripts/run_e2e.py"
+    "e2e": "node ../scripts/run_e2e.mjs"
   },
   "dependencies": {
     "echarts": "6.1.0",
