@@ -26,6 +26,7 @@ RANGE_DAYS = {
 PERIODS = {"1m", "5m", "15m", "30m", "60m", "1d", "1w", "1mo"}
 ADJUSTMENTS = {"none", "qfq", "hfq"}
 _EARLIEST_BAR_TIME = datetime(1990, 1, 1, tzinfo=SHANGHAI)
+_PROVIDER_LOCK_STRIPES = 256
 
 
 class BarQueryValidationError(ValueError):
@@ -53,7 +54,11 @@ class _RecentResult:
 
 QueryKey = tuple[Market, str, str, str, str]
 DailyKey = tuple[Market, str]
-ProviderKey = tuple[str, Market, str, str, str, date | datetime, date | datetime]
+RangeValue = date | datetime
+ProviderSeriesKey = tuple[str, Market, str, str, str]
+ProviderOperation = Callable[
+    [RangeValue, RangeValue], Awaitable[list[Bar] | BarFetchBatch]
+]
 
 
 class BarService:
@@ -64,6 +69,7 @@ class BarService:
         history_days: int,
         query_ttl_seconds: float = 2.0,
         query_cache_max_entries: int = 256,
+        range_recheck_seconds: float = 7 * 24 * 60 * 60,
     ) -> None:
         self.source = source
         self.repository = repository
@@ -71,10 +77,16 @@ class BarService:
         self.query_ttl_seconds = query_ttl_seconds
         if query_cache_max_entries < 1:
             raise ValueError("K 线查询缓存上限必须大于零")
+        if range_recheck_seconds <= 0:
+            raise ValueError("K 线范围复查间隔必须大于零")
         self.query_cache_max_entries = query_cache_max_entries
+        self.range_recheck_seconds = range_recheck_seconds
         self._inflight: dict[QueryKey, asyncio.Task[list[Bar]]] = {}
         self._daily_inflight: dict[DailyKey, asyncio.Task[list[Bar]]] = {}
-        self._provider_inflight: dict[ProviderKey, asyncio.Task[list[Bar]]] = {}
+        self._provider_inflight: set[asyncio.Task[list[Bar]]] = set()
+        self._provider_locks = tuple(
+            asyncio.Lock() for _ in range(_PROVIDER_LOCK_STRIPES)
+        )
         self._recent: OrderedDict[QueryKey, _RecentResult] = OrderedDict()
         self._closed = False
 
@@ -125,7 +137,11 @@ class BarService:
                 f"交易日历不足 {self.history_days} 日，"
                 f"当前仅 {len(completed_days)} 日，本轮不写入部分历史"
             )
-        target_days = set(completed_days[-self.history_days :])
+        target_days = {
+            day
+            for day in completed_days[-self.history_days :]
+            if stock.list_date is None or day >= stock.list_date
+        }
         existing_days = {
             bar.bar_time.date()
             for bar in complete_existing
@@ -136,15 +152,9 @@ class BarService:
             return existing
         start_date = min(missing_days)
         fetch_end_date = max(missing_days)
-        fetched = await self._fetch_daily_provider(
+        await self._fetch_daily_provider(
             stock.market, stock.code, start_date, fetch_end_date, "1d", "qfq"
         )
-        eligible = [
-            bar
-            for bar in fetched
-            if bar.bar_time.date() in missing_days and bar.is_complete
-        ]
-        await _run_repository_call(self.repository.upsert_bars, eligible)
         return await _run_repository_call(
             self.repository.get_bars,
             stock.market,
@@ -242,21 +252,18 @@ class BarService:
             adjustment,
         )
         if period.endswith("m"):
-            fetched = await self._fetch_minute_increment(
+            await self._fetch_minute_increment(
                 market, code, period, adjustment, start, end, cached
             )
         else:
             try:
-                fetched = await self._fetch_history_increment(
+                await self._fetch_history_increment(
                     market, code, period, adjustment, start, end, cached, now
                 )
             except Exception:
                 if not cached:
                     raise
                 logger.exception("历史 K 线增量抓取失败，返回本地缓存")
-                fetched = []
-        normalized = self._mark_completion(fetched)
-        await _run_repository_call(self.repository.upsert_bars, normalized)
         return await _run_repository_call(
             self.repository.get_bars,
             market,
@@ -336,7 +343,18 @@ class BarService:
         period: str,
         adjustment: str,
     ) -> list[Bar]:
-        key: ProviderKey = (
+        async def operation(
+            requested_start: RangeValue, requested_end: RangeValue
+        ) -> list[Bar] | BarFetchBatch:
+            if isinstance(requested_start, datetime) or isinstance(
+                requested_end, datetime
+            ):
+                raise TypeError("历史 K 线范围必须使用日期")
+            return await self.source.fetch_daily_bars(
+                code, requested_start, requested_end, period, adjustment
+            )
+
+        return await self._coordinated_provider_fetch(
             "history",
             market,
             code,
@@ -344,15 +362,7 @@ class BarService:
             adjustment,
             start,
             end,
-        )
-
-        async def operation() -> list[Bar] | BarFetchBatch:
-            return await self.source.fetch_daily_bars(
-                code, start, end, period, adjustment
-            )
-
-        return await self._shared_provider_fetch(
-            key, market, code, period, adjustment, operation
+            operation,
         )
 
     async def _fetch_minute_provider(
@@ -364,7 +374,18 @@ class BarService:
         period: str,
         adjustment: str,
     ) -> list[Bar]:
-        key: ProviderKey = (
+        async def operation(
+            requested_start: RangeValue, requested_end: RangeValue
+        ) -> list[Bar] | BarFetchBatch:
+            if not isinstance(requested_start, datetime) or not isinstance(
+                requested_end, datetime
+            ):
+                raise TypeError("分钟 K 线范围必须使用时间")
+            return await self.source.fetch_minute_bars(
+                code, requested_start, requested_end, period, adjustment
+            )
+
+        return await self._coordinated_provider_fetch(
             "minute",
             market,
             code,
@@ -372,74 +393,180 @@ class BarService:
             adjustment,
             start,
             end,
+            operation,
         )
 
-        async def operation() -> list[Bar] | BarFetchBatch:
-            return await self.source.fetch_minute_bars(
-                code, start, end, period, adjustment
-            )
-
-        return await self._shared_provider_fetch(
-            key, market, code, period, adjustment, operation
-        )
-
-    async def _shared_provider_fetch(
+    async def _coordinated_provider_fetch(
         self,
-        key: ProviderKey,
+        kind: str,
         market: Market,
         code: str,
         period: str,
         adjustment: str,
-        operation: Callable[[], Awaitable[list[Bar] | BarFetchBatch]],
+        start: RangeValue,
+        end: RangeValue,
+        operation: ProviderOperation,
     ) -> list[Bar]:
-        task = self._provider_inflight.get(key)
-        if task is None:
-            for candidate_key, candidate_task in self._provider_inflight.items():
-                if candidate_key[:5] != key[:5]:
-                    continue
-                if candidate_key[5] <= key[5] and candidate_key[6] >= key[6]:
-                    task = candidate_task
-                    break
-        if task is None:
-            task = asyncio.create_task(
-                self._run_provider_fetch(
-                    market, code, period, adjustment, operation
-                )
+        series_key: ProviderSeriesKey = (
+            kind,
+            market,
+            code,
+            period,
+            adjustment,
+        )
+        lock = self._provider_locks[hash(series_key) % len(self._provider_locks)]
+        task = asyncio.create_task(
+            self._run_coordinated_provider_fetch(
+                lock,
+                kind,
+                market,
+                code,
+                period,
+                adjustment,
+                start,
+                end,
+                operation,
             )
-            self._provider_inflight[key] = task
-            task.add_done_callback(
-                lambda completed, key=key: self._discard_provider_task(
-                    key, completed
-                )
-            )
+        )
+        self._provider_inflight.add(task)
+        task.add_done_callback(self._discard_provider_task)
         return list(await asyncio.shield(task))
 
-    def _discard_provider_task(
-        self, key: ProviderKey, completed: asyncio.Task[list[Bar]]
-    ) -> None:
-        if self._provider_inflight.get(key) is completed:
-            del self._provider_inflight[key]
+    def _discard_provider_task(self, completed: asyncio.Task[list[Bar]]) -> None:
+        self._provider_inflight.discard(completed)
         if not completed.cancelled():
             completed.exception()
 
-    async def _run_provider_fetch(
+    async def _run_coordinated_provider_fetch(
         self,
+        lock: asyncio.Lock,
+        kind: str,
         market: Market,
         code: str,
         period: str,
         adjustment: str,
-        operation: Callable[[], Awaitable[list[Bar] | BarFetchBatch]],
+        start: RangeValue,
+        end: RangeValue,
+        operation: ProviderOperation,
+    ) -> list[Bar]:
+        async with lock:
+            range_start, range_end = self._storage_range(kind, start, end)
+            checked_after = datetime.now(SHANGHAI) - timedelta(
+                seconds=self.range_recheck_seconds
+            )
+            confirmed = await _run_repository_call(
+                self.repository.list_confirmed_bar_ranges,
+                market,
+                code,
+                period,
+                adjustment,
+                range_start,
+                range_end,
+                checked_after,
+            )
+            confirmed_values = self._restore_ranges(kind, confirmed)
+            remaining = self._subtract_confirmed_ranges(
+                start, end, confirmed_values, period
+            )
+            fetched: list[Bar] = []
+            for requested_start, requested_end in remaining:
+                fetched.extend(
+                    await self._run_provider_fetch(
+                        kind,
+                        market,
+                        code,
+                        period,
+                        adjustment,
+                        requested_start,
+                        requested_end,
+                        operation,
+                    )
+                )
+            return fetched
+
+    @staticmethod
+    def _storage_range(
+        kind: str, start: RangeValue, end: RangeValue
+    ) -> tuple[datetime, datetime]:
+        if kind == "history":
+            if isinstance(start, datetime) or isinstance(end, datetime):
+                raise TypeError("历史 K 线范围必须使用日期")
+            return (
+                datetime.combine(start, time.min, tzinfo=SHANGHAI),
+                datetime.combine(end, time.max, tzinfo=SHANGHAI),
+            )
+        if not isinstance(start, datetime) or not isinstance(end, datetime):
+            raise TypeError("分钟 K 线范围必须使用时间")
+        return start.astimezone(SHANGHAI), end.astimezone(SHANGHAI)
+
+    @staticmethod
+    def _restore_ranges(
+        kind: str, ranges: list[tuple[datetime, datetime]]
+    ) -> list[tuple[RangeValue, RangeValue]]:
+        if kind == "history":
+            return [(start.date(), end.date()) for start, end in ranges]
+        return ranges
+
+    @classmethod
+    def _subtract_confirmed_ranges(
+        cls,
+        start: RangeValue,
+        end: RangeValue,
+        confirmed: list[tuple[RangeValue, RangeValue]],
+        period: str,
+    ) -> list[tuple[RangeValue, RangeValue]]:
+        remaining = [(start, end)]
+        for confirmed_start, confirmed_end in sorted(confirmed):
+            next_remaining: list[tuple[RangeValue, RangeValue]] = []
+            for segment_start, segment_end in remaining:
+                if confirmed_end < segment_start or confirmed_start > segment_end:
+                    next_remaining.append((segment_start, segment_end))
+                    continue
+                if confirmed_start > segment_start:
+                    before_end = cls._shift_range_boundary(
+                        confirmed_start, period, -1
+                    )
+                    if before_end >= segment_start:
+                        next_remaining.append((segment_start, before_end))
+                if confirmed_end < segment_end:
+                    after_start = cls._shift_range_boundary(
+                        confirmed_end, period, 1
+                    )
+                    if after_start <= segment_end:
+                        next_remaining.append((after_start, segment_end))
+            remaining = next_remaining
+        return remaining
+
+    @staticmethod
+    def _shift_range_boundary(
+        value: RangeValue, period: str, direction: int
+    ) -> RangeValue:
+        if isinstance(value, datetime):
+            return value + direction * timedelta(seconds=1)
+        return value + direction * timedelta(days=1)
+
+    async def _run_provider_fetch(
+        self,
+        kind: str,
+        market: Market,
+        code: str,
+        period: str,
+        adjustment: str,
+        start: RangeValue,
+        end: RangeValue,
+        operation: ProviderOperation,
     ) -> list[Bar]:
         started_at = datetime.now(SHANGHAI)
         source_name = str(
             getattr(self.source, "name", self.source.__class__.__name__)
         )
         try:
-            result = await operation()
+            result = await operation(start, end)
         except asyncio.CancelledError:
             raise
         except Exception as error:
             acquired_at = datetime.now(SHANGHAI)
+            range_start, range_end = self._storage_range(kind, start, end)
             await _run_repository_call(
                 self.repository.record_bar_ingestion,
                 market=market,
@@ -456,12 +583,24 @@ class BarService:
                 status="failed",
                 quality_status=QualityStatus.ERROR.value,
                 error_message=type(error).__name__,
+                range_start=range_start,
+                range_end=range_end,
             )
             raise
 
         batch = self._coerce_batch(result, source_name)
-        bars = list(batch.bars)
+        requested_bars = self._bars_in_requested_range(
+            kind, list(batch.bars), start, end
+        )
+        bars = self._mark_completion(requested_bars)
+        quality_status = (
+            QualityStatus.PARTIAL
+            if any(bar.quality_status is not QualityStatus.OK for bar in bars)
+            else batch.quality_status
+        )
+        await _run_repository_call(self.repository.upsert_bars, bars)
         market_time = max((bar.bar_time for bar in bars), default=None)
+        range_start, range_end = self._storage_range(kind, start, end)
         await _run_repository_call(
             self.repository.record_bar_ingestion,
             market=market,
@@ -472,14 +611,31 @@ class BarService:
             acquired_at=batch.acquired_at,
             source=batch.source,
             market_time=market_time,
-            raw_row_count=batch.raw_row_count,
-            valid_row_count=batch.valid_row_count,
+            raw_row_count=len(bars) + batch.invalid_row_count,
+            valid_row_count=len(bars),
             invalid_row_count=batch.invalid_row_count,
             status="success",
-            quality_status=batch.quality_status.value,
+            quality_status=quality_status.value,
             error_message=None,
+            range_start=range_start,
+            range_end=range_end,
         )
         return bars
+
+    @staticmethod
+    def _bars_in_requested_range(
+        kind: str,
+        bars: list[Bar],
+        start: RangeValue,
+        end: RangeValue,
+    ) -> list[Bar]:
+        if kind == "history":
+            if isinstance(start, datetime) or isinstance(end, datetime):
+                raise TypeError("历史 K 线范围必须使用日期")
+            return [bar for bar in bars if start <= bar.bar_time.date() <= end]
+        if not isinstance(start, datetime) or not isinstance(end, datetime):
+            raise TypeError("分钟 K 线范围必须使用时间")
+        return [bar for bar in bars if start <= bar.bar_time <= end]
 
     @staticmethod
     def _coerce_batch(
@@ -553,7 +709,7 @@ class BarService:
             {
                 *self._inflight.values(),
                 *self._daily_inflight.values(),
-                *self._provider_inflight.values(),
+                *self._provider_inflight,
             }
         )
         for task in tasks:

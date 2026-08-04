@@ -79,6 +79,25 @@ CREATE TABLE IF NOT EXISTS ingestion_run (
   invalid_row_count BIGINT
 );
 
+CREATE TABLE IF NOT EXISTS bar_range_check (
+  market VARCHAR NOT NULL,
+  code VARCHAR NOT NULL,
+  period VARCHAR NOT NULL,
+  adjustment VARCHAR NOT NULL,
+  range_start TIMESTAMPTZ NOT NULL,
+  range_end TIMESTAMPTZ NOT NULL,
+  checked_at TIMESTAMPTZ NOT NULL,
+  source VARCHAR NOT NULL,
+  status VARCHAR NOT NULL,
+  quality_status VARCHAR NOT NULL,
+  raw_row_count BIGINT NOT NULL,
+  valid_row_count BIGINT NOT NULL,
+  invalid_row_count BIGINT NOT NULL,
+  PRIMARY KEY (
+    market, code, period, adjustment, range_start, range_end
+  )
+);
+
 CREATE TABLE IF NOT EXISTS market_summary_batch (
   run_id UUID PRIMARY KEY,
   market_time TIMESTAMPTZ NOT NULL,

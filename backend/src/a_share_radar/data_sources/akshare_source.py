@@ -19,6 +19,7 @@ from a_share_radar.domain.models import (
 )
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
+_PROVISIONAL_CAPTURED_AT = datetime(1970, 1, 1, tzinfo=SHANGHAI)
 logger = logging.getLogger(__name__)
 
 
@@ -221,11 +222,67 @@ class AkshareSource:
 
     async def fetch_market_snapshot(self) -> list[QuoteSnapshot]:
         frame = await _run_provider_thread(ak.stock_zh_a_spot_em)
-        return self.normalize_snapshot(frame, datetime.now(SHANGHAI))
+        normalized = self.normalize_snapshot(frame, _PROVISIONAL_CAPTURED_AT)
+        captured_at = datetime.now(SHANGHAI)
+        return [replace(quote, captured_at=captured_at) for quote in normalized]
 
     async def fetch_stock_master(self) -> list[Stock]:
         quotes = await self.fetch_market_snapshot()
-        return [Stock(quote.code, quote.market, quote.name) for quote in quotes]
+        frames = await asyncio.gather(
+            self._fetch_listing_frame(
+                "上交所主板", ak.stock_info_sh_name_code, "主板A股"
+            ),
+            self._fetch_listing_frame(
+                "上交所科创板", ak.stock_info_sh_name_code, "科创板"
+            ),
+            self._fetch_listing_frame(
+                "深交所 A 股", ak.stock_info_sz_name_code, "A股列表"
+            ),
+            self._fetch_listing_frame("北交所", ak.stock_info_bj_name_code),
+        )
+        listing_dates = self._listing_dates(frames)
+        return [
+            Stock(
+                quote.code,
+                quote.market,
+                quote.name,
+                list_date=listing_dates.get(quote.code),
+            )
+            for quote in quotes
+        ]
+
+    @staticmethod
+    async def _fetch_listing_frame(
+        label: str, function: Callable[..., pd.DataFrame], *args: object
+    ) -> pd.DataFrame:
+        try:
+            return await _run_provider_thread(function, *args)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("加载%s上市日期失败，保留仓储已有日期", label)
+            return pd.DataFrame()
+
+    @staticmethod
+    def _listing_dates(frames: list[pd.DataFrame]) -> dict[str, date]:
+        result: dict[str, date] = {}
+        specifications = (
+            (frames[0], "证券代码", "上市日期"),
+            (frames[1], "证券代码", "上市日期"),
+            (frames[2], "A股代码", "A股上市日期"),
+            (frames[3], "证券代码", "上市日期"),
+        )
+        for frame, code_column, date_column in specifications:
+            if code_column not in frame or date_column not in frame:
+                continue
+            for row in frame[[code_column, date_column]].to_dict("records"):
+                raw_code = row[code_column]
+                raw_date = row[date_column]
+                if pd.isna(raw_code) or pd.isna(raw_date):
+                    continue
+                code = str(raw_code).split(".", maxsplit=1)[0].zfill(6)
+                result[code] = pd.Timestamp(raw_date).date()
+        return result
 
     async def fetch_trading_days(self, start: date, end: date) -> set[date]:
         frame = await _run_provider_thread(ak.tool_trade_date_hist_sina)

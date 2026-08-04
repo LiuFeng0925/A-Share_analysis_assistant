@@ -153,9 +153,14 @@ class MarketRepository:
         with self.database.lock:
             self._transactional_executemany(
                 """
-                INSERT OR REPLACE INTO stock_master
+                INSERT INTO stock_master
                 (market, code, name, list_status, list_date, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT (market, code) DO UPDATE SET
+                  name = EXCLUDED.name,
+                  list_status = EXCLUDED.list_status,
+                  list_date = COALESCE(EXCLUDED.list_date, stock_master.list_date),
+                  updated_at = EXCLUDED.updated_at
                 """,
                 rows,
             )
@@ -443,36 +448,129 @@ class MarketRepository:
         status: str,
         quality_status: str,
         error_message: str | None = None,
+        range_start: datetime | None = None,
+        range_end: datetime | None = None,
     ) -> None:
         with self.database.lock:
-            self.database.connection.execute(
+            connection = self.database.connection
+            connection.execute("BEGIN TRANSACTION")
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO ingestion_run (
+                      run_id, kind, started_at, finished_at, source, market_time,
+                      expected_row_count, actual_row_count, row_count, status,
+                      quality_status, error_message, market, code, period,
+                      adjustment, invalid_row_count
+                    ) VALUES (?, 'bar', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(uuid4()),
+                        started_at,
+                        acquired_at,
+                        source,
+                        market_time,
+                        raw_row_count,
+                        valid_row_count,
+                        valid_row_count,
+                        status,
+                        quality_status,
+                        error_message,
+                        market.value,
+                        code,
+                        period,
+                        adjustment,
+                        invalid_row_count,
+                    ),
+                )
+                if range_start is not None and range_end is not None:
+                    range_status = self._bar_range_status(
+                        status, quality_status, valid_row_count
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO bar_range_check (
+                          market, code, period, adjustment, range_start,
+                          range_end, checked_at, source, status, quality_status,
+                          raw_row_count, valid_row_count, invalid_row_count
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT (
+                          market, code, period, adjustment, range_start, range_end
+                        ) DO UPDATE SET
+                          checked_at = EXCLUDED.checked_at,
+                          source = EXCLUDED.source,
+                          status = EXCLUDED.status,
+                          quality_status = EXCLUDED.quality_status,
+                          raw_row_count = EXCLUDED.raw_row_count,
+                          valid_row_count = EXCLUDED.valid_row_count,
+                          invalid_row_count = EXCLUDED.invalid_row_count
+                        """,
+                        (
+                            market.value,
+                            code,
+                            period,
+                            adjustment,
+                            range_start,
+                            range_end,
+                            acquired_at,
+                            source,
+                            range_status,
+                            quality_status,
+                            raw_row_count,
+                            valid_row_count,
+                            invalid_row_count,
+                        ),
+                    )
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+
+    @staticmethod
+    def _bar_range_status(
+        ingestion_status: str, quality_status: str, valid_row_count: int
+    ) -> str:
+        if ingestion_status == "failed" or quality_status == "error":
+            return "failed"
+        if quality_status != "ok":
+            return "partial"
+        return "success_empty" if valid_row_count == 0 else "success"
+
+    def list_confirmed_bar_ranges(
+        self,
+        market: Market,
+        code: str,
+        period: str,
+        adjustment: str,
+        range_start: datetime,
+        range_end: datetime,
+        checked_after: datetime,
+    ) -> list[tuple[datetime, datetime]]:
+        with self.database.lock:
+            rows = self.database.connection.execute(
                 """
-                INSERT INTO ingestion_run (
-                  run_id, kind, started_at, finished_at, source, market_time,
-                  expected_row_count, actual_row_count, row_count, status,
-                  quality_status, error_message, market, code, period,
-                  adjustment, invalid_row_count
-                ) VALUES (?, 'bar', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                SELECT CAST(range_start AS VARCHAR), CAST(range_end AS VARCHAR)
+                FROM bar_range_check
+                WHERE market = ? AND code = ? AND period = ? AND adjustment = ?
+                  AND status IN ('success', 'success_empty')
+                  AND quality_status = 'ok' AND checked_at >= ?
+                  AND range_end >= ? AND range_start <= ?
+                ORDER BY range_start, range_end
                 """,
                 (
-                    str(uuid4()),
-                    started_at,
-                    acquired_at,
-                    source,
-                    market_time,
-                    raw_row_count,
-                    valid_row_count,
-                    valid_row_count,
-                    status,
-                    quality_status,
-                    error_message,
                     market.value,
                     code,
                     period,
                     adjustment,
-                    invalid_row_count,
+                    checked_after,
+                    range_start,
+                    range_end,
                 ),
-            )
+            ).fetchall()
+        return [
+            (datetime.fromisoformat(row[0]), datetime.fromisoformat(row[1]))
+            for row in rows
+        ]
 
     def latest_bar_ingestion(
         self, market: Market, code: str, period: str, adjustment: str
