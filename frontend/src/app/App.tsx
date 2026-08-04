@@ -1,14 +1,6 @@
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { AppShell } from "../components/AppShell";
-
-function StockListBasePage() {
-  return (
-    <section className="page-placeholder">
-      <span className="page-kicker">市场总览</span>
-      <h1>全市场行情</h1>
-    </section>
-  );
-}
+import { StockListPage } from "../pages/StockListPage";
 
 function StockDetailBasePage() {
   return (
@@ -24,7 +16,7 @@ export function App() {
     <BrowserRouter>
       <AppShell>
         <Routes>
-          <Route path="/" element={<StockListBasePage />} />
+          <Route path="/" element={<StockListPage />} />
           <Route path="/stocks/:market/:code" element={<StockDetailBasePage />} />
         </Routes>
       </AppShell>
