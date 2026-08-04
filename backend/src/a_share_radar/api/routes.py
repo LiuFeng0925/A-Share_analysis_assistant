@@ -14,6 +14,7 @@ from a_share_radar.api.schemas import (
     StockQuoteResponse,
 )
 from a_share_radar.domain.models import Market
+from a_share_radar.services.bar_service import BarQueryValidationError
 
 router = APIRouter(prefix="/api")
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -75,25 +76,29 @@ async def stock_bars(
     code: str,
     period: Period,
     range_name: Annotated[Range, Query(alias="range")],
-    adjustment: Adjustment = "qfq",
+    adjustment: Adjustment | None = None,
 ):
+    if adjustment is None:
+        resolved_adjustment: Adjustment = "none" if period == "1m" else "qfq"
+    else:
+        resolved_adjustment = adjustment
     try:
         bars = await request.app.state.bar_service.get_bars(
             market,
             code,
             period,
             range_name,
-            adjustment,
+            resolved_adjustment,
             datetime.now(SHANGHAI),
         )
-    except ValueError as exc:
+    except BarQueryValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return BarSeriesResponse(
         market=market,
         code=code,
         period=period,
         range=range_name,
-        adjustment=adjustment,
+        adjustment=resolved_adjustment,
         source=bars[-1].source if bars else None,
         last_updated_at=bars[-1].bar_time if bars else None,
         items=[BarResponse.model_validate(bar) for bar in bars],

@@ -1,6 +1,7 @@
 import asyncio
 from dataclasses import replace
 from datetime import date, datetime, timedelta
+from threading import Event, Thread, get_ident
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -118,6 +119,164 @@ async def test_today_normalizes_aware_now_to_shanghai(repository, fake_source):
     request = fake_source.minute_requests[0]
     assert request.start == datetime(2026, 8, 4, 9, 30, tzinfo=TZ)
     assert request.end == datetime(2026, 8, 4, 10, 31, tzinfo=TZ)
+
+
+async def test_repository_operations_do_not_block_event_loop(
+    monkeypatch, repository, fake_source
+):
+    service = BarService(fake_source, repository, history_days=60)
+    loop = asyncio.get_running_loop()
+    event_loop_thread = get_ident()
+    read_started = Event()
+    heartbeat_seen = Event()
+    release_read = Event()
+    heartbeat_before_release: list[bool] = []
+    operation_threads: list[tuple[str, int]] = []
+    original_get_bars = repository.get_bars
+    original_upsert_bars = repository.upsert_bars
+    block_first_read = True
+
+    def controlled_get_bars(*args, **kwargs):
+        nonlocal block_first_read
+        operation_threads.append(("get", get_ident()))
+        if block_first_read:
+            block_first_read = False
+            read_started.set()
+            release_read.wait()
+        return original_get_bars(*args, **kwargs)
+
+    def recording_upsert_bars(*args, **kwargs):
+        operation_threads.append(("upsert", get_ident()))
+        return original_upsert_bars(*args, **kwargs)
+
+    async def heartbeat():
+        await asyncio.sleep(0)
+        heartbeat_seen.set()
+
+    def control_blocked_read():
+        if not read_started.wait(timeout=2):
+            heartbeat_before_release.append(False)
+            release_read.set()
+            return
+        loop.call_soon_threadsafe(asyncio.create_task, heartbeat())
+        heartbeat_before_release.append(heartbeat_seen.wait(timeout=1))
+        release_read.set()
+
+    monkeypatch.setattr(repository, "get_bars", controlled_get_bars)
+    monkeypatch.setattr(repository, "upsert_bars", recording_upsert_bars)
+    controller = Thread(target=control_blocked_read)
+    controller.start()
+    try:
+        await service.get_bars(
+            Market.SH,
+            "600519",
+            "1m",
+            "today",
+            "none",
+            datetime(2026, 8, 4, 10, 31, tzinfo=TZ),
+        )
+    finally:
+        release_read.set()
+        controller.join(timeout=2)
+
+    assert heartbeat_before_release == [True]
+    assert [name for name, _ in operation_threads] == ["get", "upsert", "get"]
+    assert all(thread_id != event_loop_thread for _, thread_id in operation_threads)
+
+
+async def test_cancellation_waits_for_repository_thread_before_releasing_key_lock(
+    monkeypatch, repository, fake_source
+):
+    read_started = Event()
+    release_read = Event()
+    original_get_bars = repository.get_bars
+
+    def blocking_get_bars(*args, **kwargs):
+        read_started.set()
+        release_read.wait()
+        return original_get_bars(*args, **kwargs)
+
+    monkeypatch.setattr(repository, "get_bars", blocking_get_bars)
+    service = BarService(fake_source, repository, history_days=60)
+    task = asyncio.create_task(
+        service.get_bars(
+            Market.SH,
+            "600519",
+            "1m",
+            "today",
+            "none",
+            datetime(2026, 8, 4, 10, 31, tzinfo=TZ),
+        )
+    )
+    assert await asyncio.to_thread(read_started.wait, 2)
+
+    task.cancel()
+    await asyncio.sleep(0)
+
+    try:
+        assert not task.done()
+        assert len(service._locks) == 1
+    finally:
+        release_read.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert service._locks == {}
+
+
+async def test_daily_history_write_runs_outside_event_loop(
+    monkeypatch, repository, fake_source
+):
+    event_loop_thread = get_ident()
+    write_threads: list[int] = []
+    original_upsert_bars = repository.upsert_bars
+
+    def recording_upsert_bars(*args, **kwargs):
+        write_threads.append(get_ident())
+        return original_upsert_bars(*args, **kwargs)
+
+    monkeypatch.setattr(repository, "upsert_bars", recording_upsert_bars)
+    service = BarService(fake_source, repository, history_days=60)
+
+    await service.ensure_daily_history(
+        Stock("600519", Market.SH, "贵州茅台"), date(2026, 8, 4)
+    )
+
+    assert len(write_threads) == 1
+    assert write_threads[0] != event_loop_thread
+
+
+async def test_history_bootstrap_stock_list_runs_outside_event_loop(
+    monkeypatch, repository, fake_source
+):
+    repository.upsert_stocks(fake_source.stock_rows)
+    event_loop_thread = get_ident()
+    read_threads: list[int] = []
+    original_list_all_stocks = repository.list_all_stocks
+
+    def recording_list_all_stocks():
+        read_threads.append(get_ident())
+        return original_list_all_stocks()
+
+    async def do_nothing(stock, end_date):
+        return []
+
+    monkeypatch.setattr(repository, "list_all_stocks", recording_list_all_stocks)
+    service = BarService(fake_source, repository, history_days=60)
+    monkeypatch.setattr(service, "ensure_daily_history", do_nothing)
+
+    await HistoryBootstrapper(service, repository, delay_seconds=0).run()
+
+    assert len(read_threads) == 1
+    assert read_threads[0] != event_loop_thread
+
+
+def test_query_validation_uses_dedicated_exception(repository, fake_source):
+    from a_share_radar.services.bar_service import BarQueryValidationError
+
+    service = BarService(fake_source, repository, history_days=60)
+
+    with pytest.raises(BarQueryValidationError, match="今日视图"):
+        service._validate("1d", "today", "none")
 
 
 async def test_minute_source_failure_returns_saved_bars(repository, fake_source):

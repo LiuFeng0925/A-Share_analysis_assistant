@@ -138,6 +138,17 @@ async def test_today_bars_return_one_minute_semantics(app_with_fixture_data):
     assert body["items"][0]["is_complete"] is True
 
 
+async def test_today_one_minute_bars_default_to_unadjusted(app_with_fixture_data):
+    response = await get(
+        app_with_fixture_data,
+        "/api/stocks/SH/600519/bars",
+        params={"period": "1m", "range": "today"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["adjustment"] == "none"
+
+
 async def test_data_status_returns_storage_counts(app_with_fixture_data):
     response = await get(app_with_fixture_data, "/api/system/data-status")
 
@@ -168,6 +179,11 @@ async def test_stock_list_rejects_invalid_query_values_with_422(
     response = await get(app_with_fixture_data, "/api/market/stocks", params=params)
 
     assert response.status_code == 422
+    assert response.json()["detail"] == "请求参数校验失败"
+    assert response.json()["errors"]
+    assert all(
+        error["message"] == "参数值不合法" for error in response.json()["errors"]
+    )
 
 
 @pytest.mark.parametrize("market", ["NYSE", "sh"])
@@ -177,6 +193,10 @@ async def test_stock_path_rejects_invalid_market_with_422(
     response = await get(app_with_fixture_data, f"/api/stocks/{market}/600519")
 
     assert response.status_code == 422
+    assert response.json()["detail"] == "请求参数校验失败"
+    assert response.json()["errors"] == [
+        {"location": ["path", "market"], "message": "参数值不合法"}
+    ]
 
 
 @pytest.mark.parametrize(
@@ -195,6 +215,11 @@ async def test_bars_reject_invalid_enum_values_with_422(
     )
 
     assert response.status_code == 422
+    assert response.json()["detail"] == "请求参数校验失败"
+    assert response.json()["errors"]
+    assert all(
+        error["message"] == "参数值不合法" for error in response.json()["errors"]
+    )
 
 
 @pytest.mark.parametrize(
@@ -219,6 +244,51 @@ async def test_bars_map_invalid_combinations_to_422_with_chinese_detail(
 
     assert response.status_code == 422
     assert response.json() == {"detail": message}
+
+
+async def test_upstream_value_error_is_not_exposed_as_query_validation_error(
+    app_with_fixture_data, fake_source
+):
+    fake_source.minute_error = ValueError("上游字段转换失败：敏感原文")
+    async with AsyncClient(
+        transport=ASGITransport(app=app_with_fixture_data, raise_app_exceptions=False),
+        base_url="http://test",
+    ) as client:
+        response = await client.get(
+            "/api/stocks/SZ/000001/bars",
+            params={"period": "1m", "range": "today"},
+        )
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "系统内部错误"}
+    assert "敏感原文" not in response.text
+
+
+async def test_response_validation_error_remains_a_server_error(
+    app_with_fixture_data, monkeypatch
+):
+    def invalid_data_status():
+        return {
+            "stock_count": "不是整数",
+            "latest_quote_count": 2,
+            "snapshot_count": 2,
+            "bar_count": 2,
+            "latest_captured_at": None,
+        }
+
+    monkeypatch.setattr(
+        app_with_fixture_data.state.repository,
+        "data_status",
+        invalid_data_status,
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app_with_fixture_data, raise_app_exceptions=False),
+        base_url="http://test",
+    ) as client:
+        response = await client.get("/api/system/data-status")
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "系统内部错误"}
 
 
 async def test_cors_allows_only_exact_local_frontend_origins(app_with_fixture_data):

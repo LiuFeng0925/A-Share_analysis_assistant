@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
@@ -24,6 +24,23 @@ RANGE_DAYS = {
 
 PERIODS = {"1m", "5m", "15m", "30m", "60m", "1d", "1w", "1mo"}
 ADJUSTMENTS = {"none", "qfq", "hfq"}
+
+
+class BarQueryValidationError(ValueError):
+    """K 线查询参数不合法。"""
+
+
+async def _run_repository_call[Result](
+    function: Callable[..., Result], *args: object
+) -> Result:
+    worker = asyncio.create_task(asyncio.to_thread(function, *args))
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        await asyncio.wait({worker})
+        if error := worker.exception():
+            logger.error("取消期间仓储线程执行失败", exc_info=error)
+        raise
 
 
 @dataclass(slots=True)
@@ -50,7 +67,7 @@ class BarService:
             stock.code, start_date, end_date, "1d", "qfq"
         )
         selected = fetched[-self.history_days :]
-        self.repository.upsert_bars(selected)
+        await _run_repository_call(self.repository.upsert_bars, selected)
         return selected
 
     async def get_bars(
@@ -66,8 +83,14 @@ class BarService:
         start, end = self._range(now, range_name)
         key = (market, code, period, range_name, adjustment)
         async with self._key_lock(key):
-            cached = self.repository.get_bars(
-                market, code, period, start, end, adjustment
+            cached = await _run_repository_call(
+                self.repository.get_bars,
+                market,
+                code,
+                period,
+                start,
+                end,
+                adjustment,
             )
             if period.endswith("m"):
                 try:
@@ -84,9 +107,15 @@ class BarService:
                 )
             else:
                 fetched = []
-            self.repository.upsert_bars(fetched)
-            return self.repository.get_bars(
-                market, code, period, start, end, adjustment
+            await _run_repository_call(self.repository.upsert_bars, fetched)
+            return await _run_repository_call(
+                self.repository.get_bars,
+                market,
+                code,
+                period,
+                start,
+                end,
+                adjustment,
             )
 
     @asynccontextmanager
@@ -113,20 +142,20 @@ class BarService:
     @staticmethod
     def _validate(period: str, range_name: str, adjustment: str) -> None:
         if period not in PERIODS:
-            raise ValueError(f"不支持的 K 线周期：{period}")
+            raise BarQueryValidationError(f"不支持的 K 线周期：{period}")
         if adjustment not in ADJUSTMENTS:
-            raise ValueError(f"不支持的复权方式：{adjustment}")
+            raise BarQueryValidationError(f"不支持的复权方式：{adjustment}")
         if range_name not in {"all", "today", *RANGE_DAYS}:
-            raise ValueError(f"不支持的时间范围：{range_name}")
+            raise BarQueryValidationError(f"不支持的时间范围：{range_name}")
         if range_name == "today" and period != "1m":
-            raise ValueError("今日视图只允许一分钟 K")
+            raise BarQueryValidationError("今日视图只允许一分钟 K")
         if period == "1m" and adjustment != "none":
-            raise ValueError("免费一分钟 K 只允许不复权")
+            raise BarQueryValidationError("免费一分钟 K 只允许不复权")
 
     @staticmethod
     def _range(now: datetime, range_name: str) -> tuple[datetime, datetime]:
         if now.tzinfo is None or now.utcoffset() is None:
-            raise ValueError("K 线查询时间必须包含时区")
+            raise BarQueryValidationError("K 线查询时间必须包含时区")
         shanghai_now = now.astimezone(SHANGHAI)
         if range_name == "today":
             return (
@@ -153,7 +182,8 @@ class HistoryBootstrapper:
 
     async def run(self) -> None:
         end_date = datetime.now(SHANGHAI).date()
-        for stock in self.repository.list_all_stocks():
+        stocks = await _run_repository_call(self.repository.list_all_stocks)
+        for stock in stocks:
             try:
                 await self.bar_service.ensure_daily_history(stock, end_date)
             except asyncio.CancelledError:

@@ -4,8 +4,10 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from a_share_radar.api.routes import router
 from a_share_radar.config import Settings
@@ -143,6 +145,29 @@ def create_app(
     app.state.clock = None
     app.state.scheduler = None
     app.state.history_task = None
+
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_error(
+        _request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        errors = [
+            {
+                "location": list(error["loc"]),
+                "message": (
+                    "缺少必填参数" if error["type"] == "missing" else "参数值不合法"
+                ),
+            }
+            for error in exc.errors()
+        ]
+        return JSONResponse(
+            status_code=422,
+            content={"detail": "请求参数校验失败", "errors": errors},
+        )
+
+    @app.exception_handler(Exception)
+    async def internal_server_error(_request: Request, exc: Exception) -> JSONResponse:
+        logger.error("HTTP 请求处理失败", exc_info=exc)
+        return JSONResponse(status_code=500, content={"detail": "系统内部错误"})
 
     @app.get("/api/health")
     async def health() -> dict[str, str]:
