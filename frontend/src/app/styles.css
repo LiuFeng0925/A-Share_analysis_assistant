@@ -365,7 +365,7 @@ tr:focus-visible {
 
 .stock-table {
   width: 100%;
-  min-width: 1120px;
+  min-width: 1210px;
   border-collapse: collapse;
   table-layout: fixed;
 }
@@ -459,12 +459,17 @@ tr:focus-visible {
   min-width: 0;
 }
 
-.stock-identity strong {
+.stock-identity a {
   overflow: hidden;
   color: var(--ink);
   font-size: 13px;
   font-weight: 700;
+  text-decoration: none;
   text-overflow: ellipsis;
+}
+
+.stock-identity a:hover {
+  color: var(--brand);
 }
 
 .stock-identity small {

@@ -1,4 +1,4 @@
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import type { StockQuery, StockQuote } from "../api/types";
 
 interface StockTableProps {
@@ -11,7 +11,7 @@ interface StockTableProps {
 const numberFormatter = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 });
 
 function formatNumber(value: number | null, digits = 2) {
-  if (value === null) return "--";
+  if (value === null || !Number.isFinite(value)) return "--";
   return value.toLocaleString("zh-CN", {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
@@ -19,21 +19,23 @@ function formatNumber(value: number | null, digits = 2) {
 }
 
 function formatCompact(value: number | null) {
-  if (value === null) return "--";
-  if (value >= 100_000_000_000) return `${numberFormatter.format(value / 100_000_000_000)} 万亿`;
-  if (value >= 100_000_000) return `${numberFormatter.format(value / 100_000_000)} 亿`;
-  if (value >= 10_000) return `${numberFormatter.format(value / 10_000)} 万`;
+  if (value === null || !Number.isFinite(value)) return "--";
+  if (Math.abs(value) >= 1_000_000_000_000) {
+    return `${numberFormatter.format(value / 1_000_000_000_000)} 万亿`;
+  }
+  if (Math.abs(value) >= 100_000_000) return `${numberFormatter.format(value / 100_000_000)} 亿`;
+  if (Math.abs(value) >= 10_000) return `${numberFormatter.format(value / 10_000)} 万`;
   return numberFormatter.format(value);
 }
 
 function signed(value: number | null, suffix = "") {
-  if (value === null) return "--";
+  if (value === null || !Number.isFinite(value)) return "--";
   const sign = value > 0 ? "+" : "";
   return `${sign}${formatNumber(value)}${suffix}`;
 }
 
 function tone(value: number | null) {
-  if (value === null || value === 0) return "flat";
+  if (value === null || !Number.isFinite(value) || value === 0) return "flat";
   return value > 0 ? "up" : "down";
 }
 
@@ -67,32 +69,37 @@ function SortButton({
 
 export function StockTable({ stocks, sortBy, sortOrder, onSort }: StockTableProps) {
   const navigate = useNavigate();
+  const ariaSort = (field: StockQuery["sortBy"]) => {
+    if (sortBy !== field) return "none" as const;
+    return sortOrder === "asc" ? "ascending" as const : "descending" as const;
+  };
 
   return (
     <div className="stock-table-scroll">
       <table className="stock-table">
         <thead>
           <tr>
-            <th scope="col">
+            <th scope="col" aria-sort={ariaSort("code")}>
               <SortButton field="code" label="股票" {...{ sortBy, sortOrder, onSort }} />
             </th>
-            <th scope="col">
+            <th scope="col" aria-sort={ariaSort("latest_price")}>
               <SortButton field="latest_price" label="最新价" {...{ sortBy, sortOrder, onSort }} />
             </th>
-            <th scope="col">
+            <th scope="col" aria-sort={ariaSort("change_percent")}>
               <SortButton field="change_percent" label="涨跌幅" {...{ sortBy, sortOrder, onSort }} />
             </th>
             <th scope="col">涨跌额</th>
             <th scope="col">今开</th>
             <th scope="col">最高</th>
             <th scope="col">最低</th>
-            <th scope="col">
+            <th scope="col">成交量</th>
+            <th scope="col" aria-sort={ariaSort("amount")}>
               <SortButton field="amount" label="成交额" {...{ sortBy, sortOrder, onSort }} />
             </th>
-            <th scope="col">
+            <th scope="col" aria-sort={ariaSort("turnover_rate")}>
               <SortButton field="turnover_rate" label="换手率" {...{ sortBy, sortOrder, onSort }} />
             </th>
-            <th scope="col">
+            <th scope="col" aria-sort={ariaSort("total_market_cap")}>
               <SortButton field="total_market_cap" label="总市值" {...{ sortBy, sortOrder, onSort }} />
             </th>
           </tr>
@@ -100,7 +107,7 @@ export function StockTable({ stocks, sortBy, sortOrder, onSort }: StockTableProp
         <tbody>
           {stocks.map((stock) => {
             const changeTone = tone(stock.change_percent);
-            const scaleWidth = stock.change_percent === null
+            const scaleWidth = stock.change_percent === null || !Number.isFinite(stock.change_percent)
               ? 0
               : Math.min(42, Math.max(8, Math.abs(stock.change_percent) * 7));
             const detailPath = `/stocks/${stock.market}/${stock.code}`;
@@ -111,14 +118,21 @@ export function StockTable({ stocks, sortBy, sortOrder, onSort }: StockTableProp
                 aria-label={`${stock.name} ${stock.code}`}
                 onClick={() => navigate(detailPath)}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter") navigate(detailPath);
+                  if (event.key === "Enter" && event.target === event.currentTarget) {
+                    navigate(detailPath);
+                  }
                 }}
               >
                 <td>
                   <div className="stock-identity">
                     <span className="market-badge">{stock.market}</span>
                     <span>
-                      <strong>{stock.name}</strong>
+                      <Link
+                        to={detailPath}
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        {stock.name}
+                      </Link>
                       <small className="data-value">{stock.code}</small>
                     </span>
                   </div>
@@ -140,9 +154,12 @@ export function StockTable({ stocks, sortBy, sortOrder, onSort }: StockTableProp
                 <td className="data-value">{formatNumber(stock.open_price)}</td>
                 <td className="data-value">{formatNumber(stock.high_price)}</td>
                 <td className="data-value">{formatNumber(stock.low_price)}</td>
+                <td className="data-value">{formatCompact(stock.volume)}</td>
                 <td className="data-value">{formatCompact(stock.amount)}</td>
                 <td className="data-value">
-                  {stock.turnover_rate === null ? "--" : `${formatNumber(stock.turnover_rate)}%`}
+                  {stock.turnover_rate === null || !Number.isFinite(stock.turnover_rate)
+                    ? "--"
+                    : `${formatNumber(stock.turnover_rate)}%`}
                 </td>
                 <td className="data-value">{formatCompact(stock.total_market_cap)}</td>
               </tr>

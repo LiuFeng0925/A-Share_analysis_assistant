@@ -10,7 +10,7 @@ const PAGE_SIZE = 50;
 function formatUpdateTime(value: string | null) {
   if (!value) return "等待首次行情";
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
+  if (Number.isNaN(date.getTime())) return "时间未知";
   return new Intl.DateTimeFormat("zh-CN", {
     month: "2-digit",
     day: "2-digit",
@@ -18,6 +18,7 @@ function formatUpdateTime(value: string | null) {
     minute: "2-digit",
     second: "2-digit",
     hour12: false,
+    timeZone: "Asia/Shanghai",
   }).format(date);
 }
 
@@ -96,6 +97,11 @@ export function StockListPage() {
 
   const totalPages = stockPage ? Math.max(1, Math.ceil(stockPage.total / PAGE_SIZE)) : 1;
   const hasData = stockPage !== null;
+  const marketStatus = summary?.market_status === "open"
+    ? "交易中"
+    : summary?.market_status === "closed"
+      ? "已收盘"
+      : "正在确认";
 
   return (
     <section className="stock-list-page">
@@ -107,7 +113,7 @@ export function StockListPage() {
         </div>
         <div className="market-meta" aria-live="polite">
           <span className={summary?.market_status === "open" ? "market-state is-open" : "market-state"}>
-            {summary?.market_status === "open" ? "交易中" : "已收盘"}
+            {marketStatus}
           </span>
           <span>最后更新 {formatUpdateTime(summary?.last_updated_at ?? null)}</span>
           {summary?.stale && <strong>数据可能已过期</strong>}

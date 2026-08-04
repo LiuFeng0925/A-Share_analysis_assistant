@@ -49,6 +49,24 @@ test("显示真实概览、数据过期提示与最后更新时间", async () =>
   expect(screen.getByText(/最后更新/)).toHaveTextContent("10:26:00");
 });
 
+test("概览未知时显示正在确认，非法时间显示占位符", async () => {
+  let resolveSummary: ((value: typeof summaryFixture) => void) | undefined;
+  vi.mocked(marketApi.getSummary).mockReturnValueOnce(
+    new Promise((resolve) => {
+      resolveSummary = resolve;
+    }),
+  );
+  render(
+    <MemoryRouter>
+      <StockListPage />
+    </MemoryRouter>,
+  );
+
+  expect(screen.getByText("正在确认")).toBeInTheDocument();
+  resolveSummary?.({ ...summaryFixture, last_updated_at: "不是合法时间" });
+  expect(await screen.findByText(/最后更新/)).toHaveTextContent("时间未知");
+});
+
 test("支持市场筛选、排序和分页", async () => {
   vi.mocked(marketApi.getStocks).mockResolvedValue({
     ...stockPageFixture,
