@@ -1,0 +1,9 @@
+.superpowers/
+.env
+data/
+*.duckdb
+*.duckdb.wal
+backend/.venv/
+frontend/node_modules/
+frontend/dist/
+
