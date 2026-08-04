@@ -82,6 +82,8 @@ _QUOTE_COLUMNS = """
 """
 
 _SNAPSHOT_BATCH_RELATION = "snapshot_batch_input"
+_ARCHIVE_EXISTING_RELATION = "archive_existing_input"
+_ARCHIVE_HOT_RELATION = "archive_hot_input"
 _SNAPSHOT_SCHEMA = pa.schema(
     [
         ("market", pa.string()),
@@ -429,6 +431,43 @@ class MarketRepository:
     @staticmethod
     def parquet_count(path: Path) -> int:
         return pq.read_metadata(path).num_rows
+
+    def merge_snapshot_parquet(self, target: Path, temporary: Path) -> int:
+        hot_table = pq.read_table(temporary)
+        if not target.exists():
+            return hot_table.num_rows
+
+        existing_table = pq.read_table(target)
+        with self.database.lock:
+            connection = self.database.connection
+            connection.register(_ARCHIVE_EXISTING_RELATION, existing_table)
+            connection.register(_ARCHIVE_HOT_RELATION, hot_table)
+            try:
+                merged = connection.execute(
+                    f"""
+                    SELECT * EXCLUDE (_archive_priority, _identity_rank)
+                    FROM (
+                        SELECT *, ROW_NUMBER() OVER (
+                            PARTITION BY market, code, captured_at
+                            ORDER BY _archive_priority DESC
+                        ) AS _identity_rank
+                        FROM (
+                            SELECT *, 0 AS _archive_priority
+                            FROM {_ARCHIVE_EXISTING_RELATION}
+                            UNION ALL
+                            SELECT *, 1 AS _archive_priority
+                            FROM {_ARCHIVE_HOT_RELATION}
+                        )
+                    )
+                    WHERE _identity_rank = 1
+                    ORDER BY market, code, captured_at
+                    """
+                ).to_arrow_table()
+            finally:
+                connection.unregister(_ARCHIVE_HOT_RELATION)
+                connection.unregister(_ARCHIVE_EXISTING_RELATION)
+        pq.write_table(merged, temporary)
+        return merged.num_rows
 
     def delete_snapshots_for_date(self, trade_date: date) -> None:
         with self.database.lock:

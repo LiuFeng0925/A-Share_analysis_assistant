@@ -1,6 +1,8 @@
 import asyncio
 import logging
-from collections import defaultdict
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -24,6 +26,12 @@ PERIODS = {"1m", "5m", "15m", "30m", "60m", "1d", "1w", "1mo"}
 ADJUSTMENTS = {"none", "qfq", "hfq"}
 
 
+@dataclass(slots=True)
+class _LockEntry:
+    lock: asyncio.Lock
+    users: int = 0
+
+
 class BarService:
     def __init__(
         self,
@@ -34,9 +42,7 @@ class BarService:
         self.source = source
         self.repository = repository
         self.history_days = history_days
-        self._locks: defaultdict[
-            tuple[Market, str, str, str, str], asyncio.Lock
-        ] = defaultdict(asyncio.Lock)
+        self._locks: dict[tuple[Market, str, str, str, str], _LockEntry] = {}
 
     async def ensure_daily_history(self, stock: Stock, end_date: date) -> list[Bar]:
         start_date = end_date - timedelta(days=100)
@@ -59,7 +65,7 @@ class BarService:
         self._validate(period, range_name, adjustment)
         start, end = self._range(now, range_name)
         key = (market, code, period, range_name, adjustment)
-        async with self._locks[key]:
+        async with self._key_lock(key):
             cached = self.repository.get_bars(
                 market, code, period, start, end, adjustment
             )
@@ -82,6 +88,27 @@ class BarService:
             return self.repository.get_bars(
                 market, code, period, start, end, adjustment
             )
+
+    @asynccontextmanager
+    async def _key_lock(
+        self, key: tuple[Market, str, str, str, str]
+    ) -> AsyncIterator[None]:
+        entry = self._locks.get(key)
+        if entry is None:
+            entry = _LockEntry(asyncio.Lock())
+            self._locks[key] = entry
+        entry.users += 1
+        acquired = False
+        try:
+            await entry.lock.acquire()
+            acquired = True
+            yield
+        finally:
+            if acquired:
+                entry.lock.release()
+            entry.users -= 1
+            if entry.users == 0 and self._locks.get(key) is entry:
+                del self._locks[key]
 
     @staticmethod
     def _validate(period: str, range_name: str, adjustment: str) -> None:

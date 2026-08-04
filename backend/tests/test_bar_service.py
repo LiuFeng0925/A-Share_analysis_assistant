@@ -176,9 +176,91 @@ async def test_same_key_concurrent_requests_access_source_serially(
     await asyncio.sleep(0)
 
     assert maximum_active == 1
+    assert len(service._locks) == 1
     release_first.set()
     await asyncio.gather(first, second)
     assert maximum_active == 1
+    assert service._locks == {}
+
+
+async def test_keyed_locks_are_reclaimed_after_multiple_keys(repository, fake_source):
+    service = BarService(fake_source, repository, history_days=60)
+    now = datetime(2026, 8, 4, 10, 31, tzinfo=TZ)
+
+    await service.get_bars(Market.SH, "600519", "1m", "today", "none", now)
+    await service.get_bars(Market.SZ, "000001", "1m", "today", "none", now)
+
+    assert service._locks == {}
+
+
+async def test_keyed_lock_is_reclaimed_after_source_error(repository, fake_source):
+    fake_source.minute_error = RuntimeError("模拟分钟接口不可用")
+    service = BarService(fake_source, repository, history_days=60)
+    now = datetime(2026, 8, 4, 10, 31, tzinfo=TZ)
+
+    with pytest.raises(RuntimeError, match="模拟分钟接口不可用"):
+        await service.get_bars(
+            Market.SH, "600519", "1m", "today", "none", now
+        )
+
+    assert service._locks == {}
+
+
+async def test_waiter_cancellation_keeps_lock_until_holder_exits(
+    monkeypatch, repository, fake_source
+):
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def controlled_fetch(code, start, end, period, adjustment):
+        started.set()
+        await release.wait()
+        return [fake_source.bar_rows[0]]
+
+    monkeypatch.setattr(fake_source, "fetch_minute_bars", controlled_fetch)
+    service = BarService(fake_source, repository, history_days=60)
+    now = datetime(2026, 8, 4, 10, 31, tzinfo=TZ)
+    holder = asyncio.create_task(
+        service.get_bars(Market.SH, "600519", "1m", "today", "none", now)
+    )
+    await started.wait()
+    waiter = asyncio.create_task(
+        service.get_bars(Market.SH, "600519", "1m", "today", "none", now)
+    )
+    await asyncio.sleep(0)
+
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert len(service._locks) == 1
+
+    release.set()
+    await holder
+    assert service._locks == {}
+
+
+async def test_holder_cancellation_reclaims_keyed_lock(
+    monkeypatch, repository, fake_source
+):
+    started = asyncio.Event()
+
+    async def wait_forever(code, start, end, period, adjustment):
+        started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(fake_source, "fetch_minute_bars", wait_forever)
+    service = BarService(fake_source, repository, history_days=60)
+    now = datetime(2026, 8, 4, 10, 31, tzinfo=TZ)
+    holder = asyncio.create_task(
+        service.get_bars(Market.SH, "600519", "1m", "today", "none", now)
+    )
+    await started.wait()
+
+    holder.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await holder
+
+    assert service._locks == {}
 
 
 async def test_history_bootstrapper_continues_after_one_stock_fails(
