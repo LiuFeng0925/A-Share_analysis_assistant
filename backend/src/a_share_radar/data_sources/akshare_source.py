@@ -11,7 +11,7 @@ SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
 def _number(value: object) -> float | None:
-    if value is None or value == "-" or pd.isna(value):
+    if value is None or pd.isna(value) or value == "-":
         return None
     return float(value)
 

@@ -3,7 +3,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from a_share_radar.data_sources.akshare_source import AkshareSource
+from a_share_radar.data_sources.akshare_source import AkshareSource, _number
 from a_share_radar.domain.models import Market, QualityStatus
 
 
@@ -48,6 +48,10 @@ def test_normalize_snapshot_turns_dash_into_none():
 
     assert quotes[0].latest_price is None
     assert quotes[0].quality_status is QualityStatus.PARTIAL
+
+
+def test_number_turns_pandas_missing_value_into_none():
+    assert _number(pd.NA) is None
 
 
 def test_market_mapping_supports_beijing_exchange():
