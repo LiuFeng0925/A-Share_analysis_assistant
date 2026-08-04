@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, Literal
-from uuid import uuid4
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 import pyarrow as pa
@@ -72,6 +72,12 @@ class DataStatus:
     snapshot_quality_status: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class SnapshotCommitResult:
+    run_id: UUID
+    finished_at: datetime
+
+
 SORT_COLUMNS = {
     "code": "s.code",
     "latest_price": "q.latest_price",
@@ -96,6 +102,7 @@ _SNAPSHOT_SCHEMA = pa.schema(
     [
         ("market", pa.string()),
         ("code", pa.string()),
+        ("name", pa.string()),
         ("captured_at", pa.timestamp("us", tz="UTC")),
         ("latest_price", pa.float64()),
         ("change_percent", pa.float64()),
@@ -156,40 +163,49 @@ class MarketRepository:
                 registered = True
                 connection.execute("BEGIN TRANSACTION")
                 transaction_started = True
+                self._insert_snapshot_history(connection)
+                self._advance_latest_quotes(connection)
+                connection.execute("COMMIT")
+                transaction_started = False
+            except Exception:
+                if transaction_started:
+                    connection.execute("ROLLBACK")
+                raise
+            finally:
+                if registered:
+                    connection.unregister(_SNAPSHOT_BATCH_RELATION)
+
+    def commit_snapshot_success(
+        self,
+        quotes: Iterable[QuoteSnapshot],
+        *,
+        started_at: datetime,
+        source: str,
+        market_time: datetime,
+        expected_row_count: int,
+        quality_status: str,
+    ) -> SnapshotCommitResult:
+        rows = [self._quote_values(quote) for quote in quotes]
+        if not rows:
+            raise ValueError("成功快照批次不能为空")
+        batch = self._snapshot_batch(rows)
+        run_id = uuid4()
+        with self.database.lock:
+            connection = self.database.connection
+            registered = False
+            transaction_started = False
+            try:
+                connection.register(_SNAPSHOT_BATCH_RELATION, batch)
+                registered = True
+                connection.execute("BEGIN TRANSACTION")
+                transaction_started = True
+                self._insert_snapshot_history(connection)
+                self._advance_latest_quotes(connection)
+                stock_updated_at = datetime.now(UTC)
                 connection.execute(
                     f"""
-                    INSERT OR REPLACE INTO quote_snapshot_hot
-                    SELECT * EXCLUDE (batch_row)
-                    FROM (
-                        SELECT *, ROW_NUMBER() OVER (
-                            PARTITION BY market, code, captured_at
-                            ORDER BY captured_at DESC
-                        ) AS batch_row
-                        FROM {_SNAPSHOT_BATCH_RELATION}
-                    )
-                    WHERE batch_row = 1
-                    """
-                )
-                connection.execute(
-                    f"""
-                    INSERT OR REPLACE INTO latest_quote
-                    SELECT
-                      batch.market,
-                      batch.code,
-                      batch.captured_at,
-                      COALESCE(batch.latest_price, current.latest_price),
-                      COALESCE(batch.change_percent, current.change_percent),
-                      COALESCE(batch.change_amount, current.change_amount),
-                      COALESCE(batch.open_price, current.open_price),
-                      COALESCE(batch.high_price, current.high_price),
-                      COALESCE(batch.low_price, current.low_price),
-                      COALESCE(batch.previous_close, current.previous_close),
-                      COALESCE(batch.volume, current.volume),
-                      COALESCE(batch.amount, current.amount),
-                      COALESCE(batch.turnover_rate, current.turnover_rate),
-                      COALESCE(batch.total_market_cap, current.total_market_cap),
-                      batch.source,
-                      batch.quality_status
+                    UPDATE stock_master AS stock
+                    SET name = batch.name, updated_at = ?
                     FROM (
                         SELECT *, ROW_NUMBER() OVER (
                             PARTITION BY market, code
@@ -197,14 +213,52 @@ class MarketRepository:
                         ) AS batch_row
                         FROM {_SNAPSHOT_BATCH_RELATION}
                     ) AS batch
-                    LEFT JOIN latest_quote AS current
-                      ON current.market = batch.market AND current.code = batch.code
                     WHERE batch.batch_row = 1
-                      AND (
-                        current.captured_at IS NULL
-                        OR batch.captured_at >= current.captured_at
-                      )
+                      AND stock.market = batch.market
+                      AND stock.code = batch.code
+                      AND stock.name <> batch.name
+                    """,
+                    [stock_updated_at],
+                )
+                finished_at = datetime.now(UTC)
+                connection.execute(
                     """
+                    INSERT INTO ingestion_run (
+                      run_id, kind, started_at, finished_at, source, market_time,
+                      expected_row_count, actual_row_count, row_count, status,
+                      quality_status, error_message
+                    ) VALUES (?, 'snapshot', ?, ?, ?, ?, ?, ?, ?, 'success', ?, NULL)
+                    """,
+                    (
+                        str(run_id),
+                        started_at,
+                        finished_at,
+                        source,
+                        market_time,
+                        expected_row_count,
+                        len(rows),
+                        len(rows),
+                        quality_status,
+                    ),
+                )
+                connection.execute(
+                    f"""
+                    INSERT INTO market_summary_batch
+                    SELECT
+                      ?, ?, COUNT(*),
+                      COUNT(*) FILTER (WHERE change_percent > 0),
+                      COUNT(*) FILTER (WHERE change_percent < 0),
+                      COUNT(*) FILTER (WHERE change_percent = 0),
+                      COALESCE(SUM(amount), 0.0), ?, ?, ?
+                    FROM {_SNAPSHOT_BATCH_RELATION}
+                    """,
+                    (
+                        str(run_id),
+                        market_time,
+                        source,
+                        quality_status,
+                        finished_at,
+                    ),
                 )
                 connection.execute("COMMIT")
                 transaction_started = False
@@ -215,6 +269,75 @@ class MarketRepository:
             finally:
                 if registered:
                     connection.unregister(_SNAPSHOT_BATCH_RELATION)
+        return SnapshotCommitResult(run_id=run_id, finished_at=finished_at)
+
+    @staticmethod
+    def _insert_snapshot_history(connection) -> None:
+        connection.execute(
+            f"""
+            INSERT OR REPLACE INTO quote_snapshot_hot
+            SELECT
+              market, code, captured_at, latest_price, change_percent,
+              change_amount, open_price, high_price, low_price,
+              previous_close, volume, amount, turnover_rate,
+              total_market_cap, source, quality_status
+            FROM (
+                SELECT *, ROW_NUMBER() OVER (
+                    PARTITION BY market, code, captured_at
+                    ORDER BY captured_at DESC
+                ) AS batch_row
+                FROM {_SNAPSHOT_BATCH_RELATION}
+            )
+            WHERE batch_row = 1
+            """
+        )
+
+    @staticmethod
+    def _advance_latest_quotes(connection) -> None:
+        connection.execute(
+            f"""
+            INSERT OR REPLACE INTO latest_quote
+            SELECT
+              batch.market, batch.code, batch.captured_at,
+              batch.latest_price, batch.change_percent, batch.change_amount,
+              batch.open_price, batch.high_price, batch.low_price,
+              batch.previous_close, batch.volume, batch.amount,
+              batch.turnover_rate, batch.total_market_cap,
+              batch.source, batch.quality_status
+            FROM (
+                SELECT *, ROW_NUMBER() OVER (
+                    PARTITION BY market, code
+                    ORDER BY captured_at DESC
+                ) AS batch_row
+                FROM {_SNAPSHOT_BATCH_RELATION}
+            ) AS batch
+            LEFT JOIN latest_quote AS current
+              ON current.market = batch.market AND current.code = batch.code
+            WHERE batch.batch_row = 1
+              AND batch.quality_status = 'ok'
+              AND batch.latest_price IS NOT NULL
+              AND batch.open_price IS NOT NULL
+              AND batch.high_price IS NOT NULL
+              AND batch.low_price IS NOT NULL
+              AND batch.previous_close IS NOT NULL
+              AND batch.volume IS NOT NULL
+              AND batch.amount IS NOT NULL
+              AND batch.latest_price >= 0
+              AND batch.open_price >= 0
+              AND batch.high_price >= 0
+              AND batch.low_price >= 0
+              AND batch.previous_close >= 0
+              AND batch.volume >= 0
+              AND batch.amount >= 0
+              AND batch.high_price >= batch.low_price
+              AND batch.open_price BETWEEN batch.low_price AND batch.high_price
+              AND batch.latest_price BETWEEN batch.low_price AND batch.high_price
+              AND (
+                current.captured_at IS NULL
+                OR batch.captured_at >= current.captured_at
+              )
+            """
+        )
 
     def snapshot_expectation(self, minimum_expected_count: int) -> int:
         with self.database.lock:
@@ -226,7 +349,7 @@ class MarketRepository:
                     SELECT actual_row_count
                     FROM ingestion_run
                     WHERE kind = 'snapshot' AND status = 'success'
-                    ORDER BY finished_at DESC NULLS LAST, started_at DESC
+                    ORDER BY finished_at DESC NULLS LAST, started_at DESC, run_id DESC
                     LIMIT 1
                   ), 0)
                 """
@@ -435,44 +558,21 @@ class MarketRepository:
         if stale_after_seconds < 0:
             raise ValueError("陈旧阈值不能为负数")
         with self.database.lock:
-            successful_market_time = self.database.connection.execute(
+            row = self.database.connection.execute(
                 """
-                SELECT CAST(market_time AS VARCHAR)
-                FROM ingestion_run
-                WHERE kind = 'snapshot' AND status = 'success'
-                  AND market_time IS NOT NULL
-                ORDER BY finished_at DESC NULLS LAST, started_at DESC
+                SELECT total, rising, falling, flat, amount,
+                       CAST(market_time AS VARCHAR)
+                FROM market_summary_batch
+                ORDER BY finished_at DESC, run_id DESC
                 LIMIT 1
                 """
             ).fetchone()
-            if successful_market_time is not None:
+            if row is None:
                 row = self.database.connection.execute(
                     """
                     SELECT
-                      COUNT(*),
-                      COUNT(*) FILTER (WHERE change_percent > 0),
-                      COUNT(*) FILTER (WHERE change_percent < 0),
-                      COUNT(*) FILTER (WHERE change_percent = 0),
-                      COALESCE(SUM(amount), 0.0),
-                      CAST(MAX(captured_at) AS VARCHAR)
-                    FROM quote_snapshot_hot
-                    WHERE captured_at = ?
-                    """,
-                    [datetime.fromisoformat(successful_market_time[0])],
-                ).fetchone()
-            else:
-                row = self.database.connection.execute(
-                    """
-                    SELECT
-                      COUNT(*),
-                      COUNT(*) FILTER (WHERE q.change_percent > 0),
-                      COUNT(*) FILTER (WHERE q.change_percent < 0),
-                      COUNT(*) FILTER (WHERE q.change_percent = 0),
-                      COALESCE(SUM(q.amount), 0.0),
-                      CAST(MAX(q.captured_at) AS VARCHAR)
-                    FROM stock_master s
-                    LEFT JOIN latest_quote q
-                      ON q.market = s.market AND q.code = s.code
+                      COUNT(*), 0, 0, 0, 0.0, NULL
+                    FROM stock_master
                     """
                 ).fetchone()
         last_updated_at = None if row[5] is None else datetime.fromisoformat(row[5])
@@ -505,7 +605,7 @@ class MarketRepository:
                 SELECT CAST(finished_at AS VARCHAR), CAST(market_time AS VARCHAR)
                 FROM ingestion_run
                 WHERE kind = 'snapshot' AND status = 'success'
-                ORDER BY finished_at DESC NULLS LAST, started_at DESC
+                ORDER BY finished_at DESC NULLS LAST, started_at DESC, run_id DESC
                 LIMIT 1
                 """
             ).fetchone()
@@ -514,7 +614,7 @@ class MarketRepository:
                 SELECT CAST(finished_at AS VARCHAR)
                 FROM ingestion_run
                 WHERE kind = 'snapshot' AND status = 'failed'
-                ORDER BY finished_at DESC NULLS LAST, started_at DESC
+                ORDER BY finished_at DESC NULLS LAST, started_at DESC, run_id DESC
                 LIMIT 1
                 """
             ).fetchone()
@@ -523,7 +623,7 @@ class MarketRepository:
                 SELECT expected_row_count, actual_row_count, quality_status
                 FROM ingestion_run
                 WHERE kind = 'snapshot'
-                ORDER BY finished_at DESC NULLS LAST, started_at DESC
+                ORDER BY finished_at DESC NULLS LAST, started_at DESC, run_id DESC
                 LIMIT 1
                 """
             ).fetchone()
@@ -703,6 +803,7 @@ class MarketRepository:
         return (
             quote.market.value,
             quote.code,
+            quote.name,
             quote.captured_at,
             quote.latest_price,
             quote.change_percent,

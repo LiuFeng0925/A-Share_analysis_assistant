@@ -174,7 +174,14 @@ def app_with_fixture_data(tmp_path, fake_source):
     database = Database(settings.database_path)
     repository = MarketRepository(database)
     repository.upsert_stocks(fake_source.stock_rows)
-    repository.save_snapshot(fake_source.snapshot_rows)
+    repository.commit_snapshot_success(
+        fake_source.snapshot_rows,
+        started_at=fake_source.snapshot_rows[0].captured_at,
+        source="fixture",
+        market_time=fake_source.snapshot_rows[0].captured_at,
+        expected_row_count=2,
+        quality_status="ok",
+    )
     repository.upsert_bars(fake_source.bar_rows)
     app = create_app(
         settings=settings,

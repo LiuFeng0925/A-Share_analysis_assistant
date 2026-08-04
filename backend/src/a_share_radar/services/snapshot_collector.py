@@ -68,24 +68,18 @@ class SnapshotCollector:
             market_time, quality_status = await self._validate_batch(
                 quotes, started_at, expected_count
             )
-            stage = "persist"
-            await self._run_blocking(self.repository.save_snapshot, quotes)
-            await self._run_blocking(self.repository.refresh_stock_names, quotes)
-            stage = "record_success"
+            stage = "commit_success"
             await self._run_blocking(
-                self.repository.record_ingestion_run,
-                kind="snapshot",
+                self.repository.commit_snapshot_success,
+                quotes,
                 started_at=started_at,
-                finished_at=started_at,
                 source=source_name,
                 market_time=market_time,
                 expected_row_count=expected_count,
-                actual_row_count=len(quotes),
-                status="success",
                 quality_status=quality_status,
             )
         except asyncio.CancelledError:
-            if stage == "record_success":
+            if stage == "commit_success":
                 raise
             await self._record_failure(
                 started_at,
@@ -213,7 +207,7 @@ class SnapshotCollector:
             self.repository.record_ingestion_run,
             kind="snapshot",
             started_at=started_at,
-            finished_at=started_at,
+            finished_at=datetime.now(UTC),
             source=source,
             market_time=market_time,
             expected_row_count=expected_count,
@@ -231,10 +225,8 @@ class SnapshotCollector:
             return "行情采集预检失败"
         if stage == "fetch":
             return "上游行情获取失败"
-        if stage == "persist":
+        if stage == "commit_success":
             return "行情存储失败"
-        if stage == "record_success":
-            return "采集审计记录失败"
         return "行情采集失败"
 
     @staticmethod

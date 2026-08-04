@@ -48,7 +48,19 @@ async def _persist_fixture_data(
         raise RuntimeError("固定数据源的行情快照时间必须包含时区")
     fixture_date = fixture_now.astimezone(SHANGHAI).date()
     await _run_blocking_safely(repository.upsert_stocks, stocks)
-    await _run_blocking_safely(repository.save_snapshot, snapshots)
+    await _run_blocking_safely(
+        repository.commit_snapshot_success,
+        snapshots,
+        started_at=fixture_now,
+        source=snapshots[0].source,
+        market_time=fixture_now,
+        expected_row_count=len(snapshots),
+        quality_status=(
+            "ok"
+            if all(snapshot.quality_status.value == "ok" for snapshot in snapshots)
+            else "partial"
+        ),
+    )
 
     trading_days = await source.fetch_trading_days(
         fixture_date - timedelta(days=370), fixture_date
@@ -179,29 +191,20 @@ def create_app(
                 except Exception:
                     logger.exception("首次全市场行情采集失败，继续使用本地已有数据")
 
-            def archive_through(now: datetime, *, include_today: bool) -> date:
-                if include_today or now.time() >= time(15, 10):
-                    return now.date()
-                return now.date() - timedelta(days=1)
-
-            async def archive_through_date(through_date: date) -> None:
+            async def archive_at(at: datetime) -> None:
                 failures = await _run_blocking_safely(
                     archive_pending_snapshots,
                     repository,
                     resolved_settings.data_dir,
-                    through_date,
+                    at,
                 )
                 for trade_date, error in failures.items():
                     logger.error("归档 %s 失败，保留热数据等待重试：%s", trade_date, error)
 
-            await archive_through_date(
-                archive_through(resolved_now_provider(), include_today=False)
-            )
+            await archive_at(resolved_now_provider())
 
             async def archive_later() -> None:
-                await archive_through_date(
-                    archive_through(resolved_now_provider(), include_today=True)
-                )
+                await archive_at(resolved_now_provider())
 
             async def maintenance_later() -> None:
                 now = resolved_now_provider()
@@ -229,9 +232,7 @@ def create_app(
                     )
                     clock.replace_trading_days(refreshed_days)
 
-                await archive_through_date(
-                    archive_through(now, include_today=False)
-                )
+                await archive_at(now)
 
             scheduler = create_scheduler(
                 clock, collector, archive_later, maintenance_later

@@ -136,23 +136,31 @@ def test_market_summary_counts_price_direction_and_stale_quotes(repository):
             Stock("430047", Market.BJ, "诺思兰德"),
         ]
     )
-    falling = quote(1330.06, datetime(2026, 8, 4, 10, 34, tzinfo=tz))
+    captured_at = datetime(2026, 8, 4, 10, 34, tzinfo=tz)
+    falling = quote(1330.06, captured_at)
     rising = replace(
-        quote(10.5, datetime(2026, 8, 4, 10, 30, tzinfo=tz)),
+        quote(10.5, captured_at),
         code="000001",
         market=Market.SZ,
         name="平安银行",
         change_percent=1.25,
     )
     flat = replace(
-        quote(8.5, datetime(2026, 8, 4, 10, 32, tzinfo=tz)),
+        quote(8.5, captured_at),
         code="430047",
         market=Market.BJ,
         name="诺思兰德",
         change_percent=0.0,
         amount=None,
     )
-    repository.save_snapshot([falling, rising, flat])
+    repository.commit_snapshot_success(
+        [falling, rising, flat],
+        started_at=captured_at,
+        source="fixture",
+        market_time=captured_at,
+        expected_row_count=3,
+        quality_status="partial",
+    )
 
     summary = repository.market_summary(stale_after_seconds=120, now=now)
     assert summary.total == 3
@@ -259,18 +267,22 @@ def test_save_snapshot_updates_latest_with_two_set_based_writes(repository):
     counting_connection = CountingConnection(repository.database.connection)
     repository.database.connection = counting_connection
     older = replace(existing, latest_price=1331.0, captured_at=datetime(2026, 8, 4, 10, 30, tzinfo=tz))
-    newer = replace(existing, latest_price=1329.0, captured_at=datetime(2026, 8, 4, 10, 32, tzinfo=tz))
+    newer = replace(existing, latest_price=1330.5, captured_at=datetime(2026, 8, 4, 10, 32, tzinfo=tz))
     another = replace(
         existing,
         code="000001",
         market=Market.SZ,
         name="平安银行",
         latest_price=10.5,
+        open_price=10.4,
+        high_price=10.6,
+        low_price=10.3,
+        previous_close=10.4,
     )
 
     repository.save_snapshot([older, newer, another])
 
     assert counting_connection.history_writes == 1
     assert counting_connection.latest_writes == 1
-    assert repository.get_stock(Market.SH, "600519").latest_price == 1329.0
+    assert repository.get_stock(Market.SH, "600519").latest_price == 1330.5
     assert repository.get_stock(Market.SZ, "000001").latest_price == 10.5

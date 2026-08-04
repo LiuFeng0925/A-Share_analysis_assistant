@@ -72,6 +72,19 @@ CREATE TABLE IF NOT EXISTS ingestion_run (
   error_message VARCHAR
 );
 
+CREATE TABLE IF NOT EXISTS market_summary_batch (
+  run_id UUID PRIMARY KEY,
+  market_time TIMESTAMPTZ NOT NULL,
+  total BIGINT NOT NULL,
+  rising BIGINT NOT NULL,
+  falling BIGINT NOT NULL,
+  flat BIGINT NOT NULL,
+  amount DOUBLE NOT NULL,
+  source VARCHAR NOT NULL,
+  quality_status VARCHAR NOT NULL,
+  finished_at TIMESTAMPTZ NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS trading_calendar (
   trade_date DATE PRIMARY KEY,
   updated_at TIMESTAMPTZ NOT NULL

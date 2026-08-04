@@ -1,8 +1,11 @@
-from datetime import date
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from zoneinfo import ZoneInfo
 
 from a_share_radar.storage.repository import MarketRepository
+
+SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
 def archive_snapshots(
@@ -46,8 +49,16 @@ def archive_snapshots(
 def archive_pending_snapshots(
     repository: MarketRepository,
     data_dir: Path,
-    through_date: date,
+    at: datetime,
 ) -> dict[date, str]:
+    if at.tzinfo is None or at.utcoffset() is None:
+        raise ValueError("归档时间必须包含时区信息")
+    shanghai_at = at.astimezone(SHANGHAI)
+    through_date = (
+        shanghai_at.date()
+        if shanghai_at.time() >= time(15, 10)
+        else shanghai_at.date() - timedelta(days=1)
+    )
     failures: dict[date, str] = {}
     for trade_date in repository.pending_snapshot_dates(through_date):
         try:

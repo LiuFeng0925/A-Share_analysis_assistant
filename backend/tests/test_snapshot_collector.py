@@ -92,10 +92,10 @@ async def test_collector_does_not_retry_storage_errors(monkeypatch, repository, 
     repository.upsert_stocks(fake_source.stock_rows)
     collector = SnapshotCollector(fake_source, repository, minimum_expected_count=2)
 
-    def fail_storage(quotes):
+    def fail_storage(quotes, **kwargs):
         raise RuntimeError("模拟存储失败")
 
-    monkeypatch.setattr(repository, "save_snapshot", fail_storage)
+    monkeypatch.setattr(repository, "commit_snapshot_success", fail_storage)
 
     with pytest.raises(RuntimeError, match="模拟存储失败"):
         await collector.collect_once(datetime(2026, 8, 4, 10, 31, tzinfo=TZ))
@@ -189,10 +189,16 @@ def test_create_app_defers_default_database_until_lifespan(tmp_path, fake_source
     assert settings.database_path.exists() is False
 
 
-async def test_lifespan_archives_snapshots_with_real_callback(
-    monkeypatch, tmp_path, repository, fake_source
+@pytest.mark.parametrize(
+    ("fixed_now", "should_archive"),
+    [
+        (datetime(2026, 8, 4, 12, 0, tzinfo=TZ), False),
+        (datetime(2026, 8, 4, 15, 10, tzinfo=TZ), True),
+    ],
+)
+async def test_lifespan_archive_callback_enforces_close_threshold(
+    monkeypatch, tmp_path, repository, fake_source, fixed_now, should_archive
 ):
-    fixed_now = datetime(2026, 8, 4, 12, 0, tzinfo=TZ)
     set_fixed_now(monkeypatch, fixed_now)
     repository.save_snapshot(fake_source.snapshot_rows[:1])
     settings = Settings(data_dir=tmp_path / "生命周期归档")
@@ -214,8 +220,10 @@ async def test_lifespan_archives_snapshots_with_real_callback(
         / "trade_date=2026-08-04"
         / "part-000.parquet"
     )
-    assert target.exists()
-    assert repository.snapshot_count_for_date(fixed_now.date()) == 0
+    assert target.exists() is should_archive
+    assert repository.snapshot_count_for_date(fixed_now.date()) == (
+        0 if should_archive else 1
+    )
 
 
 async def test_lifespan_cancels_bootstrap_before_scheduler_shutdown(
