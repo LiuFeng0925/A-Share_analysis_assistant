@@ -1,5 +1,8 @@
 # 主题现状
 
-当前没有前端 CSS、Tailwind 配置或主题提供器。
+`frontend/src/app/styles.css` 已使用原生 CSS 变量落地设计系统：雾蓝背景、纸白表面、墨色文字、品牌蓝、红涨绿跌与蓝灰边界。
 
-任务 7 应把 `.superdesign/design-system.md` 与 `.superdesign/preview.css` 中的令牌转写到 `frontend/src/app/styles.css`，使用原生 CSS 变量，不引入 Tailwind 或重型组件库。
+- 系统中文字体与系统等宽数字字体，无外部字体请求。
+- 12px 卡片圆角、10px 控件圆角和单层轻阴影。
+- 已实现焦点轮廓、响应式布局与减少动效偏好。
+- 未引入 Tailwind 或组件库；详情页沿用现有变量和类名语义。

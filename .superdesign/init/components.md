@@ -1,5 +1,7 @@
 # 共享组件现状
 
-当前仓库尚未创建前端工程，因此没有可读取的共享 UI 源码。
+- `frontend/src/components/AppShell.tsx`：208px 单菜单应用壳，小于 860px 时转换为顶部栏。
+- `frontend/src/components/MarketSummary.tsx`：总数、上涨、下跌、平盘、成交额五张真实概览卡。
+- `frontend/src/components/StockTable.tsx`：可排序的单行行情表，支持详情链接、整行鼠标点击与键盘进入。
 
-任务 7 将建立应用壳；任务 8 和任务 9 将依次新增行情概览、股票表格与 K 线图组件。完成对应任务后，应重新运行 Superdesign 初始化分析以收录真实源码。
+任务 9 新增 `KlineChart` 时，应复用现有颜色令牌、数据字体、卡片边框和焦点样式，不复制应用壳。

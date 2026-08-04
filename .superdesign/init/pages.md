@@ -1,12 +1,10 @@
-# 页面依赖树规划
-
-当前没有可追踪的前端源码，以下是已确认的目标依赖关系。
+# 页面依赖树
 
 ## `/`（全部股票）
 
 入口：`frontend/src/pages/StockListPage.tsx`
 
-计划依赖：
+当前依赖：
 
 - `frontend/src/app/App.tsx`
   - `frontend/src/components/AppShell.tsx`
@@ -19,7 +17,7 @@
 
 入口：`frontend/src/pages/StockDetailPage.tsx`
 
-计划依赖：
+待实现依赖：
 
 - `frontend/src/app/App.tsx`
   - `frontend/src/components/AppShell.tsx`
