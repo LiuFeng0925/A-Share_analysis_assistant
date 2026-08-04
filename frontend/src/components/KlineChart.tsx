@@ -199,13 +199,12 @@ export function KlineChart({ series }: KlineChartProps) {
   const updateZoom = useCallback((nextStart: number, nextEnd: number) => {
     const boundedStart = Math.min(95, Math.max(0, nextStart));
     const boundedEnd = Math.min(100, Math.max(boundedStart + 5, nextEnd));
-    commitZoomWindow({ start: boundedStart, end: boundedEnd });
     chartRef.current?.dispatchAction({
       type: "dataZoom",
       start: boundedStart,
       end: boundedEnd,
     });
-  }, [commitZoomWindow]);
+  }, []);
 
   const zoomOut = () => {
     const { start, end } = zoomRef.current;

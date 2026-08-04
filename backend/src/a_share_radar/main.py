@@ -28,11 +28,18 @@ SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
 async def _persist_fixture_data(
-    source: MarketDataSource, repository: MarketRepository, fixture_date: date
-) -> set[date]:
+    source: MarketDataSource, repository: MarketRepository
+) -> tuple[set[date], datetime]:
     stocks = await source.fetch_stock_master()
+    snapshots = await source.fetch_market_snapshot()
+    if not snapshots:
+        raise RuntimeError("固定数据源必须提供至少一条行情快照")
+    fixture_now = max(snapshot.captured_at for snapshot in snapshots)
+    if fixture_now.tzinfo is None or fixture_now.utcoffset() is None:
+        raise RuntimeError("固定数据源的行情快照时间必须包含时区")
+    fixture_date = fixture_now.astimezone(SHANGHAI).date()
     repository.upsert_stocks(stocks)
-    repository.save_snapshot(await source.fetch_market_snapshot())
+    repository.save_snapshot(snapshots)
 
     trading_days = await source.fetch_trading_days(
         fixture_date - timedelta(days=370), fixture_date
@@ -53,7 +60,7 @@ async def _persist_fixture_data(
             "none",
         )
         repository.upsert_bars([*daily_bars, *minute_bars])
-    return trading_days
+    return trading_days, fixture_now
 
 
 def create_app(
@@ -71,9 +78,12 @@ def create_app(
     def system_now() -> datetime:
         return datetime.now(SHANGHAI)
 
-    if resolved_settings.fixture_source and isinstance(fixture_now, datetime):
+    fixture_clock = [fixture_now if isinstance(fixture_now, datetime) else None]
+    if resolved_settings.fixture_source:
+
         def resolved_now_provider() -> datetime:
-            return fixture_now
+            return fixture_clock[0] or (now_provider or system_now)()
+
     else:
         resolved_now_provider = now_provider or system_now
 
@@ -98,9 +108,10 @@ def create_app(
             app.state.bar_service = bar_service
 
             if resolved_settings.fixture_source:
-                trading_days = await _persist_fixture_data(
-                    resolved_source, repository, resolved_now_provider().date()
+                trading_days, persisted_fixture_now = await _persist_fixture_data(
+                    resolved_source, repository
                 )
+                fixture_clock[0] = persisted_fixture_now
                 app.state.clock = MarketClock(trading_days)
                 yield
                 return

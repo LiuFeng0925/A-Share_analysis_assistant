@@ -176,6 +176,11 @@ def app_with_fixture_data(tmp_path, fake_source):
     repository.upsert_stocks(fake_source.stock_rows)
     repository.save_snapshot(fake_source.snapshot_rows)
     repository.upsert_bars(fake_source.bar_rows)
-    app = create_app(settings=settings, source=fake_source, database=database)
+    app = create_app(
+        settings=settings,
+        source=fake_source,
+        database=database,
+        now_provider=lambda: datetime(2026, 8, 4, 10, 31, tzinfo=TZ),
+    )
     yield app
     database.close()

@@ -107,3 +107,35 @@ async def test_fixture_api_ignores_cross_date_wall_clock_and_stays_deterministic
         assert len(bars_response.json()["items"]) == 61
         assert bars_response.json()["items"][0]["bar_time"].startswith("2026-08-04")
         assert bars_response.json()["items"][-1]["bar_time"].startswith("2026-08-04")
+
+
+async def test_fixture_lifespan_derives_now_from_snapshot_without_source_clock(
+    tmp_path,
+):
+    delegate = FixtureSource()
+
+    class FixtureWithoutClock:
+        fetch_stock_master = delegate.fetch_stock_master
+        fetch_trading_days = delegate.fetch_trading_days
+        fetch_market_snapshot = delegate.fetch_market_snapshot
+        fetch_daily_bars = delegate.fetch_daily_bars
+        fetch_minute_bars = delegate.fetch_minute_bars
+
+    app = create_app(
+        settings=Settings(data_dir=tmp_path, fixture_source=True),
+        source=FixtureWithoutClock(),
+        now_provider=lambda: datetime(2030, 1, 2, 10, 30, tzinfo=TZ),
+    )
+
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                "/api/stocks/SH/600519/bars",
+                params={"period": "1m", "range": "today", "adjustment": "none"},
+            )
+
+        assert app.state.now_provider() == FixtureSource.captured_at
+        assert response.status_code == 200
+        assert len(response.json()["items"]) == 61

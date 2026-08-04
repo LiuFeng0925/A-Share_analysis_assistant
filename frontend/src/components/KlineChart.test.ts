@@ -110,6 +110,9 @@ describe("KlineChart", () => {
     chart.on.mockImplementation((event, handler) => {
       if (event === "datazoom") dataZoomHandler = handler;
     });
+    chart.dispatchAction.mockImplementation((action) => {
+      dataZoomHandler?.({ start: action.start, end: action.end });
+    });
     const { rerender, unmount } = render(createElement(KlineChart, { series: todayBarsFixture }));
     expect(chart.setOption).toHaveBeenCalledWith(expect.any(Object), true);
     expect(observe).toHaveBeenCalledTimes(1);
@@ -151,6 +154,29 @@ describe("KlineChart", () => {
     expect(disconnect).toHaveBeenCalledTimes(1);
     expect(chart.dispose).toHaveBeenCalledTimes(1);
     globalThis.ResizeObserver = previousResizeObserver;
+  });
+
+  test("按钮派发缩放后仅在 ECharts 回发事件时更新可见区间", () => {
+    const chart = {
+      setOption: vi.fn(),
+      dispatchAction: vi.fn(),
+      resize: vi.fn(),
+      dispose: vi.fn(),
+      on: vi.fn(),
+      off: vi.fn(),
+    };
+    vi.mocked(echarts.init).mockReturnValue(chart as never);
+    render(createElement(KlineChart, { series: todayBarsFixture }));
+    const visibleRange = screen.getByLabelText("K 线当前可见区间");
+
+    fireEvent.click(screen.getByRole("button", { name: "放大 K 线" }));
+
+    expect(chart.dispatchAction).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "dataZoom", start: 80, end: 90 }),
+    );
+    expect(visibleRange).toHaveAttribute("data-start", "70");
+    expect(visibleRange).toHaveAttribute("data-end", "100");
+    expect(visibleRange).toHaveAttribute("data-window", "30");
   });
 
   test("为每根数据柱提供屏幕阅读器可读摘要", () => {
