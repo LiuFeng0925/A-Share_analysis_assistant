@@ -6,7 +6,9 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from a_share_radar.config import Settings
 from a_share_radar.domain.models import Bar, Market, QualityStatus, QuoteSnapshot, Stock
+from a_share_radar.main import create_app
 from a_share_radar.storage.database import Database
 from a_share_radar.storage.repository import MarketRepository
 
@@ -164,3 +166,16 @@ def repository(tmp_path: Path) -> MarketRepository:
 @pytest.fixture
 def fake_source():
     return FakeSource()
+
+
+@pytest.fixture
+def app_with_fixture_data(tmp_path, fake_source):
+    settings = Settings(data_dir=tmp_path, fixture_source=True)
+    database = Database(settings.database_path)
+    repository = MarketRepository(database)
+    repository.upsert_stocks(fake_source.stock_rows)
+    repository.save_snapshot(fake_source.snapshot_rows)
+    repository.upsert_bars(fake_source.bar_rows)
+    app = create_app(settings=settings, source=fake_source, database=database)
+    yield app
+    database.close()

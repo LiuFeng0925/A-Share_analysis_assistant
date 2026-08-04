@@ -5,7 +5,9 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
+from a_share_radar.api.routes import router
 from a_share_radar.config import Settings
 from a_share_radar.data_sources.akshare_source import AkshareSource
 from a_share_radar.data_sources.protocol import MarketDataSource
@@ -123,10 +125,22 @@ def create_app(
                         resolved_database.close()
 
     app = FastAPI(title="A 股雷达", version="0.1.0", lifespan=lifespan)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://127.0.0.1:5173",
+            "http://localhost:5173",
+            "http://127.0.0.1:4173",
+        ],
+        allow_credentials=False,
+        allow_methods=["GET"],
+        allow_headers=["Content-Type"],
+    )
     app.state.settings = resolved_settings
     app.state.repository = injected_repository
     app.state.bar_service = injected_bar_service
     app.state.source = resolved_source
+    app.state.clock = None
     app.state.scheduler = None
     app.state.history_task = None
 
@@ -134,6 +148,7 @@ def create_app(
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    app.include_router(router)
     return app
 
 
