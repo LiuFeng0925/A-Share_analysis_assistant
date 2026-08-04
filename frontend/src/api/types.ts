@@ -1,5 +1,8 @@
 export type Market = "SH" | "SZ" | "BJ";
 export type QualityStatus = "ok" | "partial" | "stale" | "error";
+export type BarPeriod = "1m" | "5m" | "15m" | "30m" | "60m" | "1d" | "1w" | "1mo";
+export type BarRange = "today" | "5d" | "60d" | "6mo" | "ytd" | "1y" | "5y" | "all";
+export type Adjustment = "none" | "qfq" | "hfq";
 
 export interface MarketSummary {
   total: number;
@@ -67,10 +70,18 @@ export interface Bar {
 export interface BarSeries {
   market: Market;
   code: string;
-  period: string;
-  range: string;
-  adjustment: string;
+  period: BarPeriod;
+  range: BarRange;
+  adjustment: Adjustment;
   source: string | null;
   last_updated_at: string | null;
   items: Bar[];
+}
+
+export interface BarQuery {
+  market: Market;
+  code: string;
+  period: BarPeriod;
+  range: BarRange;
+  adjustment: Adjustment;
 }

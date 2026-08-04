@@ -1,4 +1,12 @@
-import type { MarketSummary, StockPage, StockQuery } from "./types";
+import type {
+  BarQuery,
+  BarSeries,
+  Market,
+  MarketSummary,
+  StockPage,
+  StockQuery,
+  StockQuote,
+} from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 
@@ -27,5 +35,17 @@ export const marketApi = {
     query.set("sort_by", params.sortBy);
     query.set("sort_order", params.sortOrder);
     return request<StockPage>(`/api/market/stocks?${query}`);
+  },
+  getStock: (market: Market, code: string) =>
+    request<StockQuote>(`/api/stocks/${market}/${encodeURIComponent(code)}`),
+  getBars: (params: BarQuery) => {
+    const query = new URLSearchParams({
+      period: params.period,
+      range: params.range,
+      adjustment: params.adjustment,
+    });
+    return request<BarSeries>(
+      `/api/stocks/${params.market}/${encodeURIComponent(params.code)}/bars?${query}`,
+    );
   },
 };

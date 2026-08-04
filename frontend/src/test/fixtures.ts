@@ -1,4 +1,4 @@
-import type { MarketSummary, StockPage } from "../api/types";
+import type { BarSeries, MarketSummary, StockPage, StockQuote } from "../api/types";
 
 export const summaryFixture: MarketSummary = {
   total: 5314,
@@ -51,6 +51,50 @@ export const stockPageFixture: StockPage = {
       total_market_cap: 218_900_000_000,
       captured_at: "2026-08-04T10:26:00+08:00",
       quality_status: "ok",
+    },
+  ],
+};
+
+export const stockDetailFixture: StockQuote = stockPageFixture.items[0];
+
+export const dailyBarsFixture: BarSeries = {
+  market: "SH",
+  code: "600519",
+  period: "1d",
+  range: "60d",
+  adjustment: "qfq",
+  source: "akshare",
+  last_updated_at: "2026-08-04T15:00:00+08:00",
+  items: [
+    {
+      bar_time: "2026-08-01T15:00:00+08:00",
+      open_price: 1320.2,
+      high_price: 1350.08,
+      low_price: 1315.04,
+      close_price: 1346.06,
+      volume: 2_880_000,
+      amount: 3_840_000_000,
+      is_complete: true,
+    },
+  ],
+};
+
+export const todayBarsFixture: BarSeries = {
+  ...dailyBarsFixture,
+  period: "1m",
+  range: "today",
+  adjustment: "none",
+  last_updated_at: "2026-08-04T10:31:00+08:00",
+  items: [
+    {
+      bar_time: "2026-08-04T10:31:00+08:00",
+      open_price: 1334.2,
+      high_price: 1335.08,
+      low_price: 1330.04,
+      close_price: 1330.06,
+      volume: 82_100,
+      amount: 109_400_000,
+      is_complete: true,
     },
   ],
 };
