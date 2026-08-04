@@ -1,0 +1,27 @@
+:root {
+  --canvas: #f5f7fb;
+  --surface: #ffffff;
+  --ink: #172033;
+  --muted: #687386;
+  --brand: #3157d5;
+  --border: #e4e9f2;
+  --rise: #e5484d;
+  --fall: #16a36f;
+  --radius-card: 12px;
+  --radius-control: 10px;
+  --shadow-card: 0 6px 20px rgba(26, 43, 74, 0.06);
+  --font-ui: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-data: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  background: var(--canvas);
+  font-family: var(--font-ui);
+}
+
+.data-value {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+}
