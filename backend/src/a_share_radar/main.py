@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Request
@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from a_share_radar.api.routes import router
 from a_share_radar.config import Settings
 from a_share_radar.data_sources.akshare_source import AkshareSource
+from a_share_radar.data_sources.fixture_source import FixtureSource
 from a_share_radar.data_sources.protocol import MarketDataSource
 from a_share_radar.services.bar_service import BarService, HistoryBootstrapper
 from a_share_radar.services.market_clock import MarketClock
@@ -25,13 +26,45 @@ logger = logging.getLogger(__name__)
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
+async def _persist_fixture_data(
+    source: MarketDataSource, repository: MarketRepository
+) -> set[date]:
+    stocks = await source.fetch_stock_master()
+    repository.upsert_stocks(stocks)
+    repository.save_snapshot(await source.fetch_market_snapshot())
+
+    fixture_date = getattr(source, "trade_date", datetime.now(SHANGHAI).date())
+    trading_days = await source.fetch_trading_days(
+        fixture_date - timedelta(days=370), fixture_date
+    )
+    for stock in stocks:
+        daily_bars = await source.fetch_daily_bars(
+            stock.code,
+            fixture_date - timedelta(days=370),
+            fixture_date,
+            "1d",
+            "qfq",
+        )
+        minute_bars = await source.fetch_minute_bars(
+            stock.code,
+            datetime.combine(fixture_date, time(9, 30), tzinfo=SHANGHAI),
+            datetime.combine(fixture_date, time(15, 0), tzinfo=SHANGHAI),
+            "1m",
+            "none",
+        )
+        repository.upsert_bars([*daily_bars, *minute_bars])
+    return trading_days
+
+
 def create_app(
     settings: Settings | None = None,
     source: MarketDataSource | None = None,
     database: Database | None = None,
 ) -> FastAPI:
     resolved_settings = settings or Settings()
-    resolved_source = source or AkshareSource()
+    resolved_source = source or (
+        FixtureSource() if resolved_settings.fixture_source else AkshareSource()
+    )
     injected_repository = MarketRepository(database) if database is not None else None
     injected_bar_service = (
         BarService(resolved_source, injected_repository, resolved_settings.history_days)
@@ -51,6 +84,12 @@ def create_app(
             )
             app.state.repository = repository
             app.state.bar_service = bar_service
+
+            if resolved_settings.fixture_source:
+                trading_days = await _persist_fixture_data(resolved_source, repository)
+                app.state.clock = MarketClock(trading_days)
+                yield
+                return
 
             try:
                 stocks = await resolved_source.fetch_stock_master()
