@@ -61,3 +61,15 @@ class Bar:
     amount: float
     source: str
     is_complete: bool = True
+    acquired_at: datetime | None = None
+    quality_status: QualityStatus | None = None
+
+    def __post_init__(self) -> None:
+        if self.acquired_at is None:
+            object.__setattr__(self, "acquired_at", self.bar_time)
+        if self.quality_status is None:
+            object.__setattr__(
+                self,
+                "quality_status",
+                QualityStatus.OK if self.is_complete else QualityStatus.PARTIAL,
+            )

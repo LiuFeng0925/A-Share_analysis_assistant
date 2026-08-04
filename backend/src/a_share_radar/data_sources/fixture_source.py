@@ -142,6 +142,7 @@ class FixtureSource:
                     amount=round(volume * close_price, 2),
                     source=cls.name,
                     is_complete=True,
+                    acquired_at=cls.captured_at,
                 )
             )
         return result
@@ -178,6 +179,7 @@ class FixtureSource:
                     amount=round(volume * close_price, 2),
                     source=cls.name,
                     is_complete=index < 60,
+                    acquired_at=cls.captured_at,
                 )
             )
         return result

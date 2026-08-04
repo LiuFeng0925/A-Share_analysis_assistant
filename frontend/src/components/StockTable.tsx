@@ -92,7 +92,7 @@ export function StockTable({ stocks, sortBy, sortOrder, onSort }: StockTableProp
             <th scope="col">今开</th>
             <th scope="col">最高</th>
             <th scope="col">最低</th>
-            <th scope="col">成交量</th>
+            <th scope="col">成交量（股）</th>
             <th scope="col" aria-sort={ariaSort("amount")}>
               <SortButton field="amount" label="成交额" {...{ sortBy, sortOrder, onSort }} />
             </th>

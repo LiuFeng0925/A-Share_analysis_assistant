@@ -68,6 +68,7 @@ export const dailyBarsFixture: BarSeries = {
   items: [
     {
       bar_time: "2026-08-01T15:00:00+08:00",
+      acquired_at: "2026-08-04T15:10:00+08:00",
       open_price: 1320.2,
       high_price: 1350.08,
       low_price: 1315.04,
@@ -75,6 +76,7 @@ export const dailyBarsFixture: BarSeries = {
       volume: 2_880_000,
       amount: 3_840_000_000,
       is_complete: true,
+      quality_status: "ok",
     },
   ],
 };
@@ -88,13 +90,15 @@ export const todayBarsFixture: BarSeries = {
   items: [
     {
       bar_time: "2026-08-04T10:31:00+08:00",
+      acquired_at: "2026-08-04T10:31:30+08:00",
       open_price: 1334.2,
       high_price: 1335.08,
       low_price: 1330.04,
       close_price: 1330.06,
       volume: 82_100,
       amount: 109_400_000,
-      is_complete: true,
+      is_complete: false,
+      quality_status: "partial",
     },
   ],
 };

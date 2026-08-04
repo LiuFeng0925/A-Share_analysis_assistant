@@ -233,7 +233,9 @@ async def test_lifespan_cancels_bootstrap_before_scheduler_shutdown(
     bootstrap_cancelled = asyncio.Event()
 
     class BlockingBootstrapper:
-        def __init__(self, bar_service, repository, delay_seconds):
+        def __init__(
+            self, bar_service, repository, delay_seconds, now_provider=None
+        ):
             pass
 
         async def run(self):
@@ -325,7 +327,13 @@ async def test_lifespan_skips_initial_snapshot_during_lunch_break(
 async def test_default_database_closes_when_scheduler_creation_fails(
     monkeypatch, tmp_path, fake_source
 ):
-    def fail_scheduler_creation(clock, collector, archive_callback, maintenance_callback):
+    def fail_scheduler_creation(
+        clock,
+        collector,
+        archive_callback,
+        maintenance_callback,
+        daily_history_callback,
+    ):
         raise RuntimeError("模拟调度器创建失败")
 
     set_fixed_now(monkeypatch, datetime(2026, 8, 4, 12, 0, tzinfo=TZ))
@@ -353,7 +361,8 @@ async def test_default_database_closes_when_scheduler_start_fails(
     monkeypatch.setattr(
         main_module,
         "create_scheduler",
-        lambda clock, collector, archive_callback, maintenance_callback: StartFailureScheduler(),
+        lambda clock, collector, archive_callback, maintenance_callback,
+        daily_history_callback: StartFailureScheduler(),
     )
     settings = Settings(data_dir=tmp_path / "启动失败")
     app = main_module.create_app(settings=settings, source=fake_source)

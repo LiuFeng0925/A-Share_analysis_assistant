@@ -34,7 +34,7 @@ function tooltipContent(series: BarSeries, dataIndex: number) {
     `<strong>${formatShanghaiDateTime(bar.bar_time)}</strong>`,
     `开 ${formatMarketNumber(bar.open_price)}　高 ${formatMarketNumber(bar.high_price)}`,
     `低 ${formatMarketNumber(bar.low_price)}　收 ${formatMarketNumber(bar.close_price)}`,
-    `成交量 ${formatMarketNumber(bar.volume, 0)}`,
+    `成交量 ${formatMarketNumber(bar.volume, 0)} 股`,
     `成交额 ${formatMarketNumber(bar.amount)}`,
     bar.is_complete ? "已完成" : "动态柱",
   ].join("<br />");
@@ -242,7 +242,7 @@ export function KlineChart({ series }: KlineChartProps) {
       <table className="sr-only" aria-label="K 线数据明细">
         <thead>
           <tr>
-            <th>时间</th><th>开</th><th>高</th><th>低</th><th>收</th><th>成交量</th><th>成交额</th><th>状态</th>
+            <th>时间</th><th>开</th><th>高</th><th>低</th><th>收</th><th>成交量（股）</th><th>成交额</th><th>状态</th>
           </tr>
         </thead>
         <tbody>

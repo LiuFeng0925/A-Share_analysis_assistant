@@ -184,7 +184,7 @@ async def test_repository_operations_do_not_block_event_loop(
     assert all(thread_id != event_loop_thread for _, thread_id in operation_threads)
 
 
-async def test_cancellation_waits_for_repository_thread_before_releasing_key_lock(
+async def test_cancellation_does_not_cancel_shared_repository_thread(
     monkeypatch, repository, fake_source
 ):
     read_started = Event()
@@ -213,14 +213,14 @@ async def test_cancellation_waits_for_repository_thread_before_releasing_key_loc
     task.cancel()
     await asyncio.sleep(0)
 
-    try:
-        assert not task.done()
-        assert len(service._locks) == 1
-    finally:
-        release_read.set()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert service._locks == {}
+    assert service.inflight_count == 1
+
+    release_read.set()
+    while service.inflight_count:
+        await asyncio.sleep(0)
+    assert service.inflight_count == 0
 
 
 async def test_daily_history_write_runs_outside_event_loop(
@@ -335,11 +335,11 @@ async def test_same_key_concurrent_requests_access_source_serially(
     await asyncio.sleep(0)
 
     assert maximum_active == 1
-    assert len(service._locks) == 1
+    assert service.inflight_count == 1
     release_first.set()
     await asyncio.gather(first, second)
     assert maximum_active == 1
-    assert service._locks == {}
+    assert service.inflight_count == 0
 
 
 async def test_keyed_locks_are_reclaimed_after_multiple_keys(repository, fake_source):
@@ -349,7 +349,7 @@ async def test_keyed_locks_are_reclaimed_after_multiple_keys(repository, fake_so
     await service.get_bars(Market.SH, "600519", "1m", "today", "none", now)
     await service.get_bars(Market.SZ, "000001", "1m", "today", "none", now)
 
-    assert service._locks == {}
+    assert service.inflight_count == 0
 
 
 async def test_keyed_lock_is_reclaimed_after_source_error(repository, fake_source):
@@ -362,7 +362,8 @@ async def test_keyed_lock_is_reclaimed_after_source_error(repository, fake_sourc
             Market.SH, "600519", "1m", "today", "none", now
         )
 
-    assert service._locks == {}
+    await asyncio.sleep(0)
+    assert service.inflight_count == 0
 
 
 async def test_waiter_cancellation_keeps_lock_until_holder_exits(
@@ -391,14 +392,14 @@ async def test_waiter_cancellation_keeps_lock_until_holder_exits(
     waiter.cancel()
     with pytest.raises(asyncio.CancelledError):
         await waiter
-    assert len(service._locks) == 1
+    assert service.inflight_count == 1
 
     release.set()
     await holder
-    assert service._locks == {}
+    assert service.inflight_count == 0
 
 
-async def test_holder_cancellation_reclaims_keyed_lock(
+async def test_only_waiter_cancellation_leaves_shared_fetch_for_service_shutdown(
     monkeypatch, repository, fake_source
 ):
     started = asyncio.Event()
@@ -419,7 +420,9 @@ async def test_holder_cancellation_reclaims_keyed_lock(
     with pytest.raises(asyncio.CancelledError):
         await holder
 
-    assert service._locks == {}
+    assert service.inflight_count == 1
+    await service.close()
+    assert service.inflight_count == 0
 
 
 async def test_history_bootstrapper_continues_after_one_stock_fails(

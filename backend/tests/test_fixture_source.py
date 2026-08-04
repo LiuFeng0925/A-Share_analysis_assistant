@@ -39,10 +39,12 @@ async def test_fixture_source_returns_deterministic_complete_mvp_data():
     assert len(daily_bars) == 60
     assert all(bar.period == "1d" and bar.adjustment == "qfq" for bar in daily_bars)
     assert daily_bars[-1].bar_time == datetime(2026, 8, 3, 15, 0, tzinfo=TZ)
+    assert daily_bars[-1].acquired_at == source.captured_at
     assert len(minute_bars) == 61
     assert all(bar.period == "1m" and bar.adjustment == "none" for bar in minute_bars)
     assert minute_bars[0].bar_time == datetime(2026, 8, 4, 9, 30, tzinfo=TZ)
     assert minute_bars[-1].bar_time == datetime(2026, 8, 4, 10, 30, tzinfo=TZ)
+    assert all(bar.acquired_at == source.captured_at for bar in minute_bars)
 
 
 async def test_fixture_source_filters_unknown_stock_and_out_of_range_bars():

@@ -6,6 +6,8 @@ import pandas as pd
 from a_share_radar.data_sources.akshare_source import AkshareSource, _number
 from a_share_radar.domain.models import Market, QualityStatus
 
+TZ = ZoneInfo("Asia/Shanghai")
+
 
 def test_normalize_snapshot_maps_chinese_columns():
     frame = pd.DataFrame(
@@ -35,7 +37,7 @@ def test_normalize_snapshot_maps_chinese_columns():
     assert quotes[0].market is Market.SH
     assert quotes[0].code == "600519"
     assert quotes[0].latest_price == 1330.06
-    assert quotes[0].volume == 33455
+    assert quotes[0].volume == 3_345_500
     assert quotes[0].quality_status is QualityStatus.OK
 
 
@@ -73,7 +75,74 @@ def test_minute_bar_keeps_provider_time():
         ]
     )
 
-    bars = AkshareSource.normalize_minute_bars("000001", frame, "1m", "none")
+    acquired_at = datetime(2026, 8, 4, 10, 31, 30, tzinfo=TZ)
+    bars = AkshareSource.normalize_minute_bars(
+        "000001", frame, "1m", "none", acquired_at=acquired_at
+    )
 
     assert bars[0].bar_time.isoformat() == "2026-08-04T10:31:00+08:00"
-    assert bars[0].is_complete is True
+    assert bars[0].volume == 100_000
+    assert bars[0].acquired_at == acquired_at
+    assert bars[0].quality_status is QualityStatus.PARTIAL
+    assert bars[0].is_complete is False
+
+
+def test_history_bar_converts_lots_to_shares_and_records_acquisition_time():
+    frame = pd.DataFrame(
+        [
+            {
+                "日期": "2026-08-03",
+                "开盘": 10.1,
+                "收盘": 10.2,
+                "最高": 10.3,
+                "最低": 10.0,
+                "成交量": 1_000,
+                "成交额": 1_020_000.0,
+            }
+        ]
+    )
+    acquired_at = datetime(2026, 8, 4, 15, 10, tzinfo=TZ)
+
+    bars = AkshareSource.normalize_history_bars(
+        "000001", frame, "1d", "qfq", acquired_at=acquired_at
+    )
+
+    assert bars[0].volume == 100_000
+    assert bars[0].acquired_at == acquired_at
+    assert bars[0].quality_status is QualityStatus.OK
+
+
+def test_minute_normalization_filters_zero_ohlc_bad_bar():
+    frame = pd.DataFrame(
+        [
+            {
+                "时间": "2026-08-04 10:30:00",
+                "开盘": 0,
+                "收盘": 10.2,
+                "最高": 10.3,
+                "最低": 10.0,
+                "成交量": 1_000,
+                "成交额": 1_020_000.0,
+            },
+            {
+                "时间": "2026-08-04 10:31:00",
+                "开盘": 10.1,
+                "收盘": 10.2,
+                "最高": 10.3,
+                "最低": 10.0,
+                "成交量": 1_000,
+                "成交额": 1_020_000.0,
+            },
+        ]
+    )
+
+    bars = AkshareSource.normalize_minute_bars(
+        "000001",
+        frame,
+        "1m",
+        "none",
+        acquired_at=datetime(2026, 8, 4, 10, 33, tzinfo=TZ),
+    )
+
+    assert [bar.bar_time.minute for bar in bars] == [31]
+    assert bars[0].quality_status is QualityStatus.PARTIAL

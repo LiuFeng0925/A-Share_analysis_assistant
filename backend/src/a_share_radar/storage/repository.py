@@ -454,6 +454,8 @@ class MarketRepository:
                 bar.amount,
                 bar.source,
                 bar.is_complete,
+                bar.acquired_at,
+                bar.quality_status.value,
             )
             for bar in bars
         ]
@@ -462,8 +464,11 @@ class MarketRepository:
         with self.database.lock:
             self._transactional_executemany(
                 """
-                INSERT OR REPLACE INTO bar_hot VALUES
-                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO bar_hot (
+                  market, code, period, adjustment, bar_time,
+                  open_price, high_price, low_price, close_price,
+                  volume, amount, source, is_complete, acquired_at, quality_status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
@@ -669,7 +674,8 @@ class MarketRepository:
                 """
                 SELECT code, market, period, adjustment, CAST(bar_time AS VARCHAR),
                        open_price, high_price, low_price, close_price,
-                       volume, amount, source, is_complete
+                       volume, amount, source, is_complete,
+                       CAST(acquired_at AS VARCHAR), quality_status
                 FROM bar_hot
                 WHERE market = ? AND code = ? AND period = ?
                   AND adjustment = ? AND bar_time BETWEEN ? AND ?
@@ -692,6 +698,8 @@ class MarketRepository:
                 amount=row[10],
                 source=row[11],
                 is_complete=row[12],
+                acquired_at=datetime.fromisoformat(row[13]),
+                quality_status=QualityStatus(row[14]),
             )
             for row in rows
         ]

@@ -253,7 +253,7 @@ export function StockDetailPage() {
     { label: "今开", value: formatMarketNumber(stock?.open_price), className: "" },
     { label: "最高", value: formatMarketNumber(stock?.high_price), className: "" },
     { label: "最低", value: formatMarketNumber(stock?.low_price), className: "" },
-    { label: "成交量", value: formatCompact(stock?.volume), className: "" },
+    { label: "成交量（股）", value: formatCompact(stock?.volume), className: "" },
     { label: "成交额", value: formatCompact(stock?.amount), className: "" },
   ];
 
@@ -328,7 +328,7 @@ export function StockDetailPage() {
             <span>高 <b>{formatMarketNumber(latestBar.high_price)}</b></span>
             <span>低 <b>{formatMarketNumber(latestBar.low_price)}</b></span>
             <span>收 <b>{formatMarketNumber(latestBar.close_price)}</b></span>
-            <span>量 <b>{formatCompact(latestBar.volume)}</b></span>
+            <span>量 <b>{formatCompact(latestBar.volume)} 股</b></span>
             {!latestBar.is_complete && <strong className="dynamic-bar">动态柱</strong>}
           </div>
         )}

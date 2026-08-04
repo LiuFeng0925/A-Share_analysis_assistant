@@ -58,6 +58,7 @@ export interface StockQuery {
 
 export interface Bar {
   bar_time: string;
+  acquired_at: string;
   open_price: number;
   high_price: number;
   low_price: number;
@@ -65,6 +66,7 @@ export interface Bar {
   volume: number;
   amount: number;
   is_complete: boolean;
+  quality_status: QualityStatus;
 }
 
 export interface BarSeries {

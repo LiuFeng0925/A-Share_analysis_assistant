@@ -1,4 +1,6 @@
+from dataclasses import replace
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -6,6 +8,8 @@ from pydantic import ValidationError
 
 from a_share_radar.config import Settings
 from a_share_radar.main import create_app
+
+TZ = ZoneInfo("Asia/Shanghai")
 
 
 async def get(app, path, *, params=None, headers=None):
@@ -138,7 +142,9 @@ async def test_today_bars_return_one_minute_semantics(app_with_fixture_data):
     assert body["source"] == "fixture"
     assert body["last_updated_at"].endswith("+08:00")
     assert body["items"][0]["bar_time"].endswith("+08:00")
-    assert body["items"][0]["is_complete"] is True
+    assert body["items"][0]["acquired_at"].endswith("+08:00")
+    assert body["items"][0]["quality_status"] == "partial"
+    assert body["items"][0]["is_complete"] is False
 
 
 async def test_today_one_minute_bars_default_to_unadjusted(app_with_fixture_data):
@@ -150,6 +156,24 @@ async def test_today_one_minute_bars_default_to_unadjusted(app_with_fixture_data
 
     assert response.status_code == 200
     assert response.json()["adjustment"] == "none"
+
+
+async def test_bar_series_last_update_uses_acquisition_time(
+    app_with_fixture_data, fake_source
+):
+    acquired_at = datetime(2026, 8, 4, 10, 31, 30, tzinfo=TZ)
+    fake_source.bar_rows[0] = replace(
+        fake_source.bar_rows[0], acquired_at=acquired_at
+    )
+
+    response = await get(
+        app_with_fixture_data,
+        "/api/stocks/SH/600519/bars",
+        params={"period": "1m", "range": "today", "adjustment": "none"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["last_updated_at"] == acquired_at.isoformat()
 
 
 async def test_data_status_returns_storage_counts(app_with_fixture_data):

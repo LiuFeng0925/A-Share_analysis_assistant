@@ -48,6 +48,7 @@ class StockPageResponse(AttributeModel):
 
 class BarResponse(AttributeModel):
     bar_time: AwareDatetime
+    acquired_at: AwareDatetime
     open_price: float
     high_price: float
     low_price: float
@@ -55,6 +56,7 @@ class BarResponse(AttributeModel):
     volume: int
     amount: float
     is_complete: bool
+    quality_status: QualityStatus
 
 
 class BarSeriesResponse(AttributeModel):

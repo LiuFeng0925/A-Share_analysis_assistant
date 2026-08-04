@@ -122,9 +122,10 @@ def create_app(
         resolved_database = database or Database(resolved_settings.database_path)
         scheduler = None
         history_task = None
+        bar_service = injected_bar_service
         try:
             repository = injected_repository or MarketRepository(resolved_database)
-            bar_service = injected_bar_service or BarService(
+            bar_service = bar_service or BarService(
                 resolved_source, repository, resolved_settings.history_days
             )
             app.state.repository = repository
@@ -150,9 +151,8 @@ def create_app(
                 bar_service,
                 repository,
                 resolved_settings.history_request_delay_seconds,
+                now_provider=resolved_now_provider,
             )
-            history_task = asyncio.create_task(bootstrapper.run())
-            app.state.history_task = history_task
 
             today = resolved_now_provider().date()
             cached_trading_days = await _run_blocking_safely(
@@ -183,6 +183,9 @@ def create_app(
             )
             app.state.clock = clock
             app.state.collector = collector
+
+            history_task = asyncio.create_task(bootstrapper.run())
+            app.state.history_task = history_task
 
             now = resolved_now_provider()
             if clock.is_open(now):
@@ -234,8 +237,15 @@ def create_app(
 
                 await archive_at(now)
 
+            async def daily_history_later() -> None:
+                await bootstrapper.run()
+
             scheduler = create_scheduler(
-                clock, collector, archive_later, maintenance_later
+                clock,
+                collector,
+                archive_later,
+                maintenance_later,
+                daily_history_later,
             )
             app.state.scheduler = scheduler
             scheduler.start()
@@ -255,8 +265,12 @@ def create_app(
                     if scheduler is not None and scheduler.running:
                         await shutdown_scheduler(scheduler)
                 finally:
-                    if database is None:
-                        resolved_database.close()
+                    try:
+                        if bar_service is not None:
+                            await bar_service.close()
+                    finally:
+                        if database is None:
+                            resolved_database.close()
 
     app = FastAPI(title="A 股雷达", version="0.1.0", lifespan=lifespan)
     app.add_middleware(

@@ -31,12 +31,12 @@ test("按亿元和万亿元边界格式化成交额及市值，并展示成交�
       "今开",
       "最高",
       "最低",
-      "成交量",
+      "成交量（股）",
       "成交额",
       "换手率",
       "总市值",
     ]);
-  expect(screen.getByRole("columnheader", { name: "成交量" })).toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "成交量（股）" })).toBeInTheDocument();
   expect(screen.getByText("1 亿")).toBeInTheDocument();
   expect(screen.getByText("1,000 亿")).toBeInTheDocument();
   expect(screen.getByText("1 万亿")).toBeInTheDocument();

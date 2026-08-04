@@ -102,7 +102,7 @@ async def stock_bars(
         range=range_name,
         adjustment=resolved_adjustment,
         source=bars[-1].source if bars else None,
-        last_updated_at=bars[-1].bar_time if bars else None,
+        last_updated_at=bars[-1].acquired_at if bars else None,
         items=[BarResponse.model_validate(bar) for bar in bars],
     )
 

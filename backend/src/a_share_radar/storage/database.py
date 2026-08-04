@@ -54,6 +54,8 @@ CREATE TABLE IF NOT EXISTS bar_hot (
   amount DOUBLE NOT NULL,
   source VARCHAR NOT NULL,
   is_complete BOOLEAN NOT NULL,
+  acquired_at TIMESTAMPTZ NOT NULL,
+  quality_status VARCHAR NOT NULL,
   PRIMARY KEY (market, code, period, adjustment, bar_time)
 );
 
@@ -96,9 +98,14 @@ MIGRATION_SQL = (
     "ALTER TABLE ingestion_run ADD COLUMN IF NOT EXISTS expected_row_count BIGINT",
     "ALTER TABLE ingestion_run ADD COLUMN IF NOT EXISTS actual_row_count BIGINT",
     "ALTER TABLE ingestion_run ADD COLUMN IF NOT EXISTS quality_status VARCHAR",
+    "ALTER TABLE bar_hot ADD COLUMN IF NOT EXISTS acquired_at TIMESTAMPTZ",
+    "ALTER TABLE bar_hot ADD COLUMN IF NOT EXISTS quality_status VARCHAR",
+    ("UPDATE ingestion_run SET actual_row_count = row_count WHERE actual_row_count IS NULL"),
+    "UPDATE bar_hot SET acquired_at = bar_time WHERE acquired_at IS NULL",
     (
-        "UPDATE ingestion_run SET actual_row_count = row_count "
-        "WHERE actual_row_count IS NULL"
+        "UPDATE bar_hot SET quality_status = "
+        "CASE WHEN is_complete THEN 'ok' ELSE 'partial' END "
+        "WHERE quality_status IS NULL"
     ),
 )
 
