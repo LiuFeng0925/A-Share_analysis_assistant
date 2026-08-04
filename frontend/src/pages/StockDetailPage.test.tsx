@@ -313,6 +313,50 @@ test("搜索其他股票支持键盘选择并切换详情", async () => {
   ));
 });
 
+test("关键词改变后立即隐藏旧候选且新响应前不能选择旧股票", async () => {
+  vi.useFakeTimers();
+  let resolveSecond: ((value: {
+    total: number;
+    page: number;
+    page_size: number;
+    items: typeof stockDetailFixture[];
+  }) => void) | undefined;
+  vi.mocked(marketApi.getStocks)
+    .mockResolvedValueOnce({
+      total: 1,
+      page: 1,
+      page_size: 10,
+      items: [stockDetailFixture],
+    })
+    .mockReturnValueOnce(new Promise((resolve) => { resolveSecond = resolve; }));
+  renderDetail();
+  const input = screen.getByRole("combobox", { name: "搜索其他股票" });
+
+  fireEvent.change(input, { target: { value: "茅台" } });
+  await act(async () => vi.advanceTimersByTimeAsync(220));
+  const staleOption = screen.getByRole("option", { name: /贵州茅台 600519/ });
+
+  fireEvent.change(input, { target: { value: "平安" } });
+  expect(screen.queryByRole("option", { name: /贵州茅台 600519/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("正在搜索股票");
+  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.mouseDown(staleOption);
+  expect(marketApi.getStock).toHaveBeenCalledTimes(1);
+
+  await act(async () => vi.advanceTimersByTimeAsync(220));
+  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.mouseDown(staleOption);
+  expect(marketApi.getStock).toHaveBeenCalledTimes(1);
+
+  await act(async () => resolveSecond?.({
+    total: 1,
+    page: 1,
+    page_size: 10,
+    items: [{ ...stockDetailFixture, market: "SZ", code: "000001", name: "平安银行" }],
+  }));
+  expect(screen.getByRole("option", { name: /平安银行 000001/ })).toBeInTheDocument();
+});
+
 test("切股搜索会取消旧请求并忽略迟到结果，卸载时也清理在途请求", async () => {
   let resolveFirst: ((value: { total: number; page: number; page_size: number; items: typeof stockDetailFixture[] }) => void) | undefined;
   vi.mocked(marketApi.getStocks)

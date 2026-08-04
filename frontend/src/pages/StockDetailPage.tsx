@@ -183,8 +183,15 @@ function StockSwitcher({ onSelect }: { onSelect: (stock: StockQuote) => void }) 
           value={query}
           placeholder="输入代码或名称切换股票"
           onChange={(event) => {
-            setQuery(event.target.value);
-            setOpen(Boolean(event.target.value.trim()));
+            const nextQuery = event.target.value;
+            const hasKeyword = Boolean(nextQuery.trim());
+            requestSequence.current += 1;
+            setQuery(nextQuery);
+            setCandidates([]);
+            setActiveIndex(-1);
+            setError(null);
+            setLoading(hasKeyword);
+            setOpen(hasKeyword);
           }}
           onFocus={() => setOpen(Boolean(query.trim()))}
           onKeyDown={handleKeyDown}

@@ -40,6 +40,52 @@ def test_smoke_script_can_run_from_any_working_directory(tmp_path):
     assert "ModuleNotFoundError" not in result.stderr
 
 
+def test_live_smoke_cli_hides_unknown_upstream_sensitive_error(tmp_path):
+    sensitive_message = (
+        "代理连接失败：https://proxy-user:proxy-password@proxy.example/"
+        "?token=secret-token-123"
+    )
+    (tmp_path / "sitecustomize.py").write_text(
+        "\n".join(
+            [
+                "import sys",
+                "import types",
+                "module = types.ModuleType('a_share_radar.data_sources.akshare_source')",
+                "class AkshareSource:",
+                "    async def fetch_market_snapshot(self):",
+                f"        raise RuntimeError({sensitive_message!r})",
+                "module.AkshareSource = AkshareSource",
+                "sys.modules['a_share_radar.data_sources.akshare_source'] = module",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    environment = os.environ.copy()
+    environment["A_SHARE_RUN_LIVE"] = "1"
+    environment["PYTHONPATH"] = str(tmp_path)
+
+    result = subprocess.run(
+        [sys.executable, str(SMOKE_SCRIPT)],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr.strip() == "在线行情接口检查失败：上游服务暂不可用"
+    returned_information = f"{result.stdout}\n{result.stderr}\n{result.returncode!r}"
+    for sensitive_text in (
+        "proxy-user",
+        "proxy-password",
+        "secret-token-123",
+        sensitive_message,
+    ):
+        assert sensitive_text not in returned_information
+
+
 async def test_live_smoke_requires_explicit_environment_permission(monkeypatch):
     monkeypatch.delenv("A_SHARE_RUN_LIVE", raising=False)
     module = load_smoke_module()

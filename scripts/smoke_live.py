@@ -52,19 +52,23 @@ REQUIRED_FIELDS = (
 )
 
 
+class SmokeValidationError(RuntimeError):
+    """仅承载脚本自身生成、可以安全展示的校验消息。"""
+
+
 def _finite_number(value: object, label: str, *, positive: bool = False) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise TypeError(f"代表股票{label}字段不是有限数值")
+        raise SmokeValidationError(f"代表股票{label}字段不是有限数值")
     number = float(value)
     if not math.isfinite(number) or (positive and number <= 0):
-        raise RuntimeError(f"代表股票{label}字段不是有限正数")
+        raise SmokeValidationError(f"代表股票{label}字段不是有限正数")
     return number
 
 
 def _validate_representative(snapshot: Snapshot) -> None:
     missing = [field for field in REQUIRED_FIELDS if not hasattr(snapshot, field)]
     if missing:
-        raise RuntimeError(f"代表股票缺少必需字段：{', '.join(missing)}")
+        raise SmokeValidationError(f"代表股票缺少必需字段：{', '.join(missing)}")
 
     captured_at = snapshot.captured_at
     if (
@@ -72,7 +76,7 @@ def _validate_representative(snapshot: Snapshot) -> None:
         or captured_at.tzinfo is None
         or captured_at.utcoffset() != SHANGHAI_OFFSET
     ):
-        raise RuntimeError("代表股票采集时间必须包含上海时区")
+        raise SmokeValidationError("代表股票采集时间必须包含上海时区")
 
     latest = _finite_number(snapshot.latest_price, "最新价", positive=True)
     open_price = _finite_number(snapshot.open_price, "OHLC 开盘", positive=True)
@@ -84,31 +88,31 @@ def _validate_representative(snapshot: Snapshot) -> None:
     _finite_number(snapshot.turnover_rate, "换手率")
     _finite_number(snapshot.total_market_cap, "总市值", positive=True)
     if low > min(open_price, latest) or high < max(open_price, latest) or low > high:
-        raise RuntimeError("代表股票 OHLC 关系不合法")
+        raise SmokeValidationError("代表股票 OHLC 关系不合法")
 
     volume = snapshot.volume
     if isinstance(volume, bool) or not isinstance(volume, int) or volume < 0:
-        raise RuntimeError("代表股票成交量必须是非负整数")
+        raise SmokeValidationError("代表股票成交量必须是非负整数")
     if volume % 100 != 0:
-        raise RuntimeError("代表股票成交量未按股口径归一化")
+        raise SmokeValidationError("代表股票成交量未按股口径归一化")
     amount = _finite_number(snapshot.amount, "成交额")
     if amount < 0:
-        raise RuntimeError("代表股票成交额不能为负数")
+        raise SmokeValidationError("代表股票成交额不能为负数")
     if volume > 0:
         average_price = amount / volume
         if not low <= average_price <= high:
-            raise RuntimeError("代表股票量额关系不符合成交量股口径")
+            raise SmokeValidationError("代表股票量额关系不符合成交量股口径")
     elif amount != 0:
-        raise RuntimeError("代表股票零成交量时成交额必须为零")
+        raise SmokeValidationError("代表股票零成交量时成交额必须为零")
 
     if str(snapshot.market) not in {"SH", "SZ", "BJ"}:
-        raise RuntimeError("代表股票市场字段不合法")
+        raise SmokeValidationError("代表股票市场字段不合法")
     if not str(snapshot.name).strip():
-        raise RuntimeError("代表股票名称为空")
+        raise SmokeValidationError("代表股票名称为空")
     if str(snapshot.quality_status) not in {"ok", "partial", "stale", "error"}:
-        raise RuntimeError("代表股票质量状态不合法")
+        raise SmokeValidationError("代表股票质量状态不合法")
     if previous_close <= 0:
-        raise RuntimeError("代表股票昨收必须为正数")
+        raise SmokeValidationError("代表股票昨收必须为正数")
 
 
 async def run(source: SnapshotSource | None = None) -> None:
@@ -125,13 +129,13 @@ async def run(source: SnapshotSource | None = None) -> None:
         resolved_source = source
     snapshots = list(await resolved_source.fetch_market_snapshot())
     if len(snapshots) <= 4000:
-        raise RuntimeError(f"全市场行情数量异常：仅返回 {len(snapshots)} 条")
+        raise SmokeValidationError(f"全市场行情数量异常：仅返回 {len(snapshots)} 条")
 
     codes = [snapshot.code for snapshot in snapshots]
     if len(codes) != len(set(codes)):
-        raise RuntimeError("全市场行情包含重复股票代码")
+        raise SmokeValidationError("全市场行情包含重复股票代码")
     if REPRESENTATIVE_CODE not in codes:
-        raise RuntimeError("全市场行情缺少贵州茅台 600519")
+        raise SmokeValidationError("全市场行情缺少贵州茅台 600519")
 
     representative = snapshots[codes.index(REPRESENTATIVE_CODE)]
     _validate_representative(representative)
@@ -154,11 +158,19 @@ async def run(source: SnapshotSource | None = None) -> None:
     print("在线行情接口可用")
 
 
-if __name__ == "__main__":
+def main() -> int:
     try:
         asyncio.run(run())
     except SystemExit:
         raise
-    except Exception as exc:
+    except SmokeValidationError as exc:
         print(f"在线行情接口检查失败：{exc}", file=sys.stderr)
-        raise SystemExit(1) from exc
+        return 1
+    except Exception:  # noqa: BLE001  第三方上游异常类型不受控，边界层必须统一脱敏
+        print("在线行情接口检查失败：上游服务暂不可用", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
