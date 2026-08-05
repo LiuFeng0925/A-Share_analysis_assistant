@@ -143,6 +143,7 @@ def create_app(
     async def lifespan(app: FastAPI):
         resolved_database = database or Database(resolved_settings.database_path)
         scheduler = None
+        initial_snapshot_task = None
         history_task = None
         bar_service = injected_bar_service
         try:
@@ -213,14 +214,21 @@ def create_app(
             expected_quote_count = max(
                 minimum_expected_count, data_status.stock_count
             )
+
+            async def collect_initial_snapshot_later(snapshot_at: datetime) -> None:
+                try:
+                    await collector.collect_once(snapshot_at)
+                except Exception:
+                    logger.exception("首次全市场行情采集失败，继续使用本地已有数据")
+
             if clock.is_open(now) or (
                 clock.trading_days
                 and data_status.latest_quote_count < expected_quote_count
             ):
-                try:
-                    await collector.collect_once(now)
-                except Exception:
-                    logger.exception("首次全市场行情采集失败，继续使用本地已有数据")
+                initial_snapshot_task = asyncio.create_task(
+                    collect_initial_snapshot_later(now)
+                )
+                app.state.initial_snapshot_task = initial_snapshot_task
 
             history_task = asyncio.create_task(bootstrapper.run())
             app.state.history_task = history_task
@@ -286,25 +294,37 @@ def create_app(
             yield
         finally:
             try:
-                if history_task is not None:
-                    history_task.cancel()
+                if initial_snapshot_task is not None:
+                    initial_snapshot_task.cancel()
                     try:
-                        await history_task
+                        await initial_snapshot_task
                     except asyncio.CancelledError:
                         pass
                     except Exception:
-                        logger.exception("日 K 回补任务异常退出")
+                        logger.exception("首次全市场行情采集任务异常退出")
             finally:
                 try:
-                    if scheduler is not None and scheduler.running:
-                        await shutdown_scheduler(scheduler)
+                    if history_task is not None:
+                        history_task.cancel()
+                        try:
+                            await history_task
+                        except asyncio.CancelledError:
+                            pass
+                        except Exception:
+                            logger.exception("日 K 回补任务异常退出")
                 finally:
                     try:
-                        if bar_service is not None:
-                            await bar_service.close()
+                        if scheduler is not None and scheduler.running:
+                            await shutdown_scheduler(scheduler)
                     finally:
                         if database is None:
-                            resolved_database.close()
+                            try:
+                                if bar_service is not None:
+                                    await bar_service.close()
+                            finally:
+                                resolved_database.close()
+                        elif bar_service is not None:
+                            await bar_service.close()
 
     app = FastAPI(title="A 股雷达", version="0.1.0", lifespan=lifespan)
     app.add_middleware(
@@ -323,6 +343,7 @@ def create_app(
     app.state.source = resolved_source
     app.state.clock = None
     app.state.scheduler = None
+    app.state.initial_snapshot_task = None
     app.state.history_task = None
     app.state.now_provider = resolved_now_provider
 

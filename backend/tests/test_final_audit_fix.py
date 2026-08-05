@@ -368,6 +368,32 @@ async def test_akshare_listing_frame_times_out_instead_of_blocking_startup(monke
     assert frame.empty
 
 
+async def test_akshare_market_snapshot_times_out_instead_of_blocking_startup(
+    monkeypatch,
+):
+    async def never_returns(*args, **kwargs):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(akshare_module, "_run_provider_thread", never_returns)
+
+    with pytest.raises(TimeoutError):
+        await AkshareSource().fetch_market_snapshot(timeout_seconds=0.01)
+
+
+async def test_akshare_trading_days_times_out_instead_of_blocking_startup(
+    monkeypatch,
+):
+    async def never_returns(*args, **kwargs):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(akshare_module, "_run_provider_thread", never_returns)
+
+    with pytest.raises(TimeoutError):
+        await AkshareSource().fetch_trading_days(
+            date(2026, 1, 1), date(2026, 8, 5), timeout_seconds=0.01
+        )
+
+
 async def test_akshare_one_minute_opening_batch_marks_0930_and_0931_complete(
     monkeypatch,
 ):

@@ -18,10 +18,14 @@ RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g; s/security.debian.org/mirrors
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/pyproject.toml /app/backend/pyproject.toml
-COPY backend/src /app/backend/src
 
 RUN pip install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple \
-    && pip install /app/backend -i https://pypi.tuna.tsinghua.edu.cn/simple
+    && python -c "import tomllib; from pathlib import Path; project = tomllib.loads(Path('/app/backend/pyproject.toml').read_text()); print('\n'.join(project['project']['dependencies']))" > /tmp/requirements.txt
+RUN pip install -r /tmp/requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+COPY backend/src /app/backend/src
+
+RUN pip install --no-deps /app/backend -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 EXPOSE 8000
 

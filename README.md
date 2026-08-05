@@ -65,9 +65,16 @@ DEPLOY_DOMAIN=astock.liufengliu.com \
 ./scripts/deploy_server.sh
 ```
 
-部署脚本会同步代码、构建镜像、启动服务，并写入 Nginx HTTP 站点配置。签发 HTTPS
-证书前，需要先在 DNS 服务商处添加 A 记录：`astock.liufengliu.com -> 47.94.3.250`。
-DNS 生效后可在服务器执行：
+部署脚本会同步代码、构建镜像、启动服务，并写入 Nginx 站点配置。如果服务器已存在该
+域名的 Let’s Encrypt 证书，脚本会自动重新安装 HTTPS 跳转，避免后续部署覆盖 Certbot
+配置。首次签发 HTTPS 证书前，需要先在 DNS 服务商处添加 A 记录：
+`astock.liufengliu.com -> 47.94.3.250`。DNS 生效后可在本地执行：
+
+```bash
+DEPLOY_ENABLE_HTTPS=true ./scripts/deploy_server.sh
+```
+
+也可在服务器直接执行：
 
 ```bash
 certbot --nginx -d astock.liufengliu.com

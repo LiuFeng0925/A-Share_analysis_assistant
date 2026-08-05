@@ -222,8 +222,19 @@ class AkshareSource:
             return [replace(bar, quality_status=QualityStatus.PARTIAL) for bar in result]
         return result
 
-    async def fetch_market_snapshot(self) -> list[QuoteSnapshot]:
-        frame = await _run_provider_thread(ak.stock_zh_a_spot_em)
+    async def fetch_market_snapshot(
+        self, timeout_seconds: float = 120.0
+    ) -> list[QuoteSnapshot]:
+        try:
+            frame = await asyncio.wait_for(
+                _run_provider_thread(ak.stock_zh_a_spot_em, wait_on_cancel=False),
+                timeout_seconds,
+            )
+        except asyncio.CancelledError:
+            raise
+        except TimeoutError:
+            logger.exception("加载全市场行情快照超时")
+            raise
         normalized = self.normalize_snapshot(frame, _PROVISIONAL_CAPTURED_AT)
         captured_at = datetime.now(SHANGHAI)
         return [replace(quote, captured_at=captured_at) for quote in normalized]
@@ -303,8 +314,19 @@ class AkshareSource:
                 )
         return sorted(result.values(), key=lambda stock: (stock.market.value, stock.code))
 
-    async def fetch_trading_days(self, start: date, end: date) -> set[date]:
-        frame = await _run_provider_thread(ak.tool_trade_date_hist_sina)
+    async def fetch_trading_days(
+        self, start: date, end: date, timeout_seconds: float = 30.0
+    ) -> set[date]:
+        try:
+            frame = await asyncio.wait_for(
+                _run_provider_thread(ak.tool_trade_date_hist_sina, wait_on_cancel=False),
+                timeout_seconds,
+            )
+        except asyncio.CancelledError:
+            raise
+        except TimeoutError:
+            logger.exception("加载交易日历超时")
+            raise
         values = pd.to_datetime(frame["trade_date"]).dt.date
         return {value for value in values if start <= value <= end}
 

@@ -314,6 +314,8 @@ async def test_lifespan_seeds_stock_master_from_initial_snapshot_when_master_fai
     app = main_module.create_app(source=fake_source, database=repository.database)
 
     async with app.router.lifespan_context(app):
+        assert app.state.initial_snapshot_task is not None
+        await app.state.initial_snapshot_task
         page = app.state.repository.list_stocks(
             "平安", None, "code", "asc", 1, 10
         )
@@ -346,11 +348,41 @@ async def test_lifespan_refreshes_initial_snapshot_when_quote_coverage_is_low(
     app = main_module.create_app(source=fake_source, database=repository.database)
 
     async with app.router.lifespan_context(app):
+        assert app.state.initial_snapshot_task is not None
+        await app.state.initial_snapshot_task
         status = app.state.repository.data_status()
 
     assert fake_source.snapshot_requests == 1
     assert status.stock_count == 2
     assert status.latest_quote_count == 2
+
+
+async def test_lifespan_does_not_block_on_running_initial_snapshot(
+    monkeypatch, repository, fake_source
+):
+    fixed_now = datetime(2026, 8, 4, 10, 0, tzinfo=TZ)
+    fake_source.snapshot_rows = [
+        replace(snapshot, captured_at=fixed_now)
+        for snapshot in fake_source.snapshot_rows
+    ]
+    fake_source.snapshot_started = asyncio.Event()
+    fake_source.snapshot_release = asyncio.Event()
+    set_fixed_now(monkeypatch, fixed_now)
+    app = main_module.create_app(source=fake_source, database=repository.database)
+    lifespan = app.router.lifespan_context(app)
+
+    await asyncio.wait_for(lifespan.__aenter__(), timeout=0.5)
+    try:
+        assert app.state.initial_snapshot_task is not None
+        await asyncio.wait_for(fake_source.snapshot_started.wait(), timeout=0.5)
+        assert app.state.repository.data_status().latest_quote_count == 0
+
+        fake_source.snapshot_release.set()
+        await asyncio.wait_for(app.state.initial_snapshot_task, timeout=1)
+
+        assert app.state.repository.data_status().latest_quote_count == 2
+    finally:
+        await lifespan.__aexit__(None, None, None)
 
 
 async def test_lifespan_treats_trading_day_failure_as_closed(
@@ -382,6 +414,8 @@ async def test_lifespan_continues_when_initial_snapshot_fails(
     with caplog.at_level(logging.ERROR):
         async with app.router.lifespan_context(app):
             assert app.state.scheduler.running is True
+            assert app.state.initial_snapshot_task is not None
+            await app.state.initial_snapshot_task
 
     assert fake_source.snapshot_requests == 3
     assert "首次全市场行情采集失败，继续使用本地已有数据" in caplog.text
