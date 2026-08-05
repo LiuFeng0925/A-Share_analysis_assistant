@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import replace
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
@@ -352,6 +353,19 @@ async def test_stock_master_refresh_never_consumes_realtime_spot(monkeypatch):
         ("000001", "平安银行", date(1991, 4, 3)),
         ("920092", "汉鑫科技", date(2021, 11, 15)),
     }
+
+
+async def test_akshare_listing_frame_times_out_instead_of_blocking_startup(monkeypatch):
+    async def never_returns(*args, **kwargs):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(akshare_module, "_run_provider_thread", never_returns)
+
+    frame = await AkshareSource._fetch_listing_frame(
+        "上交所主板", lambda: None, timeout_seconds=0.01
+    )
+
+    assert frame.empty
 
 
 async def test_akshare_one_minute_opening_batch_marks_0930_and_0931_complete(

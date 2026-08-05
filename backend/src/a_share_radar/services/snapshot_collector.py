@@ -5,6 +5,7 @@ from math import isfinite
 from typing import Any
 
 from a_share_radar.data_sources.protocol import MarketDataSource
+from a_share_radar.domain.models import Stock
 from a_share_radar.storage.repository import MarketRepository
 
 
@@ -31,6 +32,7 @@ class SnapshotCollector:
         minimum_coverage_ratio: float = 0.9,
         retry_delays: tuple[float, ...] = (1.0, 2.0),
         maximum_market_time_skew: timedelta = timedelta(minutes=10),
+        learn_unknown_stocks: bool = False,
     ):
         self.source = source
         self.repository = repository
@@ -38,6 +40,7 @@ class SnapshotCollector:
         self.minimum_coverage_ratio = minimum_coverage_ratio
         self.retry_delays = retry_delays
         self.maximum_market_time_skew = maximum_market_time_skew
+        self.learn_unknown_stocks = learn_unknown_stocks
 
     async def _fetch_quotes(self):
         for attempt in range(len(self.retry_delays) + 1):
@@ -127,8 +130,6 @@ class SnapshotCollector:
             raise SnapshotValidationError("行情批次包含重复股票代码")
         known_identities = await self._run_blocking(self.repository.stock_identities)
         unknown = identities - known_identities
-        if unknown:
-            raise SnapshotValidationError("行情批次包含未知股票代码或市场")
         if at.tzinfo is None or at.utcoffset() is None:
             raise SnapshotValidationError("采集触发时间必须包含时区信息")
 
@@ -170,6 +171,24 @@ class SnapshotCollector:
         market_time = normalized_times.pop()
         if abs(market_time - at.astimezone(UTC)) > self.maximum_market_time_skew:
             raise SnapshotValidationError("行情市场时间异常，偏离采集时间过大")
+        if unknown and self.learn_unknown_stocks:
+            await self._run_blocking(
+                self.repository.upsert_stocks,
+                sorted(
+                    (
+                        Stock(quote.code, quote.market, quote.name)
+                        for quote in quotes
+                        if (quote.market, quote.code) in unknown
+                    ),
+                    key=lambda stock: (stock.market.value, stock.code),
+                ),
+            )
+            known_identities = await self._run_blocking(
+                self.repository.stock_identities
+            )
+            unknown = identities - known_identities
+        if unknown:
+            raise SnapshotValidationError("行情批次包含未知股票代码或市场")
         return market_time, quality_status
 
     @staticmethod

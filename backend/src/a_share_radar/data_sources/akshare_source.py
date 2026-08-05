@@ -25,16 +25,31 @@ logger = logging.getLogger(__name__)
 
 
 async def _run_provider_thread[Result](
-    function: Callable[..., Result], *args: object, **kwargs: object
+    function: Callable[..., Result],
+    *args: object,
+    wait_on_cancel: bool = True,
+    **kwargs: object,
 ) -> Result:
     worker = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
     try:
         return await asyncio.shield(worker)
     except asyncio.CancelledError:
-        await asyncio.wait({worker})
-        if error := worker.exception():
-            logger.error("取消期间 AKShare 线程执行失败", exc_info=error)
+        if wait_on_cancel:
+            await asyncio.wait({worker})
+            if error := worker.exception():
+                logger.error("取消期间 AKShare 线程执行失败", exc_info=error)
+        else:
+            worker.add_done_callback(_log_provider_thread_result)
         raise
+
+
+def _log_provider_thread_result(worker: asyncio.Task) -> None:
+    try:
+        worker.result()
+    except asyncio.CancelledError:
+        return
+    except Exception as exc:
+        logger.error("已超时的 AKShare 线程随后失败", exc_info=exc)
 
 
 def _number(value: object) -> float | None:
@@ -230,12 +245,21 @@ class AkshareSource:
 
     @staticmethod
     async def _fetch_listing_frame(
-        label: str, function: Callable[..., pd.DataFrame], *args: object
+        label: str,
+        function: Callable[..., pd.DataFrame],
+        *args: object,
+        timeout_seconds: float = 20.0,
     ) -> pd.DataFrame:
         try:
-            return await _run_provider_thread(function, *args)
+            return await asyncio.wait_for(
+                _run_provider_thread(function, *args, wait_on_cancel=False),
+                timeout_seconds,
+            )
         except asyncio.CancelledError:
             raise
+        except TimeoutError:
+            logger.exception("加载%s上市日期超时，保留仓储已有日期", label)
+            return pd.DataFrame()
         except Exception:
             logger.exception("加载%s上市日期失败，保留仓储已有日期", label)
             return pd.DataFrame()

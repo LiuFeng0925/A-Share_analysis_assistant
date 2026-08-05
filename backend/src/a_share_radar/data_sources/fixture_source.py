@@ -1,9 +1,33 @@
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
+from typing import ClassVar
 from zoneinfo import ZoneInfo
 
 from a_share_radar.domain.models import Bar, Market, QualityStatus, QuoteSnapshot, Stock
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
+
+
+@dataclass(frozen=True, slots=True)
+class FixtureStockProfile:
+    stock: Stock
+    latest_price: float
+    change_percent: float
+    change_amount: float
+    open_price: float
+    high_price: float
+    low_price: float
+    previous_close: float
+    volume: int
+    amount: float
+    turnover_rate: float
+    total_market_cap: float
+    daily_base_price: float
+    daily_step: float
+    daily_volume_base: int
+    minute_base_price: float
+    minute_step: float
+    minute_volume_base: int
 
 
 class FixtureSource:
@@ -13,10 +37,132 @@ class FixtureSource:
     trade_date = date(2026, 8, 4)
     captured_at = datetime(2026, 8, 4, 10, 30, tzinfo=SHANGHAI)
 
-    _stocks = (
-        Stock("600519", Market.SH, "贵州茅台", list_date=date(2001, 8, 27)),
-        Stock("000001", Market.SZ, "平安银行", list_date=date(1991, 4, 3)),
+    _profiles: ClassVar[tuple[FixtureStockProfile, ...]] = (
+        FixtureStockProfile(
+            stock=Stock("600519", Market.SH, "贵州茅台", list_date=date(2001, 8, 27)),
+            latest_price=1588.88,
+            change_percent=2.36,
+            change_amount=36.56,
+            open_price=1558.20,
+            high_price=1599.90,
+            low_price=1551.01,
+            previous_close=1552.32,
+            volume=3_821_100,
+            amount=6_058_000_000.0,
+            turnover_rate=0.30,
+            total_market_cap=1_995_000_000_000.0,
+            daily_base_price=1500.0,
+            daily_step=1.35,
+            daily_volume_base=2_500_000,
+            minute_base_price=1578.0,
+            minute_step=0.18,
+            minute_volume_base=18_000,
+        ),
+        FixtureStockProfile(
+            stock=Stock("000001", Market.SZ, "平安银行", list_date=date(1991, 4, 3)),
+            latest_price=11.28,
+            change_percent=-0.70,
+            change_amount=-0.08,
+            open_price=11.36,
+            high_price=11.39,
+            low_price=11.25,
+            previous_close=11.36,
+            volume=45_312_000,
+            amount=512_000_000.0,
+            turnover_rate=0.23,
+            total_market_cap=218_900_000_000.0,
+            daily_base_price=10.6,
+            daily_step=0.012,
+            daily_volume_base=35_000_000,
+            minute_base_price=11.18,
+            minute_step=0.0015,
+            minute_volume_base=210_000,
+        ),
+        FixtureStockProfile(
+            stock=Stock("600036", Market.SH, "招商银行", list_date=date(2002, 4, 9)),
+            latest_price=34.82,
+            change_percent=0.52,
+            change_amount=0.18,
+            open_price=34.60,
+            high_price=35.02,
+            low_price=34.42,
+            previous_close=34.64,
+            volume=31_850_000,
+            amount=1_106_000_000.0,
+            turnover_rate=0.15,
+            total_market_cap=878_000_000_000.0,
+            daily_base_price=32.8,
+            daily_step=0.035,
+            daily_volume_base=23_000_000,
+            minute_base_price=34.58,
+            minute_step=0.004,
+            minute_volume_base=160_000,
+        ),
+        FixtureStockProfile(
+            stock=Stock("601899", Market.SH, "紫金矿业", list_date=date(2008, 4, 25)),
+            latest_price=18.76,
+            change_percent=1.24,
+            change_amount=0.23,
+            open_price=18.49,
+            high_price=18.93,
+            low_price=18.36,
+            previous_close=18.53,
+            volume=126_400_000,
+            amount=2_371_000_000.0,
+            turnover_rate=0.48,
+            total_market_cap=498_000_000_000.0,
+            daily_base_price=16.4,
+            daily_step=0.038,
+            daily_volume_base=91_000_000,
+            minute_base_price=18.42,
+            minute_step=0.0048,
+            minute_volume_base=430_000,
+        ),
+        FixtureStockProfile(
+            stock=Stock("600988", Market.SH, "赤峰黄金", list_date=date(2004, 4, 14)),
+            latest_price=23.45,
+            change_percent=3.08,
+            change_amount=0.70,
+            open_price=22.81,
+            high_price=23.68,
+            low_price=22.70,
+            previous_close=22.75,
+            volume=82_600_000,
+            amount=1_921_000_000.0,
+            turnover_rate=4.96,
+            total_market_cap=39_000_000_000.0,
+            daily_base_price=20.8,
+            daily_step=0.045,
+            daily_volume_base=56_000_000,
+            minute_base_price=22.92,
+            minute_step=0.006,
+            minute_volume_base=360_000,
+        ),
+        FixtureStockProfile(
+            stock=Stock("300750", Market.SZ, "宁德时代", list_date=date(2018, 6, 11)),
+            latest_price=256.80,
+            change_percent=-1.18,
+            change_amount=-3.06,
+            open_price=260.20,
+            high_price=261.10,
+            low_price=255.60,
+            previous_close=259.86,
+            volume=14_210_000,
+            amount=3_662_000_000.0,
+            turnover_rate=0.36,
+            total_market_cap=1_129_000_000_000.0,
+            daily_base_price=242.0,
+            daily_step=0.22,
+            daily_volume_base=10_500_000,
+            minute_base_price=259.2,
+            minute_step=-0.028,
+            minute_volume_base=92_000,
+        ),
     )
+    _profiles_by_code: ClassVar[dict[str, FixtureStockProfile]] = {
+        profile.stock.code: profile for profile in _profiles
+    }
+    _stocks: ClassVar[tuple[Stock, ...]] = tuple(profile.stock for profile in _profiles)
 
     async def fetch_stock_master(self) -> list[Stock]:
         return list(self._stocks)
@@ -27,43 +173,25 @@ class FixtureSource:
     async def fetch_market_snapshot(self) -> list[QuoteSnapshot]:
         return [
             QuoteSnapshot(
-                code="600519",
-                market=Market.SH,
-                name="贵州茅台",
+                code=profile.stock.code,
+                market=profile.stock.market,
+                name=profile.stock.name,
                 captured_at=self.captured_at,
-                latest_price=1588.88,
-                change_percent=2.36,
-                change_amount=36.56,
-                open_price=1558.20,
-                high_price=1599.90,
-                low_price=1551.01,
-                previous_close=1552.32,
-                volume=3_821_100,
-                amount=6_058_000_000.0,
-                turnover_rate=0.30,
-                total_market_cap=1_995_000_000_000.0,
+                latest_price=profile.latest_price,
+                change_percent=profile.change_percent,
+                change_amount=profile.change_amount,
+                open_price=profile.open_price,
+                high_price=profile.high_price,
+                low_price=profile.low_price,
+                previous_close=profile.previous_close,
+                volume=profile.volume,
+                amount=profile.amount,
+                turnover_rate=profile.turnover_rate,
+                total_market_cap=profile.total_market_cap,
                 source=self.name,
                 quality_status=QualityStatus.OK,
-            ),
-            QuoteSnapshot(
-                code="000001",
-                market=Market.SZ,
-                name="平安银行",
-                captured_at=self.captured_at,
-                latest_price=11.28,
-                change_percent=-0.70,
-                change_amount=-0.08,
-                open_price=11.36,
-                high_price=11.39,
-                low_price=11.25,
-                previous_close=11.36,
-                volume=45_312_000,
-                amount=512_000_000.0,
-                turnover_rate=0.23,
-                total_market_cap=218_900_000_000.0,
-                source=self.name,
-                quality_status=QualityStatus.OK,
-            ),
+            )
+            for profile in self._profiles
         ]
 
     async def fetch_daily_bars(
@@ -74,7 +202,7 @@ class FixtureSource:
         period: str,
         adjustment: str,
     ) -> list[Bar]:
-        if code not in {stock.code for stock in self._stocks}:
+        if code not in self._profiles_by_code:
             return []
         if period not in {"1d", "1w", "1mo"} or adjustment != "qfq":
             return []
@@ -92,7 +220,7 @@ class FixtureSource:
         period: str,
         adjustment: str,
     ) -> list[Bar]:
-        if code not in {stock.code for stock in self._stocks}:
+        if code not in self._profiles_by_code:
             return []
         if period != "1m" or adjustment != "none":
             return []
@@ -114,23 +242,27 @@ class FixtureSource:
 
     @classmethod
     def _daily_bars(cls, code: str) -> list[Bar]:
-        market = Market.SH if code == "600519" else Market.SZ
-        base_price = 1500.0 if code == "600519" else 10.6
-        step = 1.35 if code == "600519" else 0.012
-        volume_base = 2_500_000 if code == "600519" else 35_000_000
+        profile = cls._profiles_by_code[code]
+        base_price = profile.daily_base_price
+        step = profile.daily_step
+        volume_base = profile.daily_volume_base
+        alternating_move = max(abs(base_price) * 0.0028, 0.04)
+        high_padding = max(abs(base_price) * 0.004, 0.05)
+        low_padding = max(abs(base_price) * 0.0033, 0.04)
+        volume_step = max(volume_base // 180, 10_000)
         result: list[Bar] = []
         for index, trading_day in enumerate(cls._daily_bar_days()):
             open_price = base_price + index * step
-            close_price = open_price + (4.2 if index % 2 == 0 else -2.1) * (
-                1 if code == "600519" else 0.01
+            close_price = open_price + (
+                alternating_move if index % 2 == 0 else -alternating_move / 2
             )
-            high_price = max(open_price, close_price) + (6.0 if code == "600519" else 0.06)
-            low_price = min(open_price, close_price) - (5.0 if code == "600519" else 0.05)
-            volume = volume_base + index * (13_000 if code == "600519" else 180_000)
+            high_price = max(open_price, close_price) + high_padding
+            low_price = min(open_price, close_price) - low_padding
+            volume = volume_base + index * volume_step
             result.append(
                 Bar(
                     code=code,
-                    market=market,
+                    market=profile.stock.market,
                     period="1d",
                     adjustment="qfq",
                     bar_time=datetime.combine(trading_day, time(15, 0), tzinfo=SHANGHAI),
@@ -186,25 +318,29 @@ class FixtureSource:
 
     @classmethod
     def _minute_bars(cls, code: str) -> list[Bar]:
-        market = Market.SH if code == "600519" else Market.SZ
-        base_price = 1578.0 if code == "600519" else 11.18
-        price_step = 0.18 if code == "600519" else 0.0015
-        volume_base = 18_000 if code == "600519" else 210_000
+        profile = cls._profiles_by_code[code]
+        base_price = profile.minute_base_price
+        price_step = profile.minute_step
+        volume_base = profile.minute_volume_base
+        alternating_move = max(abs(base_price) * 0.0002, 0.004)
+        high_padding = max(abs(base_price) * 0.0003, 0.006)
+        low_padding = max(abs(base_price) * 0.00025, 0.005)
+        volume_step = max(volume_base // 240, 90)
         result: list[Bar] = []
         for index in range(61):
             bar_time = datetime.combine(cls.trade_date, time(9, 30), tzinfo=SHANGHAI)
             bar_time += timedelta(minutes=index)
             open_price = base_price + index * price_step
-            close_price = open_price + (0.32 if index % 2 == 0 else -0.16) * (
-                1 if code == "600519" else 0.01
+            close_price = open_price + (
+                alternating_move if index % 2 == 0 else -alternating_move / 2
             )
-            high_price = max(open_price, close_price) + (0.45 if code == "600519" else 0.008)
-            low_price = min(open_price, close_price) - (0.38 if code == "600519" else 0.006)
-            volume = volume_base + index * (110 if code == "600519" else 900)
+            high_price = max(open_price, close_price) + high_padding
+            low_price = min(open_price, close_price) - low_padding
+            volume = volume_base + index * volume_step
             result.append(
                 Bar(
                     code=code,
-                    market=market,
+                    market=profile.stock.market,
                     period="1m",
                     adjustment="none",
                     bar_time=bar_time,

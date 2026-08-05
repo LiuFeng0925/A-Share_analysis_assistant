@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -278,6 +279,80 @@ async def test_lifespan_preserves_local_stocks_when_stock_source_fails(
     assert "加载股票主数据失败，继续使用本地已有数据" in caplog.text
 
 
+async def test_lifespan_rejects_truncated_default_stock_master(
+    monkeypatch, caplog, repository, fake_source
+):
+    repository.upsert_stocks([Stock("600519", Market.SH, "本地贵州茅台")])
+    fake_source.stock_rows = [
+        Stock("000001", Market.SZ, "平安银行"),
+        Stock("000002", Market.SZ, "万  科Ａ"),
+    ]
+    monkeypatch.setattr(main_module, "AkshareSource", lambda: fake_source)
+    set_fixed_now(monkeypatch, datetime(2026, 8, 4, 12, 0, tzinfo=TZ))
+    app = main_module.create_app(database=repository.database)
+
+    with caplog.at_level(logging.ERROR):
+        async with app.router.lifespan_context(app):
+            assert app.state.repository.list_all_stocks() == [
+                Stock("600519", Market.SH, "本地贵州茅台")
+            ]
+
+    assert "股票主数据数量异常" in caplog.text
+    assert "加载股票主数据失败，继续使用本地已有数据" in caplog.text
+
+
+async def test_lifespan_seeds_stock_master_from_initial_snapshot_when_master_fails(
+    monkeypatch, repository, fake_source
+):
+    fake_source.stock_error = RuntimeError("模拟股票主数据失败")
+    fixed_now = datetime(2026, 8, 4, 12, 0, tzinfo=TZ)
+    fake_source.snapshot_rows = [
+        replace(snapshot, captured_at=fixed_now)
+        for snapshot in fake_source.snapshot_rows
+    ]
+    set_fixed_now(monkeypatch, fixed_now)
+    app = main_module.create_app(source=fake_source, database=repository.database)
+
+    async with app.router.lifespan_context(app):
+        page = app.state.repository.list_stocks(
+            "平安", None, "code", "asc", 1, 10
+        )
+
+    assert fake_source.snapshot_requests == 1
+    assert app.state.repository.data_status().latest_quote_count == 2
+    assert page.total == 1
+    assert page.items[0].code == "000001"
+    assert page.items[0].latest_price == 12.5
+
+
+async def test_lifespan_refreshes_initial_snapshot_when_quote_coverage_is_low(
+    monkeypatch, repository, fake_source
+):
+    fixed_now = datetime(2026, 8, 4, 12, 0, tzinfo=TZ)
+    fake_source.snapshot_rows = [
+        replace(snapshot, captured_at=fixed_now)
+        for snapshot in fake_source.snapshot_rows
+    ]
+    repository.upsert_stocks(fake_source.stock_rows[:1])
+    repository.commit_snapshot_success(
+        [replace(fake_source.snapshot_rows[0], captured_at=fixed_now)],
+        started_at=fixed_now,
+        source="fixture",
+        market_time=fixed_now,
+        expected_row_count=1,
+        quality_status="ok",
+    )
+    set_fixed_now(monkeypatch, fixed_now)
+    app = main_module.create_app(source=fake_source, database=repository.database)
+
+    async with app.router.lifespan_context(app):
+        status = app.state.repository.data_status()
+
+    assert fake_source.snapshot_requests == 1
+    assert status.stock_count == 2
+    assert status.latest_quote_count == 2
+
+
 async def test_lifespan_treats_trading_day_failure_as_closed(
     monkeypatch, caplog, repository, fake_source
 ):
@@ -315,6 +390,15 @@ async def test_lifespan_continues_when_initial_snapshot_fails(
 async def test_lifespan_skips_initial_snapshot_during_lunch_break(
     monkeypatch, repository, fake_source
 ):
+    repository.upsert_stocks(fake_source.stock_rows)
+    repository.commit_snapshot_success(
+        fake_source.snapshot_rows,
+        started_at=fake_source.snapshot_rows[0].captured_at,
+        source="fixture",
+        market_time=fake_source.snapshot_rows[0].captured_at,
+        expected_row_count=2,
+        quality_status="ok",
+    )
     set_fixed_now(monkeypatch, datetime(2026, 8, 4, 12, 0, tzinfo=TZ))
     app = main_module.create_app(source=fake_source, database=repository.database)
 

@@ -15,7 +15,7 @@ from a_share_radar.config import Settings
 from a_share_radar.data_sources.akshare_source import AkshareSource
 from a_share_radar.data_sources.fixture_source import FixtureSource
 from a_share_radar.data_sources.protocol import MarketDataSource
-from a_share_radar.domain.models import Bar, BarFetchBatch
+from a_share_radar.domain.models import Bar, BarFetchBatch, Stock
 from a_share_radar.services.bar_service import BarService, HistoryBootstrapper
 from a_share_radar.services.market_clock import MarketClock
 from a_share_radar.services.scheduler import create_scheduler, shutdown_scheduler
@@ -26,6 +26,7 @@ from a_share_radar.storage.repository import MarketRepository
 
 logger = logging.getLogger(__name__)
 SHANGHAI = ZoneInfo("Asia/Shanghai")
+DEFAULT_STOCK_MASTER_MINIMUM_COUNT = 4000
 
 
 async def _run_blocking_safely(function, *args, **kwargs):
@@ -39,6 +40,16 @@ async def _run_blocking_safely(function, *args, **kwargs):
 
 def _batch_bars(result: list[Bar] | BarFetchBatch) -> list[Bar]:
     return list(result.bars) if isinstance(result, BarFetchBatch) else result
+
+
+def _validated_stock_master(
+    stocks: list[Stock], minimum_expected_count: int
+) -> list[Stock]:
+    if len(stocks) < minimum_expected_count:
+        raise RuntimeError(
+            f"股票主数据数量异常：实际 {len(stocks)}，低于 {minimum_expected_count}"
+        )
+    return stocks
 
 
 async def _persist_fixture_data(
@@ -122,6 +133,11 @@ def create_app(
         if injected_repository is not None
         else None
     )
+    stock_master_minimum_count = (
+        1
+        if source is not None or resolved_settings.fixture_source
+        else DEFAULT_STOCK_MASTER_MINIMUM_COUNT
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -148,6 +164,7 @@ def create_app(
 
             try:
                 stocks = await resolved_source.fetch_stock_master()
+                stocks = _validated_stock_master(stocks, stock_master_minimum_count)
             except Exception:
                 logger.exception("加载股票主数据失败，继续使用本地已有数据")
             else:
@@ -186,19 +203,27 @@ def create_app(
                 resolved_source,
                 repository,
                 minimum_expected_count=minimum_expected_count,
+                learn_unknown_stocks=not resolved_settings.fixture_source,
             )
             app.state.clock = clock
             app.state.collector = collector
 
-            history_task = asyncio.create_task(bootstrapper.run())
-            app.state.history_task = history_task
-
             now = resolved_now_provider()
-            if clock.is_open(now):
+            data_status = await _run_blocking_safely(repository.data_status)
+            expected_quote_count = max(
+                minimum_expected_count, data_status.stock_count
+            )
+            if clock.is_open(now) or (
+                clock.trading_days
+                and data_status.latest_quote_count < expected_quote_count
+            ):
                 try:
                     await collector.collect_once(now)
                 except Exception:
                     logger.exception("首次全市场行情采集失败，继续使用本地已有数据")
+
+            history_task = asyncio.create_task(bootstrapper.run())
+            app.state.history_task = history_task
 
             async def archive_at(at: datetime) -> None:
                 failures = await _run_blocking_safely(
@@ -219,6 +244,9 @@ def create_app(
                 now = resolved_now_provider()
                 try:
                     refreshed_stocks = await resolved_source.fetch_stock_master()
+                    refreshed_stocks = _validated_stock_master(
+                        refreshed_stocks, stock_master_minimum_count
+                    )
                 except Exception:
                     logger.exception("刷新股票主数据失败，继续使用本地已有数据")
                 else:

@@ -4,8 +4,16 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd -P)"
 BACKEND_PORT="${A_SHARE_BACKEND_PORT:-8000}"
 FRONTEND_PORT="${A_SHARE_FRONTEND_PORT:-5173}"
+DEFAULT_DATA_DIR="$PROJECT_DIR/data"
 BACKEND_PID=""
 FRONTEND_PID=""
+
+case "${A_SHARE_FIXTURE_SOURCE:-false}" in
+  1|true|TRUE|True|yes|YES|Yes|on|ON|On)
+    DEFAULT_DATA_DIR="$PROJECT_DIR/data-fixture"
+    ;;
+esac
+DATA_DIR="${A_SHARE_DATA_DIR:-$DEFAULT_DATA_DIR}"
 
 cleanup() {
   status=$?
@@ -35,7 +43,7 @@ if ! command -v pnpm >/dev/null 2>&1; then
   exit 1
 fi
 
-A_SHARE_DATA_DIR="${A_SHARE_DATA_DIR:-$PROJECT_DIR/data}" \
+A_SHARE_DATA_DIR="$DATA_DIR" \
   A_SHARE_FRONTEND_PORT="$FRONTEND_PORT" \
   "$PROJECT_DIR/backend/.venv/bin/uvicorn" a_share_radar.main:app \
   --app-dir "$PROJECT_DIR/backend/src" --reload \

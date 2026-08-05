@@ -33,9 +33,13 @@ async def test_fixture_source_returns_deterministic_complete_mvp_data():
     assert [(stock.code, stock.name) for stock in stocks] == [
         ("600519", "贵州茅台"),
         ("000001", "平安银行"),
+        ("600036", "招商银行"),
+        ("601899", "紫金矿业"),
+        ("600988", "赤峰黄金"),
+        ("300750", "宁德时代"),
     ]
     assert trading_days == {date(2026, 8, 3), date(2026, 8, 4)}
-    assert len(snapshots) == 2
+    assert len(snapshots) == 6
     assert all(snapshot.source == "fixture" for snapshot in snapshots)
     assert len(daily_bars) == 60
     assert all(bar.period == "1d" and bar.adjustment == "qfq" for bar in daily_bars)
@@ -57,6 +61,33 @@ async def test_fixture_source_filters_unknown_stock_and_out_of_range_bars():
         )
         == []
     )
+
+
+async def test_fixture_source_covers_common_search_examples_with_quotes_and_bars():
+    source = FixtureSource()
+
+    stocks = await source.fetch_stock_master()
+    snapshots = await source.fetch_market_snapshot()
+    expected_names = {"贵州茅台", "平安银行", "招商银行", "紫金矿业", "赤峰黄金", "宁德时代"}
+    identities = {(stock.market, stock.code) for stock in stocks}
+    quoted_identities = {(snapshot.market, snapshot.code) for snapshot in snapshots}
+
+    assert expected_names <= {stock.name for stock in stocks}
+    assert identities == quoted_identities
+    for stock in stocks:
+        daily_bars = await source.fetch_daily_bars(
+            stock.code, date(2026, 5, 1), date(2026, 8, 4), "1d", "qfq"
+        )
+        minute_bars = await source.fetch_minute_bars(
+            stock.code,
+            datetime(2026, 8, 4, 9, 30, tzinfo=TZ),
+            datetime(2026, 8, 4, 15, 0, tzinfo=TZ),
+            "1m",
+            "none",
+        )
+
+        assert len(daily_bars) == 60
+        assert len(minute_bars) == 61
 
 
 async def test_fixture_source_returns_weekly_and_monthly_periods_for_e2e():
@@ -93,10 +124,10 @@ async def test_fixture_lifespan_persists_all_data_without_background_jobs(tmp_pa
 
     async with app.router.lifespan_context(app):
         status = app.state.repository.data_status()
-        assert status.stock_count == 2
-        assert status.latest_quote_count == 2
-        assert status.snapshot_count == 2
-        assert status.bar_count == 242
+        assert status.stock_count == 6
+        assert status.latest_quote_count == 6
+        assert status.snapshot_count == 6
+        assert status.bar_count == 726
         assert isinstance(app.state.source, FixtureSource)
         assert app.state.scheduler is None
         assert app.state.history_task is None
@@ -138,7 +169,7 @@ async def test_fixture_lifespan_accepts_bar_fetch_batches(tmp_path):
     )
 
     async with app.router.lifespan_context(app):
-        assert app.state.repository.data_status().bar_count == 242
+        assert app.state.repository.data_status().bar_count == 726
 
 
 async def test_fixture_api_ignores_cross_date_wall_clock_and_stays_deterministic(

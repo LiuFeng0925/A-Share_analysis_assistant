@@ -3,6 +3,7 @@
 .env
 .DS_Store
 data/
+data-fixture/
 *.duckdb
 *.duckdb.wal
 *.py[cod]
