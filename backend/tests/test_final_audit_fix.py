@@ -352,3 +352,51 @@ async def test_stock_master_refresh_never_consumes_realtime_spot(monkeypatch):
         ("000001", "平安银行", date(1991, 4, 3)),
         ("920092", "汉鑫科技", date(2021, 11, 15)),
     }
+
+
+async def test_akshare_one_minute_opening_batch_marks_0930_and_0931_complete(
+    monkeypatch,
+):
+    frame = pd.DataFrame(
+        [
+            {
+                "时间": label,
+                "开盘": 10.1,
+                "最高": 10.3,
+                "最低": 10.0,
+                "收盘": 10.2,
+                "成交量": 1_000,
+                "成交额": 1_020_000.0,
+            }
+            for label in ("2026-08-04 09:30:00", "2026-08-04 09:31:00")
+        ]
+    )
+
+    def provider(**kwargs):
+        return frame
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 8, 4, 9, 32, tzinfo=tz)
+
+    monkeypatch.setattr(
+        akshare_module.ak, "stock_zh_a_hist_min_em", provider
+    )
+    monkeypatch.setattr(akshare_module, "datetime", FixedDateTime)
+
+    batch = await AkshareSource().fetch_minute_bars(
+        "600519",
+        datetime(2026, 8, 4, 9, 30, tzinfo=TZ),
+        datetime(2026, 8, 4, 9, 32, tzinfo=TZ),
+        "1m",
+        "none",
+    )
+
+    assert [bar.bar_time.time() for bar in batch.bars] == [time(9, 30), time(9, 31)]
+    assert [bar.is_complete for bar in batch.bars] == [True, True]
+    assert [bar.quality_status for bar in batch.bars] == [
+        QualityStatus.OK,
+        QualityStatus.OK,
+    ]
+    assert batch.quality_status is QualityStatus.OK

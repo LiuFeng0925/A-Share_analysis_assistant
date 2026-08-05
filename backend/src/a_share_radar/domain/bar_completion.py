@@ -12,6 +12,10 @@ def _as_shanghai(value: datetime) -> datetime:
 
 
 def _is_valid_minute_end_label(period: str, bar_time: datetime) -> bool:
+    # 东财把 09:30 集合竞价/开盘首柱作为 1 分钟结束标签；
+    # 午后 13:00 没有对应特例，下午首根一分钟柱仍以 13:01 标记。
+    if period == "1m" and bar_time.time() == time(9, 30):
+        return True
     duration_seconds = int(period.removesuffix("m")) * 60
     sessions = ((time(9, 30), time(11, 30)), (time(13, 0), time(15, 0)))
     for session_start_time, session_end_time in sessions:
