@@ -13,6 +13,11 @@ from a_share_radar.services.bar_service import BarService, HistoryBootstrapper
 TZ = ZoneInfo("Asia/Shanghai")
 
 
+@pytest.fixture(autouse=True)
+def _seed_known_stocks(repository, fake_source):
+    repository.upsert_stocks(fake_source.stock_rows)
+
+
 def _trading_days_ending(end: date, count: int) -> list[date]:
     days: list[date] = []
     current = end

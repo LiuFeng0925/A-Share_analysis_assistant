@@ -729,22 +729,8 @@ def test_stock_master_refresh_preserves_existing_listing_date(repository):
     assert saved.list_date == listing_date
 
 
-async def test_akshare_stock_master_merges_exchange_listing_dates(
-    fake_source, monkeypatch
-):
-    base = fake_source.snapshot_rows[0]
-    snapshots = [
-        replace(base, code="600519", market=Market.SH, name="贵州茅台"),
-        replace(base, code="688001", market=Market.SH, name="华兴源创"),
-        replace(base, code="000001", market=Market.SZ, name="平安银行"),
-        replace(base, code="920092", market=Market.BJ, name="汉鑫科技"),
-    ]
+async def test_akshare_stock_master_merges_exchange_listing_dates(monkeypatch):
     source = AkshareSource()
-
-    async def snapshots_from_fixture():
-        return snapshots
-
-    monkeypatch.setattr(source, "fetch_market_snapshot", snapshots_from_fixture)
     monkeypatch.setattr(
         akshare_module.ak,
         "stock_info_sh_name_code",
@@ -752,6 +738,7 @@ async def test_akshare_stock_master_merges_exchange_listing_dates(
             [
                 {
                     "证券代码": "600519" if symbol == "主板A股" else "688001",
+                    "证券简称": "贵州茅台" if symbol == "主板A股" else "华兴源创",
                     "上市日期": (
                         date(2001, 8, 27)
                         if symbol == "主板A股"
@@ -765,14 +752,26 @@ async def test_akshare_stock_master_merges_exchange_listing_dates(
         akshare_module.ak,
         "stock_info_sz_name_code",
         lambda symbol: pd.DataFrame(
-            [{"A股代码": "000001", "A股上市日期": date(1991, 4, 3)}]
+            [
+                {
+                    "A股代码": "000001",
+                    "A股简称": "平安银行",
+                    "A股上市日期": date(1991, 4, 3),
+                }
+            ]
         ),
     )
     monkeypatch.setattr(
         akshare_module.ak,
         "stock_info_bj_name_code",
         lambda: pd.DataFrame(
-            [{"证券代码": "920092", "上市日期": date(2021, 11, 15)}]
+            [
+                {
+                    "证券代码": "920092",
+                    "证券简称": "汉鑫科技",
+                    "上市日期": date(2021, 11, 15),
+                }
+            ]
         ),
     )
 

@@ -8,6 +8,7 @@ from time import monotonic
 from zoneinfo import ZoneInfo
 
 from a_share_radar.data_sources.protocol import MarketDataSource
+from a_share_radar.domain.bar_completion import DAILY_FINAL_TIME, bar_is_complete
 from a_share_radar.domain.models import Bar, BarFetchBatch, Market, QualityStatus, Stock
 from a_share_radar.storage.repository import BarIngestionAudit, MarketRepository
 
@@ -31,6 +32,10 @@ _PROVIDER_LOCK_STRIPES = 256
 
 class BarQueryValidationError(ValueError):
     """K 线查询参数不合法。"""
+
+
+class BarStockNotFoundError(LookupError):
+    """K 线查询指定的股票不在本地主数据中。"""
 
 
 async def _run_repository_call[Result](
@@ -179,6 +184,13 @@ class BarService:
         self._validate(period, range_name, adjustment)
         if self._closed:
             raise RuntimeError("K 线服务已关闭")
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise BarQueryValidationError("K 线查询时间必须包含时区")
+        if len(code) != 6 or not code.isascii() or not code.isdigit():
+            raise BarStockNotFoundError("未找到该股票")
+        stock = await _run_repository_call(self.repository.get_stock, market, code)
+        if stock is None:
+            raise BarStockNotFoundError("未找到该股票")
         key = (market, code, period, range_name, adjustment)
         current_monotonic = monotonic()
         self._prune_recent(current_monotonic)
@@ -608,6 +620,19 @@ class BarService:
             batch.acquired_at,
             quality_status,
         )
+        confirmed_ranges = None
+        if (
+            kind == "history"
+            and period == "1d"
+            and bars
+            and quality_status is QualityStatus.OK
+        ):
+            confirmed_ranges = tuple(
+                self._storage_range(
+                    "history", bar.bar_time.date(), bar.bar_time.date()
+                )
+                for bar in bars
+            )
         await _run_repository_call(
             self.repository.record_bar_ingestion,
             market=market,
@@ -627,6 +652,7 @@ class BarService:
             range_start=range_start,
             range_end=range_end,
             expires_at=expires_at,
+            confirmed_ranges=confirmed_ranges,
         )
         return bars
 
@@ -795,21 +821,7 @@ class BarService:
         normalized: list[Bar] = []
         for bar in bars:
             acquired_at = (bar.acquired_at or bar.bar_time).astimezone(SHANGHAI)
-            if bar.period.endswith("m"):
-                duration = timedelta(minutes=int(bar.period.removesuffix("m")))
-                complete = bar.bar_time + duration <= acquired_at
-            elif bar.period == "1d":
-                complete = bar.bar_time.date() < acquired_at.date() or (
-                    bar.bar_time.date() == acquired_at.date()
-                    and acquired_at.time() >= time(15, 0)
-                )
-            elif bar.period == "1w":
-                complete = bar.bar_time.isocalendar()[:2] < acquired_at.isocalendar()[:2]
-            else:
-                complete = (bar.bar_time.year, bar.bar_time.month) < (
-                    acquired_at.year,
-                    acquired_at.month,
-                )
+            complete = bar_is_complete(bar.period, bar.bar_time, acquired_at)
             normalized.append(
                 replace(
                     bar,
@@ -908,7 +920,7 @@ class HistoryBootstrapper:
 
     @staticmethod
     def _latest_completed_day(now: datetime, trading_days: set[date]) -> date:
-        cutoff_today = now.time() >= time(15, 10)
+        cutoff_today = now.time() >= DAILY_FINAL_TIME
         candidates = [
             day for day in trading_days if day < now.date() or (cutoff_today and day == now.date())
         ]

@@ -3,12 +3,13 @@ import logging
 import math
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
 
 import akshare as ak
 import pandas as pd
 
+from a_share_radar.domain.bar_completion import bar_is_complete
 from a_share_radar.domain.models import (
     Bar,
     BarFetchBatch,
@@ -61,24 +62,10 @@ def _valid_ohlc(open_price: float, high: float, low: float, close: float) -> boo
     )
 
 
-def _bar_is_complete(period: str, bar_time: datetime, acquired_at: datetime) -> bool:
-    if period.endswith("m"):
-        return bar_time + timedelta(minutes=int(period.removesuffix("m"))) <= acquired_at
-    if period == "1d":
-        return bar_time.date() < acquired_at.date() or (
-            bar_time.date() == acquired_at.date() and acquired_at.time() >= time(15, 0)
-        )
-    if period == "1w":
-        return bar_time.isocalendar()[:2] < acquired_at.isocalendar()[:2]
-    if period == "1mo":
-        return (bar_time.year, bar_time.month) < (acquired_at.year, acquired_at.month)
-    return True
-
-
 def _restamp_bars(bars: list[Bar], acquired_at: datetime) -> list[Bar]:
     stamped: list[Bar] = []
     for bar in bars:
-        complete = _bar_is_complete(
+        complete = bar_is_complete(
             bar.period, bar.bar_time, acquired_at.astimezone(SHANGHAI)
         )
         stamped.append(
@@ -194,7 +181,7 @@ class AkshareSource:
                 logger.warning("过滤分钟 K 线坏柱：%s %s", code, bar_time.isoformat())
                 batch_is_partial = True
                 continue
-            is_complete = _bar_is_complete(
+            is_complete = bar_is_complete(
                 period, bar_time, resolved_acquired_at.astimezone(SHANGHAI)
             )
             result.append(
@@ -227,7 +214,6 @@ class AkshareSource:
         return [replace(quote, captured_at=captured_at) for quote in normalized]
 
     async def fetch_stock_master(self) -> list[Stock]:
-        quotes = await self.fetch_market_snapshot()
         frames = await asyncio.gather(
             self._fetch_listing_frame(
                 "上交所主板", ak.stock_info_sh_name_code, "主板A股"
@@ -240,16 +226,7 @@ class AkshareSource:
             ),
             self._fetch_listing_frame("北交所", ak.stock_info_bj_name_code),
         )
-        listing_dates = self._listing_dates(frames)
-        return [
-            Stock(
-                quote.code,
-                quote.market,
-                quote.name,
-                list_date=listing_dates.get(quote.code),
-            )
-            for quote in quotes
-        ]
+        return self._stock_master(frames)
 
     @staticmethod
     async def _fetch_listing_frame(
@@ -264,25 +241,43 @@ class AkshareSource:
             return pd.DataFrame()
 
     @staticmethod
-    def _listing_dates(frames: list[pd.DataFrame]) -> dict[str, date]:
-        result: dict[str, date] = {}
+    def _stock_master(frames: list[pd.DataFrame]) -> list[Stock]:
+        result: dict[tuple[Market, str], Stock] = {}
         specifications = (
-            (frames[0], "证券代码", "上市日期"),
-            (frames[1], "证券代码", "上市日期"),
-            (frames[2], "A股代码", "A股上市日期"),
-            (frames[3], "证券代码", "上市日期"),
+            (frames[0], "证券代码", "证券简称", "上市日期"),
+            (frames[1], "证券代码", "证券简称", "上市日期"),
+            (frames[2], "A股代码", "A股简称", "A股上市日期"),
+            (frames[3], "证券代码", "证券简称", "上市日期"),
         )
-        for frame, code_column, date_column in specifications:
-            if code_column not in frame or date_column not in frame:
+        for frame, code_column, name_column, date_column in specifications:
+            required_columns = {code_column, name_column}
+            if not required_columns <= set(frame.columns):
                 continue
-            for row in frame[[code_column, date_column]].to_dict("records"):
+            selected_columns = [code_column, name_column]
+            if date_column in frame:
+                selected_columns.append(date_column)
+            for row in frame[selected_columns].to_dict("records"):
                 raw_code = row[code_column]
-                raw_date = row[date_column]
-                if pd.isna(raw_code) or pd.isna(raw_date):
+                raw_name = row[name_column]
+                if pd.isna(raw_code) or pd.isna(raw_name):
                     continue
                 code = str(raw_code).split(".", maxsplit=1)[0].zfill(6)
-                result[code] = pd.Timestamp(raw_date).date()
-        return result
+                if len(code) != 6 or not code.isascii() or not code.isdigit():
+                    continue
+                raw_date = row.get(date_column)
+                list_date = (
+                    None
+                    if raw_date is None or pd.isna(raw_date)
+                    else pd.Timestamp(raw_date).date()
+                )
+                market = AkshareSource.market_for_code(code)
+                result[(market, code)] = Stock(
+                    code=code,
+                    market=market,
+                    name=str(raw_name),
+                    list_date=list_date,
+                )
+        return sorted(result.values(), key=lambda stock: (stock.market.value, stock.code))
 
     async def fetch_trading_days(self, start: date, end: date) -> set[date]:
         frame = await _run_provider_thread(ak.tool_trade_date_hist_sina)
@@ -328,7 +323,7 @@ class AkshareSource:
                 logger.warning("过滤历史 K 线坏柱：%s %s", code, bar_time.date())
                 batch_is_partial = True
                 continue
-            is_complete = _bar_is_complete(
+            is_complete = bar_is_complete(
                 period, bar_time, resolved_acquired_at.astimezone(SHANGHAI)
             )
             result.append(

@@ -451,6 +451,7 @@ class MarketRepository:
         range_start: datetime | None = None,
         range_end: datetime | None = None,
         expires_at: datetime | None = None,
+        confirmed_ranges: Iterable[tuple[datetime, datetime]] | None = None,
     ) -> None:
         with self.database.lock:
             connection = self.database.connection
@@ -484,11 +485,30 @@ class MarketRepository:
                         invalid_row_count,
                     ),
                 )
-                if range_start is not None and range_end is not None:
-                    range_status = self._bar_range_status(
-                        status, quality_status, valid_row_count
+                if confirmed_ranges is None:
+                    range_rows = (
+                        []
+                        if range_start is None or range_end is None
+                        else [
+                            (
+                                range_start,
+                                range_end,
+                                self._bar_range_status(
+                                    status, quality_status, valid_row_count
+                                ),
+                                raw_row_count,
+                                valid_row_count,
+                                invalid_row_count,
+                            )
+                        ]
                     )
-                    connection.execute(
+                else:
+                    range_rows = [
+                        (confirmed_start, confirmed_end, "success", 1, 1, 0)
+                        for confirmed_start, confirmed_end in confirmed_ranges
+                    ]
+                if range_rows:
+                    connection.executemany(
                         """
                         INSERT INTO bar_range_check (
                           market, code, period, adjustment, range_start,
@@ -508,22 +528,32 @@ class MarketRepository:
                           valid_row_count = EXCLUDED.valid_row_count,
                           invalid_row_count = EXCLUDED.invalid_row_count
                         """,
-                        (
-                            market.value,
-                            code,
-                            period,
-                            adjustment,
-                            range_start,
-                            range_end,
-                            acquired_at,
-                            expires_at or acquired_at,
-                            source,
-                            range_status,
-                            quality_status,
-                            raw_row_count,
-                            valid_row_count,
-                            invalid_row_count,
-                        ),
+                        [
+                            (
+                                market.value,
+                                code,
+                                period,
+                                adjustment,
+                                confirmed_start,
+                                confirmed_end,
+                                acquired_at,
+                                expires_at or acquired_at,
+                                source,
+                                range_status,
+                                quality_status,
+                                confirmed_raw_count,
+                                confirmed_valid_count,
+                                confirmed_invalid_count,
+                            )
+                            for (
+                                confirmed_start,
+                                confirmed_end,
+                                range_status,
+                                confirmed_raw_count,
+                                confirmed_valid_count,
+                                confirmed_invalid_count,
+                            ) in range_rows
+                        ],
                     )
                 connection.execute("COMMIT")
             except Exception:

@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import replace
 from datetime import datetime
 from typing import Annotated, Literal
@@ -13,7 +14,10 @@ from a_share_radar.api.schemas import (
     StockQuoteResponse,
 )
 from a_share_radar.domain.models import Market, QualityStatus
-from a_share_radar.services.bar_service import BarQueryValidationError
+from a_share_radar.services.bar_service import (
+    BarQueryValidationError,
+    BarStockNotFoundError,
+)
 
 router = APIRouter(prefix="/api")
 SortField = Literal[
@@ -80,6 +84,11 @@ async def stock_bars(
     range_name: Annotated[Range, Query(alias="range")],
     adjustment: Adjustment | None = None,
 ):
+    stock = await asyncio.to_thread(
+        request.app.state.repository.get_stock, market, code
+    )
+    if stock is None:
+        raise HTTPException(status_code=404, detail="未找到该股票")
     if adjustment is None:
         resolved_adjustment: Adjustment = "none" if period == "1m" else "qfq"
     else:
@@ -95,6 +104,8 @@ async def stock_bars(
         )
     except BarQueryValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except BarStockNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     ingestion = await request.app.state.bar_service.latest_ingestion(
         market, code, period, resolved_adjustment
     )

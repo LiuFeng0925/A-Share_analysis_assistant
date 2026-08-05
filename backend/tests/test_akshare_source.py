@@ -83,8 +83,8 @@ def test_minute_bar_keeps_provider_time():
     assert bars[0].bar_time.isoformat() == "2026-08-04T10:31:00+08:00"
     assert bars[0].volume == 100_000
     assert bars[0].acquired_at == acquired_at
-    assert bars[0].quality_status is QualityStatus.PARTIAL
-    assert bars[0].is_complete is False
+    assert bars[0].quality_status is QualityStatus.OK
+    assert bars[0].is_complete is True
 
 
 def test_history_bar_converts_lots_to_shares_and_records_acquisition_time():

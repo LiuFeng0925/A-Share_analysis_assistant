@@ -18,6 +18,11 @@ from a_share_radar.services.bar_service import BarService
 TZ = ZoneInfo("Asia/Shanghai")
 
 
+@pytest.fixture(autouse=True)
+def _seed_known_stocks(repository, fake_source):
+    repository.upsert_stocks(fake_source.stock_rows)
+
+
 def _trading_days(end: date, count: int) -> list[date]:
     result: list[date] = []
     cursor = end
@@ -96,7 +101,7 @@ async def test_daily_history_retries_internal_calendar_gap_even_with_latest_bar(
     assert len(bars) == 60
 
 
-async def test_completion_uses_bar_acquisition_time_across_minute_boundary(
+async def test_completion_uses_provider_end_label_and_bar_acquisition_time(
     repository, fake_source
 ):
     bar = replace(
@@ -118,8 +123,8 @@ async def test_completion_uses_bar_acquisition_time_across_minute_boundary(
         datetime(2026, 8, 4, 10, 32, 5, tzinfo=TZ),
     )
 
-    assert bars[-1].is_complete is False
-    assert bars[-1].quality_status is QualityStatus.PARTIAL
+    assert bars[-1].is_complete is True
+    assert bars[-1].quality_status is QualityStatus.OK
 
 
 async def test_background_and_detail_share_same_daily_provider_request(
@@ -228,6 +233,9 @@ async def test_close_waits_until_real_akshare_provider_thread_finishes(
 async def test_recent_query_cache_is_globally_pruned_and_bounded(
     repository, fake_source
 ):
+    repository.upsert_stocks(
+        [Stock(f"{index:06d}", Market.SZ, f"测试股票{index}") for index in range(12)]
+    )
     service = BarService(
         fake_source,
         repository,

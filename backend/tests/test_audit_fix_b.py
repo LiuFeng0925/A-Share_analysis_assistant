@@ -17,6 +17,11 @@ from a_share_radar.storage.repository import MarketRepository
 TZ = ZoneInfo("Asia/Shanghai")
 
 
+@pytest.fixture(autouse=True)
+def _seed_known_stocks(repository, fake_source):
+    repository.upsert_stocks(fake_source.stock_rows[:1])
+
+
 def _trading_days(end: date, count: int) -> list[date]:
     days: list[date] = []
     cursor = end
@@ -176,7 +181,9 @@ async def test_service_preserves_partial_quality_reported_by_source(
     repository, fake_source
 ):
     partial = replace(
-        _daily_bar(date(2026, 8, 3)), quality_status=QualityStatus.PARTIAL
+        _daily_bar(date(2026, 8, 3)),
+        acquired_at=datetime(2026, 8, 3, 15, 20, tzinfo=TZ),
+        quality_status=QualityStatus.PARTIAL,
     )
     fake_source.bar_rows = [partial]
     service = BarService(fake_source, repository, history_days=60)
