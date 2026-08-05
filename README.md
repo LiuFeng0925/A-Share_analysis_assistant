@@ -43,6 +43,36 @@ A_SHARE_FIXTURE_SOURCE=true ./scripts/dev.sh
 A_SHARE_BACKEND_PORT=18000 A_SHARE_FRONTEND_PORT=15173 ./scripts/dev.sh
 ```
 
+## 生产部署
+
+生产环境采用 Docker Compose 运行后端和前端容器，宿主机 Nginx 按域名反向代理到
+前端容器的本机端口。当前默认域名为 `astock.liufengliu.com`，服务器路径为
+`/opt/a-share-analysis-assistant`，宿主机只监听 `127.0.0.1:18080`，公网不会直接暴露
+后端容器端口。
+
+部署到默认服务器：
+
+```bash
+./scripts/deploy_server.sh
+```
+
+如果要换服务器、目录或域名：
+
+```bash
+DEPLOY_HOST=root@47.94.3.250 \
+DEPLOY_DIR=/opt/a-share-analysis-assistant \
+DEPLOY_DOMAIN=astock.liufengliu.com \
+./scripts/deploy_server.sh
+```
+
+部署脚本会同步代码、构建镜像、启动服务，并写入 Nginx HTTP 站点配置。签发 HTTPS
+证书前，需要先在 DNS 服务商处添加 A 记录：`astock.liufengliu.com -> 47.94.3.250`。
+DNS 生效后可在服务器执行：
+
+```bash
+certbot --nginx -d astock.liufengliu.com
+```
+
 ## 测试
 
 后端全量测试、Ruff、前端组件测试和生产构建：

@@ -1,0 +1,13 @@
+.git
+.gitignore
+backend/.venv
+frontend/node_modules
+frontend/dist
+data
+data-fixture
+docs/screenshots
+playwright-report
+test-results
+*.log
+*.tmp
+*.tar.gz

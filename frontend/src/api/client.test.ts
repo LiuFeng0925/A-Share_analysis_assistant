@@ -17,7 +17,7 @@ test("把外部取消信号传给 fetch，并保留 AbortError 语义", async ()
 
   const request = marketApi.getSummary({ signal: controller.signal });
   expect(fetchMock).toHaveBeenCalledWith(
-    "http://127.0.0.1:8000/api/market/summary",
+    "/api/market/summary",
     expect.objectContaining({ signal: expect.any(AbortSignal) }),
   );
   controller.abort();
