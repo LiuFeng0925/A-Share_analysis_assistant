@@ -88,7 +88,7 @@ test("默认请求最近 60 个交易日的前复权日 K", async () => {
 test("详情页展示 MACD 结果并把日线指标传给 K 线副图", async () => {
   renderDetail();
 
-  expect(await screen.findByText("MACD 指标")).toBeInTheDocument();
+  expect(await screen.findByText("MACD 指标 · 日K")).toBeInTheDocument();
   expect(screen.getByText("近 3 日金叉")).toBeInTheDocument();
   expect(screen.getByText("零轴线上")).toBeInTheDocument();
   expect(screen.getByText("DIFF 0.18")).toBeInTheDocument();
@@ -96,8 +96,59 @@ test("详情页展示 MACD 结果并把日线指标传给 K 线副图", async ()
   expect(marketApi.getMacdIndicator).toHaveBeenCalledWith(
     "SH",
     "600519",
+    "1d",
     expect.objectContaining({ signal: expect.any(AbortSignal) }),
   );
+});
+
+test("切换 K 线周期后请求并展示同周期 MACD", async () => {
+  vi.mocked(marketApi.getBars)
+    .mockResolvedValueOnce(dailyBarsFixture)
+    .mockResolvedValueOnce({ ...dailyBarsFixture, period: "5m", items: dailyBarsFixture.items });
+  vi.mocked(marketApi.getMacdIndicator)
+    .mockResolvedValueOnce(macdIndicatorFixture)
+    .mockResolvedValueOnce({
+      ...macdIndicatorFixture,
+      period: "5m",
+      summary: { ...macdIndicatorFixture.summary, recent_signal_label: "5分金叉" },
+    });
+
+  renderDetail();
+  expect(await screen.findByTestId("kline-chart")).toHaveTextContent("1d:1:近 3 日金叉");
+
+  fireEvent.click(screen.getByRole("button", { name: "5分" }));
+
+  await waitFor(() => expect(marketApi.getMacdIndicator).toHaveBeenLastCalledWith(
+    "SH",
+    "600519",
+    "5m",
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  ));
+  expect(await screen.findByTestId("kline-chart")).toHaveTextContent("5m:1:5分金叉");
+  expect(screen.getByText("MACD 指标 · 5分")).toBeInTheDocument();
+});
+
+test("旧周期 MACD 不会传给新周期图表", async () => {
+  let resolveFiveMinuteMacd: ((value: typeof macdIndicatorFixture) => void) | undefined;
+  vi.mocked(marketApi.getBars)
+    .mockResolvedValueOnce(dailyBarsFixture)
+    .mockResolvedValueOnce({ ...dailyBarsFixture, period: "5m", items: dailyBarsFixture.items });
+  vi.mocked(marketApi.getMacdIndicator)
+    .mockResolvedValueOnce(macdIndicatorFixture)
+    .mockReturnValueOnce(new Promise((resolve) => { resolveFiveMinuteMacd = resolve; }));
+
+  renderDetail();
+  expect(await screen.findByTestId("kline-chart")).toHaveTextContent("1d:1:近 3 日金叉");
+
+  fireEvent.click(screen.getByRole("button", { name: "5分" }));
+  await waitFor(() => expect(screen.getByTestId("kline-chart")).toHaveTextContent("5m:1:无 MACD"));
+
+  await act(async () => resolveFiveMinuteMacd?.({
+    ...macdIndicatorFixture,
+    period: "5m",
+    summary: { ...macdIndicatorFixture.summary, recent_signal_label: "5分金叉" },
+  }));
+  expect(screen.getByTestId("kline-chart")).toHaveTextContent("5m:1:5分金叉");
 });
 
 test("今日按钮请求当天原生一分钟 K 并解释颗粒度", async () => {

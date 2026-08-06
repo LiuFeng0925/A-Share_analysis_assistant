@@ -16,6 +16,16 @@ const MACD_LEGEND_LABELS: Record<string, string> = {
   DEA: "DEA 黄线",
   "MACD 柱": "MACD 红绿柱",
 };
+const PERIOD_LABELS: Record<string, string> = {
+  "1m": "1分",
+  "5m": "5分",
+  "15m": "15分",
+  "30m": "30分",
+  "60m": "60分",
+  "1d": "日线",
+  "1w": "周线",
+  "1mo": "月线",
+};
 
 interface ZoomWindow {
   start: number;
@@ -94,7 +104,7 @@ export function buildKlineOption(
     axisPointer: { link: [{ xAxisIndex: "all" }] },
     title: hasMacd
       ? {
-          text: "MACD（日线）",
+          text: `MACD（${PERIOD_LABELS[series.period] ?? series.period}）`,
           left: 56,
           top: "70.5%",
           textStyle: {

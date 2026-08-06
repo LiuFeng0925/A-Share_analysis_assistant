@@ -138,7 +138,7 @@ export interface MacdSummary {
 export interface MacdIndicator {
   market: Market;
   code: string;
-  period: "1d";
+  period: BarPeriod;
   summary: MacdSummary;
   items: MacdPoint[];
 }

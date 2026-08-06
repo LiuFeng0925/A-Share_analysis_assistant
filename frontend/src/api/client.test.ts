@@ -99,16 +99,16 @@ test("股票列表请求会携带 MACD 筛选参数", async () => {
   );
 });
 
-test("按日线读取个股 MACD 指标", async () => {
+test("MACD 指标接口携带指定 K 线周期", async () => {
   const fetchMock = vi.fn().mockResolvedValue(
     new Response(JSON.stringify({ market: "SH", code: "600519", period: "1d", items: [] })),
   );
   vi.stubGlobal("fetch", fetchMock);
 
-  await marketApi.getMacdIndicator("SH", "600519");
+  await marketApi.getMacdIndicator("SH", "600519", "5m");
 
   expect(fetchMock).toHaveBeenCalledWith(
-    "/api/stocks/SH/600519/indicators/macd?period=1d",
+    "/api/stocks/SH/600519/indicators/macd?period=5m",
     expect.objectContaining({ signal: expect.any(AbortSignal) }),
   );
 });

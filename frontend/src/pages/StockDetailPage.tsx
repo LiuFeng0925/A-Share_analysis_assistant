@@ -105,6 +105,11 @@ function periodKey(market: Market, code: string, option: PeriodOption) {
   return `${market}/${code}/${option.period}/${option.range}/${option.adjustment}`;
 }
 
+function indicatorPeriodLabel(option: PeriodOption) {
+  if (option.label === "今日") return "今日 1分";
+  return option.label;
+}
+
 function readableError(error: unknown, scope: "股票" | "K 线") {
   const message = error instanceof Error ? error.message : "未知错误";
   return `${scope}加载失败：${message}`;
@@ -342,7 +347,12 @@ export function StockDetailPage() {
     setMacdError(null);
     setMacd(null);
     try {
-      const nextMacd = await marketApi.getMacdIndicator(market, code, { signal });
+      const nextMacd = await marketApi.getMacdIndicator(
+        market,
+        code,
+        selectedPeriod.period,
+        { signal },
+      );
       if (mounted.current && sequence === macdRequestSequence.current) {
         setMacd(nextMacd);
       }
@@ -357,7 +367,7 @@ export function StockDetailPage() {
         setMacdLoading(false);
       }
     }
-  }, [code, market]);
+  }, [code, market, selectedPeriod]);
 
   const loadBars = useCallback(async (signal?: AbortSignal) => {
     if (!market || !code) return;
@@ -411,9 +421,14 @@ export function StockDetailPage() {
     const controller = new AbortController();
     void loadStock(controller.signal);
     void loadMarketSummary(controller.signal);
+    return () => controller.abort();
+  }, [loadMarketSummary, loadStock]);
+
+  useEffect(() => {
+    const controller = new AbortController();
     void loadMacd(controller.signal);
     return () => controller.abort();
-  }, [loadMacd, loadMarketSummary, loadStock]);
+  }, [loadMacd]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -478,7 +493,7 @@ export function StockDetailPage() {
     || (!visibleBars && !matchingBarsError);
   const barsRefreshing = barsRefreshingKey === selectedBarsKey;
   const latestBar = visibleBars?.items.at(-1);
-  const chartMacd = visibleBars?.period === "1d" ? macd : null;
+  const chartMacd = visibleBars && macd?.period === visibleBars.period ? macd : null;
   const macdSummary = macd?.summary;
   const quoteFields = [
     { label: "最新价", value: formatMarketNumber(stock?.latest_price), className: change.className },
@@ -598,15 +613,15 @@ export function StockDetailPage() {
         </div>
         <footer className="chart-note">
           <span>拖动图表或底部滑块可缩放查看区间</span>
-          <span>红色为上涨，绿色为下跌；日 K 下方可查看 MACD 副图</span>
+          <span>红色为上涨，绿色为下跌；当前周期下方可查看 MACD 副图</span>
         </footer>
       </section>
       <aside className="indicator-panel" aria-label="技术指标结果">
         <article className="indicator-card">
           <header>
             <div>
-              <span className="page-kicker">INDICATOR / 1D</span>
-              <h2>MACD 指标</h2>
+              <span className="page-kicker">INDICATOR / {indicatorPeriodLabel(selectedPeriod)}</span>
+              <h2>MACD 指标 · {indicatorPeriodLabel(selectedPeriod)}</h2>
             </div>
             <strong className={`indicator-quality ${macdSummary?.quality ?? "pending"}`}>
               {macdQualityLabel(macdSummary?.quality)}
@@ -645,7 +660,9 @@ export function StockDetailPage() {
                 {formatShanghaiDateTime(macdSummary.calculated_at)}
               </p>
               <small>
-                {macdSummary.is_intraday ? "当前含盘中动态价，收盘后会随日 K 固化。" : "基于最近日 K 计算。"}
+                {macdSummary.is_intraday
+                  ? "当前含本周期动态柱，周期收束后会随 K 线固化。"
+                  : `基于最近${indicatorPeriodLabel(selectedPeriod)} K 线计算。`}
               </small>
             </>
           ) : (

@@ -73,6 +73,17 @@ describe("KlineChart", () => {
     expect(series[4]).toEqual(expect.objectContaining({ type: "bar" }));
   });
 
+  test("MACD 副图标题显示当前 K 线周期", () => {
+    const option = buildKlineOption(
+      { ...dailyBarsFixture, period: "5m" },
+      undefined,
+      { ...macdIndicatorFixture, period: "5m" },
+    );
+    const title = option.title as { text: string };
+
+    expect(title.text).toBe("MACD（5分）");
+  });
+
   test("默认显示最近 60 根 K 线，数据不足 60 根时显示全部", () => {
     const longOption = buildKlineOption(makeBars(120));
     const shortOption = buildKlineOption(makeBars(30));
