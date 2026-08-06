@@ -1159,15 +1159,15 @@ tr:focus-visible {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  padding: 16px;
+  padding: 13px 14px;
   background: linear-gradient(145deg, #fbfcff, #f6f9ff);
   border-bottom: 1px solid var(--border);
 }
 
 .indicator-card h2 {
-  margin: 5px 0 0;
+  margin: 4px 0 0;
   color: var(--ink);
-  font-size: 17px;
+  font-size: 15px;
   line-height: 1.2;
 }
 
@@ -1206,10 +1206,10 @@ tr:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 62px;
-  margin: 14px 16px;
-  border-radius: 12px;
-  font-size: 18px;
+  min-height: 44px;
+  margin: 12px 14px 10px;
+  border-radius: 10px;
+  font-size: 16px;
   font-weight: 850;
 }
 
@@ -1228,33 +1228,33 @@ tr:focus-visible {
   background: #f2f4f8;
 }
 
-.indicator-metrics {
+.indicator-summary-tags {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 7px;
   margin: 0;
-  padding: 0 16px 14px;
+  padding: 0 14px 14px;
 }
 
-.indicator-metrics div {
-  min-height: 58px;
-  padding: 10px;
+.indicator-summary-tags div {
+  min-height: 46px;
+  padding: 8px 9px;
   background: #fafbfd;
   border: 1px solid #edf0f5;
-  border-radius: 10px;
+  border-radius: 9px;
 }
 
-.indicator-metrics dt {
-  margin-bottom: 6px;
+.indicator-summary-tags dt {
+  margin-bottom: 4px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 650;
 }
 
-.indicator-metrics dd {
+.indicator-summary-tags dd {
   margin: 0;
   color: var(--ink);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 750;
 }
 

@@ -91,7 +91,12 @@ test("详情页展示 MACD 结果并把日线指标传给 K 线副图", async ()
   expect(await screen.findByText("MACD 指标 · 日K")).toBeInTheDocument();
   expect(screen.getByText("近 3 日金叉")).toBeInTheDocument();
   expect(screen.getByText("零轴线上")).toBeInTheDocument();
-  expect(screen.getByText("DIFF 0.18")).toBeInTheDocument();
+  expect(screen.getByText("金叉")).toBeInTheDocument();
+  expect(screen.queryByText("DIFF 0.18")).not.toBeInTheDocument();
+  expect(screen.queryByText("DEA 0.11")).not.toBeInTheDocument();
+  expect(screen.queryByText("红绿柱")).not.toBeInTheDocument();
+  expect(screen.queryByText(/信号日期/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/计算时间/)).not.toBeInTheDocument();
   expect(screen.getByTestId("kline-chart")).toHaveTextContent("近 3 日金叉");
   expect(marketApi.getMacdIndicator).toHaveBeenCalledWith(
     "SH",

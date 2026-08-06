@@ -75,14 +75,16 @@ function qualityMeta(status: QualityStatus | null) {
   return status ? values[status] : { label: "质量未知", className: "is-warning" };
 }
 
-function formatIndicatorValue(value: number | null | undefined) {
-  return isFiniteNumber(value) ? formatMarketNumber(value) : "—";
-}
-
 function zeroAxisLabel(value: MacdIndicator["summary"]["zero_axis"] | undefined) {
   if (value === "above") return "零轴线上";
   if (value === "below") return "零轴线下";
   return "零轴未知";
+}
+
+function macdSignalLabel(value: MacdIndicator["summary"]["signal_type"] | undefined) {
+  if (value === "golden_cross") return "金叉";
+  if (value === "death_cross") return "死叉";
+  return "暂无交叉";
 }
 
 function macdSignalTone(value: MacdIndicator["summary"]["signal_type"] | undefined) {
@@ -638,33 +640,16 @@ export function StockDetailPage() {
               <strong className={`indicator-main-signal ${macdSignalTone(macdSummary.signal_type)}`}>
                 {macdSummary.recent_signal_label}
               </strong>
-              <dl className="indicator-metrics">
+              <dl className="indicator-summary-tags">
                 <div>
                   <dt>零轴</dt>
                   <dd>{zeroAxisLabel(macdSummary.zero_axis)}</dd>
                 </div>
                 <div>
-                  <dt>DIFF</dt>
-                  <dd className="data-value">DIFF {formatIndicatorValue(macdSummary.diff)}</dd>
-                </div>
-                <div>
-                  <dt>DEA</dt>
-                  <dd className="data-value">DEA {formatIndicatorValue(macdSummary.dea)}</dd>
-                </div>
-                <div>
-                  <dt>红绿柱</dt>
-                  <dd className="data-value">{formatIndicatorValue(macdSummary.histogram)}</dd>
+                  <dt>信号</dt>
+                  <dd>{macdSignalLabel(macdSummary.signal_type)}</dd>
                 </div>
               </dl>
-              <p>
-                信号日期 {macdSummary.signal_date ?? "暂无"} · 计算时间{" "}
-                {formatShanghaiDateTime(macdSummary.calculated_at)}
-              </p>
-              <small>
-                {macdSummary.is_intraday
-                  ? "当前含本周期动态柱，周期收束后会随 K 线固化。"
-                  : `基于最近${indicatorPeriodLabel(selectedPeriod)} K 线计算。`}
-              </small>
             </>
           ) : (
             <div className="indicator-state">暂无 MACD 指标</div>
