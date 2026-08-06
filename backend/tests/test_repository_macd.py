@@ -21,13 +21,14 @@ def macd_calculation(
     zero_axis: ZeroAxisPosition,
     days: int | None,
     label: str,
+    period: str = "1d",
 ) -> MacdCalculation:
     market_time = datetime(2026, 8, 6, 15, 0, tzinfo=TZ)
     signal_date = None if days is None else date(2026, 8, 6)
     summary = MacdSummary(
         market=Market.SH,
         code=code,
-        period="1d",
+        period=period,
         calculated_at=datetime(2026, 8, 6, 15, 5, tzinfo=TZ),
         market_time=market_time,
         diff=0.18,
@@ -45,7 +46,7 @@ def macd_calculation(
     point = MacdPoint(
         market=Market.SH,
         code=code,
-        period="1d",
+        period=period,
         bar_time=market_time,
         diff=summary.diff,
         dea=summary.dea,
@@ -122,3 +123,31 @@ def test_list_stocks_filters_and_returns_recent_macd_signal(repository):
     assert page.items[0].macd_signal_label == "近 3 日金叉"
     assert page.items[0].macd_zero_axis == ZeroAxisPosition.ABOVE
     assert page.items[0].macd_quality == MacdQuality.OK
+
+
+def test_list_stocks_ignores_non_daily_macd_for_filters(repository):
+    repository.upsert_stocks([Stock("600519", Market.SH, "贵州茅台")])
+    repository.upsert_macd(
+        macd_calculation(
+            "600519",
+            signal=MacdSignal.GOLDEN_CROSS,
+            zero_axis=ZeroAxisPosition.ABOVE,
+            days=0,
+            label="今日金叉",
+            period="5m",
+        )
+    )
+
+    page = repository.list_stocks(
+        None,
+        None,
+        "code",
+        "asc",
+        1,
+        50,
+        macd_signal="golden_cross",
+        macd_zero_axis="above",
+        macd_recent_window="today",
+    )
+
+    assert page.total == 0
