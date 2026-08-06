@@ -135,7 +135,9 @@ def create_app(
         else None
     )
     injected_indicator_service = (
-        IndicatorService(injected_repository) if injected_repository is not None else None
+        IndicatorService(injected_repository, injected_bar_service)
+        if injected_repository is not None
+        else None
     )
     stock_master_minimum_count = (
         1
@@ -157,7 +159,7 @@ def create_app(
             bar_service = bar_service or BarService(
                 resolved_source, repository, resolved_settings.history_days
             )
-            indicator_service = indicator_service or IndicatorService(repository)
+            indicator_service = indicator_service or IndicatorService(repository, bar_service)
             app.state.repository = repository
             app.state.bar_service = bar_service
             app.state.indicator_service = indicator_service

@@ -116,7 +116,7 @@ export function StockTable({ stocks, sortBy, sortOrder, onSort }: StockTableProp
             <th scope="col" aria-sort={ariaSort("code")}>
               <SortButton field="code" label="股票" {...{ sortBy, sortOrder, onSort }} />
             </th>
-            <th scope="col">MACD 信号</th>
+            <th scope="col">日 K MACD</th>
             <th scope="col" aria-sort={ariaSort("latest_price")}>
               <SortButton field="latest_price" label="最新价" {...{ sortBy, sortOrder, onSort }} />
             </th>

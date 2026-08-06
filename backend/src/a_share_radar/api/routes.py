@@ -106,15 +106,22 @@ async def stock_macd_indicator(
     )
     if stock is None:
         raise HTTPException(status_code=404, detail="未找到该股票")
-    calculation = await asyncio.to_thread(
-        request.app.state.repository.get_macd, market, code, period
-    )
-    if calculation is None:
-        indicator_service = getattr(request.app.state, "indicator_service", None)
-        if indicator_service is not None:
-            at = request_now(request)
-            clock = getattr(request.app.state, "clock", None)
-            market_open = bool(clock is not None and clock.is_open(at))
+    indicator_service = getattr(request.app.state, "indicator_service", None)
+    at = request_now(request)
+    clock = getattr(request.app.state, "clock", None)
+    market_open = bool(clock is not None and clock.is_open(at))
+    if indicator_service is not None and hasattr(indicator_service, "get_stock_macd"):
+        calculation = await indicator_service.get_stock_macd(
+            stock,
+            at,
+            market_open=market_open,
+            period=period,
+        )
+    else:
+        calculation = await asyncio.to_thread(
+            request.app.state.repository.get_macd, market, code, period
+        )
+        if calculation is None and indicator_service is not None:
             await indicator_service.refresh_stock_macd(
                 stock,
                 at,

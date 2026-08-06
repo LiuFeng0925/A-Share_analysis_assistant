@@ -25,7 +25,7 @@ test("一行展示今日区间、更新时间，并按亿元和万亿元格式�
   expect(screen.getAllByRole("columnheader").map((header) => header.textContent?.replace(/[↑↓↕]/g, "")))
     .toEqual([
       "股票",
-      "MACD 信号",
+      "日 K MACD",
       "最新价",
       "涨跌幅",
       "涨跌额",

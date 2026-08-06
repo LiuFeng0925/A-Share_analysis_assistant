@@ -142,6 +142,8 @@ test("旧周期 MACD 不会传给新周期图表", async () => {
 
   fireEvent.click(screen.getByRole("button", { name: "5分" }));
   await waitFor(() => expect(screen.getByTestId("kline-chart")).toHaveTextContent("5m:1:无 MACD"));
+  expect(screen.getByText("正在计算 MACD…")).toBeInTheDocument();
+  expect(screen.queryByText("近 3 日金叉")).not.toBeInTheDocument();
 
   await act(async () => resolveFiveMinuteMacd?.({
     ...macdIndicatorFixture,

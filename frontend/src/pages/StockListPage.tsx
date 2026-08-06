@@ -179,15 +179,15 @@ export function StockListPage() {
         <div className="indicator-filter-bar" aria-label="技术指标筛选">
           <span className="indicator-filter-title">
             <small>指标筛选</small>
-            MACD 雷达
+            日 K MACD 雷达
           </span>
           <span className="indicator-filter-note">
-            近 5 个交易日内，按最后一次 MACD 交叉信号筛选。
+            近 5 个交易日内，按日 K 的最后一次 MACD 交叉信号筛选。
           </span>
           <label className="indicator-filter">
-            <span>MACD 信号</span>
+            <span>日 K MACD 信号</span>
             <select
-              aria-label="MACD 信号"
+              aria-label="日 K MACD 信号"
               value={macdSignal}
               onChange={(event) => {
                 setMacdSignal(event.target.value as MacdSignalFilter | "");

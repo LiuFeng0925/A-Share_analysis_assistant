@@ -493,8 +493,9 @@ export function StockDetailPage() {
     || (!visibleBars && !matchingBarsError);
   const barsRefreshing = barsRefreshingKey === selectedBarsKey;
   const latestBar = visibleBars?.items.at(-1);
-  const chartMacd = visibleBars && macd?.period === visibleBars.period ? macd : null;
-  const macdSummary = macd?.summary;
+  const matchingMacd = macd?.period === selectedPeriod.period ? macd : null;
+  const chartMacd = visibleBars && matchingMacd?.period === visibleBars.period ? matchingMacd : null;
+  const macdSummary = matchingMacd?.summary;
   const quoteFields = [
     { label: "最新价", value: formatMarketNumber(stock?.latest_price), className: change.className },
     { label: "涨跌额", value: formatSigned(stock?.change_amount), className: changeAmount.className, direction: changeAmount.label },
@@ -628,7 +629,7 @@ export function StockDetailPage() {
             </strong>
           </header>
 
-          {macdLoading && !macd ? (
+          {macdLoading && !matchingMacd ? (
             <div className="indicator-state" role="status">正在计算 MACD…</div>
           ) : macdError ? (
             <div className="indicator-state is-error" role="alert">{macdError}</div>
