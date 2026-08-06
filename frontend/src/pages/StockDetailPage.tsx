@@ -6,6 +6,7 @@ import type {
   BarPeriod,
   BarRange,
   BarSeries,
+  MacdIndicator,
   Market,
   MarketSummary,
   QualityStatus,
@@ -72,6 +73,32 @@ function qualityMeta(status: QualityStatus | null) {
     error: { label: "数据异常", className: "is-error" },
   };
   return status ? values[status] : { label: "质量未知", className: "is-warning" };
+}
+
+function formatIndicatorValue(value: number | null | undefined) {
+  return isFiniteNumber(value) ? formatMarketNumber(value) : "—";
+}
+
+function zeroAxisLabel(value: MacdIndicator["summary"]["zero_axis"] | undefined) {
+  if (value === "above") return "零轴线上";
+  if (value === "below") return "零轴线下";
+  return "零轴未知";
+}
+
+function macdSignalTone(value: MacdIndicator["summary"]["signal_type"] | undefined) {
+  if (value === "golden_cross") return "is-golden";
+  if (value === "death_cross") return "is-death";
+  return "is-muted";
+}
+
+function macdQualityLabel(value: MacdIndicator["summary"]["quality"] | undefined) {
+  const labels = {
+    ok: "计算正常",
+    partial: "盘中动态",
+    insufficient: "数据不足",
+    error: "计算异常",
+  } as const;
+  return value ? labels[value] : "等待计算";
 }
 
 function periodKey(market: Market, code: string, option: PeriodOption) {
@@ -242,15 +269,19 @@ export function StockDetailPage() {
   const [stock, setStock] = useState<StockQuote | null>(null);
   const [marketSummary, setMarketSummary] = useState<MarketSummary | null>(null);
   const [bars, setBars] = useState<BarSeries | null>(null);
+  const [macd, setMacd] = useState<MacdIndicator | null>(null);
   const [loadedBarsKey, setLoadedBarsKey] = useState<string | null>(null);
   const [stockLoading, setStockLoading] = useState(Boolean(market && code));
+  const [macdLoading, setMacdLoading] = useState(Boolean(market && code));
   const [barsLoadingKey, setBarsLoadingKey] = useState<string | null>(null);
   const [barsRefreshingKey, setBarsRefreshingKey] = useState<string | null>(null);
   const [stockError, setStockError] = useState<string | null>(null);
+  const [macdError, setMacdError] = useState<string | null>(null);
   const [barsError, setBarsError] = useState<{ key: string; message: string } | null>(null);
   const [barsRefreshError, setBarsRefreshError] = useState<{ key: string; message: string } | null>(null);
   const stockRequestSequence = useRef(0);
   const barsRequestSequence = useRef(0);
+  const macdRequestSequence = useRef(0);
   const summaryRequestSequence = useRef(0);
   const barsRef = useRef<BarSeries | null>(null);
   const loadedBarsKeyRef = useRef<string | null>(null);
@@ -266,6 +297,7 @@ export function StockDetailPage() {
       mounted.current = false;
       stockRequestSequence.current += 1;
       barsRequestSequence.current += 1;
+      macdRequestSequence.current += 1;
     };
   }, []);
 
@@ -302,6 +334,30 @@ export function StockDetailPage() {
       return null;
     }
   }, []);
+
+  const loadMacd = useCallback(async (signal?: AbortSignal) => {
+    if (!market || !code) return;
+    const sequence = ++macdRequestSequence.current;
+    setMacdLoading(true);
+    setMacdError(null);
+    setMacd(null);
+    try {
+      const nextMacd = await marketApi.getMacdIndicator(market, code, { signal });
+      if (mounted.current && sequence === macdRequestSequence.current) {
+        setMacd(nextMacd);
+      }
+    } catch (error) {
+      if (mounted.current && sequence === macdRequestSequence.current) {
+        if (isAbortError(error)) return;
+        setMacd(null);
+        setMacdError(error instanceof Error ? `MACD 加载失败：${error.message}` : "MACD 加载失败");
+      }
+    } finally {
+      if (mounted.current && sequence === macdRequestSequence.current) {
+        setMacdLoading(false);
+      }
+    }
+  }, [code, market]);
 
   const loadBars = useCallback(async (signal?: AbortSignal) => {
     if (!market || !code) return;
@@ -355,8 +411,9 @@ export function StockDetailPage() {
     const controller = new AbortController();
     void loadStock(controller.signal);
     void loadMarketSummary(controller.signal);
+    void loadMacd(controller.signal);
     return () => controller.abort();
-  }, [loadMarketSummary, loadStock]);
+  }, [loadMacd, loadMarketSummary, loadStock]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -373,7 +430,7 @@ export function StockDetailPage() {
       setMarketSummary(summary);
       setBarsRefreshError((current) => current?.key === key ? null : current);
       if (summary.market_status === "open" && activeBarsRequestKeyRef.current !== key) {
-        await loadBars(signal);
+        await Promise.all([loadBars(signal), loadMacd(signal)]);
       }
     } catch (error) {
       if (isAbortError(error)) return;
@@ -384,7 +441,7 @@ export function StockDetailPage() {
         });
       }
     }
-  }, [loadBars]);
+  }, [loadBars, loadMacd]);
 
   usePolling(pollToday, 60_000, {
     enabled: selectedPeriod.label === "今日",
@@ -421,6 +478,8 @@ export function StockDetailPage() {
     || (!visibleBars && !matchingBarsError);
   const barsRefreshing = barsRefreshingKey === selectedBarsKey;
   const latestBar = visibleBars?.items.at(-1);
+  const chartMacd = visibleBars?.period === "1d" ? macd : null;
+  const macdSummary = macd?.summary;
   const quoteFields = [
     { label: "最新价", value: formatMarketNumber(stock?.latest_price), className: change.className },
     { label: "涨跌额", value: formatSigned(stock?.change_amount), className: changeAmount.className, direction: changeAmount.label },
@@ -476,6 +535,7 @@ export function StockDetailPage() {
         ))}
       </div>
 
+      <div className="detail-workspace">
       <section className="kline-panel" aria-label="K 线行情">
         <div className="period-toolbar">
           <div className="period-tabs" aria-label="K 线周期">
@@ -533,14 +593,67 @@ export function StockDetailPage() {
               <span>可尝试切换其他周期或稍后重试。</span>
             </div>
           ) : visibleBars ? (
-            <KlineChart series={visibleBars} />
+            <KlineChart series={visibleBars} macd={chartMacd} />
           ) : null}
         </div>
         <footer className="chart-note">
           <span>拖动图表或底部滑块可缩放查看区间</span>
-          <span>红色为上涨，绿色为下跌；同时以开收数值判断方向</span>
+          <span>红色为上涨，绿色为下跌；日 K 下方可查看 MACD 副图</span>
         </footer>
       </section>
+      <aside className="indicator-panel" aria-label="技术指标结果">
+        <article className="indicator-card">
+          <header>
+            <div>
+              <span className="page-kicker">INDICATOR / 1D</span>
+              <h2>MACD 指标</h2>
+            </div>
+            <strong className={`indicator-quality ${macdSummary?.quality ?? "pending"}`}>
+              {macdQualityLabel(macdSummary?.quality)}
+            </strong>
+          </header>
+
+          {macdLoading && !macd ? (
+            <div className="indicator-state" role="status">正在计算 MACD…</div>
+          ) : macdError ? (
+            <div className="indicator-state is-error" role="alert">{macdError}</div>
+          ) : macdSummary ? (
+            <>
+              <strong className={`indicator-main-signal ${macdSignalTone(macdSummary.signal_type)}`}>
+                {macdSummary.recent_signal_label}
+              </strong>
+              <dl className="indicator-metrics">
+                <div>
+                  <dt>零轴</dt>
+                  <dd>{zeroAxisLabel(macdSummary.zero_axis)}</dd>
+                </div>
+                <div>
+                  <dt>DIFF</dt>
+                  <dd className="data-value">DIFF {formatIndicatorValue(macdSummary.diff)}</dd>
+                </div>
+                <div>
+                  <dt>DEA</dt>
+                  <dd className="data-value">DEA {formatIndicatorValue(macdSummary.dea)}</dd>
+                </div>
+                <div>
+                  <dt>红绿柱</dt>
+                  <dd className="data-value">{formatIndicatorValue(macdSummary.histogram)}</dd>
+                </div>
+              </dl>
+              <p>
+                信号日期 {macdSummary.signal_date ?? "暂无"} · 计算时间{" "}
+                {formatShanghaiDateTime(macdSummary.calculated_at)}
+              </p>
+              <small>
+                {macdSummary.is_intraday ? "当前含盘中动态价，收盘后会随日 K 固化。" : "基于最近日 K 计算。"}
+              </small>
+            </>
+          ) : (
+            <div className="indicator-state">暂无 MACD 指标</div>
+          )}
+        </article>
+      </aside>
+      </div>
     </section>
   );
 }

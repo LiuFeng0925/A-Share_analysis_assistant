@@ -1,6 +1,7 @@
 import type {
   BarQuery,
   BarSeries,
+  MacdIndicator,
   Market,
   MarketSummary,
   StockPage,
@@ -83,4 +84,9 @@ export const marketApi = {
       options,
     );
   },
+  getMacdIndicator: (market: Market, code: string, options?: RequestOptions) =>
+    request<MacdIndicator>(
+      `/api/stocks/${market}/${encodeURIComponent(code)}/indicators/macd?period=1d`,
+      options,
+    ),
 };

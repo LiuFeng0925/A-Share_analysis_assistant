@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as echarts from "echarts";
 import type { ECharts, EChartsOption } from "echarts";
-import type { BarSeries } from "../api/types";
+import type { BarSeries, MacdIndicator } from "../api/types";
 import {
   formatMarketNumber,
   formatShanghaiAxisLabel,
@@ -27,23 +27,29 @@ function seriesIdentity(series: BarSeries) {
   return `${series.market}/${series.code}/${series.period}/${series.range}/${series.adjustment}`;
 }
 
-function tooltipContent(series: BarSeries, dataIndex: number) {
+function tooltipContent(series: BarSeries, dataIndex: number, macd?: MacdIndicator | null) {
   const bar = series.items[dataIndex];
   if (!bar) return "暂无 K 线数据";
+  const macdPoint = macd?.items.find((item) => item.bar_time === bar.bar_time);
   return [
     `<strong>${formatShanghaiDateTime(bar.bar_time)}</strong>`,
     `开 ${formatMarketNumber(bar.open_price)}　高 ${formatMarketNumber(bar.high_price)}`,
     `低 ${formatMarketNumber(bar.low_price)}　收 ${formatMarketNumber(bar.close_price)}`,
     `成交量 ${formatMarketNumber(bar.volume, 0)} 股`,
     `成交额 ${formatMarketNumber(bar.amount)}`,
+    macdPoint
+      ? `DIFF ${formatMarketNumber(macdPoint.diff)}　DEA ${formatMarketNumber(macdPoint.dea)}`
+      : null,
     bar.is_complete ? "已完成" : "动态柱",
-  ].join("<br />");
+  ].filter(Boolean).join("<br />");
 }
 
 export function buildKlineOption(
   series: BarSeries,
   zoom: ZoomWindow = { start: DEFAULT_ZOOM_START, end: DEFAULT_ZOOM_END },
+  macd?: MacdIndicator | null,
 ): EChartsOption {
+  const hasMacd = Boolean(macd?.items.length);
   const categories = series.items.map((bar) => bar.bar_time);
   const candles = series.items.map((bar) => [
     bar.open_price,
@@ -55,8 +61,19 @@ export function buildKlineOption(
     value: bar.volume,
     itemStyle: { color: bar.close_price >= bar.open_price ? "#e5484d" : "#16a36f" },
   }));
+  const macdByTime = new Map(macd?.items.map((item) => [item.bar_time, item]) ?? []);
+  const diff = categories.map((time) => macdByTime.get(time)?.diff ?? null);
+  const dea = categories.map((time) => macdByTime.get(time)?.dea ?? null);
+  const histogram = categories.map((time) => {
+    const value = macdByTime.get(time)?.histogram ?? null;
+    return {
+      value,
+      itemStyle: { color: value !== null && value >= 0 ? "#e5484d" : "#16a36f" },
+    };
+  });
   const axisLabelFormatter = (value: string) =>
     formatShanghaiAxisLabel(value, series.period, series.range);
+  const linkedAxes = hasMacd ? [0, 1, 2] : [0, 1];
 
   return {
     animation: false,
@@ -66,13 +83,19 @@ export function buildKlineOption(
       formatter: (params: unknown) => {
         const items = Array.isArray(params) ? params : [params];
         const first = items[0] as { dataIndex?: number } | undefined;
-        return tooltipContent(series, first?.dataIndex ?? -1);
+        return tooltipContent(series, first?.dataIndex ?? -1, macd);
       },
     },
-    grid: [
-      { left: 56, right: 64, top: 24, height: "62%" },
-      { left: 56, right: 64, top: "74%", height: "14%" },
-    ],
+    grid: hasMacd
+      ? [
+          { left: 56, right: 64, top: 24, height: "48%" },
+          { left: 56, right: 64, top: "58%", height: "11%" },
+          { left: 56, right: 64, top: "75%", height: "13%" },
+        ]
+      : [
+          { left: 56, right: 64, top: 24, height: "62%" },
+          { left: 56, right: 64, top: "74%", height: "14%" },
+        ],
     xAxis: [
       {
         type: "category",
@@ -90,6 +113,18 @@ export function buildKlineOption(
         axisLabel: { show: false, formatter: axisLabelFormatter },
         axisLine: { lineStyle: { color: "#dce2ec" } },
       },
+      ...(hasMacd
+        ? [
+            {
+              type: "category" as const,
+              data: categories,
+              boundaryGap: false,
+              gridIndex: 2,
+              axisLabel: { color: "#687386", hideOverlap: true, formatter: axisLabelFormatter },
+              axisLine: { lineStyle: { color: "#dce2ec" } },
+            },
+          ]
+        : []),
     ],
     yAxis: [
       {
@@ -104,12 +139,22 @@ export function buildKlineOption(
         splitLine: { show: false },
         axisLabel: { color: "#687386" },
       },
+      ...(hasMacd
+        ? [
+            {
+              scale: true,
+              gridIndex: 2,
+              splitLine: { lineStyle: { color: "#edf0f5" } },
+              axisLabel: { color: "#687386" },
+            },
+          ]
+        : []),
     ],
     dataZoom: [
-      { type: "inside", xAxisIndex: [0, 1], start: zoom.start, end: zoom.end },
+      { type: "inside", xAxisIndex: linkedAxes, start: zoom.start, end: zoom.end },
       {
         type: "slider",
-        xAxisIndex: [0, 1],
+        xAxisIndex: linkedAxes,
         bottom: 8,
         start: zoom.start,
         end: zoom.end,
@@ -137,15 +182,47 @@ export function buildKlineOption(
         yAxisIndex: 1,
         data: volumes,
       },
+      ...(hasMacd
+        ? [
+            {
+              name: "DIFF",
+              type: "line" as const,
+              xAxisIndex: 2,
+              yAxisIndex: 2,
+              showSymbol: false,
+              smooth: true,
+              lineStyle: { width: 1.4, color: "#3157d5" },
+              data: diff,
+            },
+            {
+              name: "DEA",
+              type: "line" as const,
+              xAxisIndex: 2,
+              yAxisIndex: 2,
+              showSymbol: false,
+              smooth: true,
+              lineStyle: { width: 1.4, color: "#f59f00" },
+              data: dea,
+            },
+            {
+              name: "MACD 柱",
+              type: "bar" as const,
+              xAxisIndex: 2,
+              yAxisIndex: 2,
+              data: histogram,
+            },
+          ]
+        : []),
     ],
   };
 }
 
 interface KlineChartProps {
   series: BarSeries;
+  macd?: MacdIndicator | null;
 }
 
-export function KlineChart({ series }: KlineChartProps) {
+export function KlineChart({ series, macd = null }: KlineChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<ECharts | null>(null);
   const zoomRef = useRef<ZoomWindow>({ start: DEFAULT_ZOOM_START, end: DEFAULT_ZOOM_END });
@@ -193,8 +270,8 @@ export function KlineChart({ series }: KlineChartProps) {
       identityRef.current = identity;
       commitZoomWindow({ start: DEFAULT_ZOOM_START, end: DEFAULT_ZOOM_END });
     }
-    chartRef.current?.setOption(buildKlineOption(series, zoomRef.current), true);
-  }, [commitZoomWindow, series]);
+    chartRef.current?.setOption(buildKlineOption(series, zoomRef.current, macd), true);
+  }, [commitZoomWindow, macd, series]);
 
   const updateZoom = useCallback((nextStart: number, nextEnd: number) => {
     const boundedStart = Math.min(95, Math.max(0, nextStart));
@@ -235,7 +312,7 @@ export function KlineChart({ series }: KlineChartProps) {
       </div>
       <div
         ref={containerRef}
-        className="kline-chart"
+        className={macd ? "kline-chart has-macd" : "kline-chart"}
         role="img"
         aria-label={`${series.code} ${series.period} K 线图，共 ${series.items.length} 根`}
       />

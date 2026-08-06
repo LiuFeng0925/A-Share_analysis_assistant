@@ -1,4 +1,4 @@
-import type { BarSeries, MarketSummary, StockPage, StockQuote } from "../api/types";
+import type { BarSeries, MacdIndicator, MarketSummary, StockPage, StockQuote } from "../api/types";
 
 export const summaryFixture: MarketSummary = {
   total: 5314,
@@ -116,6 +116,49 @@ export const todayBarsFixture: BarSeries = {
       amount: 109_400_000,
       is_complete: false,
       quality_status: "partial",
+    },
+  ],
+};
+
+export const macdIndicatorFixture: MacdIndicator = {
+  market: "SH",
+  code: "600519",
+  period: "1d",
+  summary: {
+    calculated_at: "2026-08-04T10:26:20+08:00",
+    market_time: "2026-08-04T10:26:00+08:00",
+    diff: 0.18,
+    dea: 0.11,
+    histogram: 0.14,
+    signal_type: "golden_cross",
+    signal_date: "2026-08-02",
+    recent_signal_days: 2,
+    recent_signal_label: "近 3 日金叉",
+    zero_axis: "above",
+    status: "golden_after",
+    is_intraday: false,
+    quality: "ok",
+  },
+  items: [
+    {
+      bar_time: "2026-08-01T15:00:00+08:00",
+      diff: -0.02,
+      dea: 0.01,
+      histogram: -0.06,
+      signal_type: "none",
+      zero_axis: "below",
+      is_intraday: false,
+      quality: "ok",
+    },
+    {
+      bar_time: "2026-08-04T15:00:00+08:00",
+      diff: 0.18,
+      dea: 0.11,
+      histogram: 0.14,
+      signal_type: "golden_cross",
+      zero_axis: "above",
+      is_intraday: false,
+      quality: "ok",
     },
   ],
 };

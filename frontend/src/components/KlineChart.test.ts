@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import * as echarts from "echarts";
 import { createElement } from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { dailyBarsFixture, todayBarsFixture } from "../test/fixtures";
+import { dailyBarsFixture, macdIndicatorFixture, todayBarsFixture } from "../test/fixtures";
 import { buildKlineOption, KlineChart } from "./KlineChart";
 
 vi.mock("echarts", () => ({ init: vi.fn() }));
@@ -26,6 +26,25 @@ describe("KlineChart", () => {
     const yAxes = option.yAxis as Array<{ min?: number; scale?: boolean }>;
     expect(yAxes[0]).toEqual(expect.objectContaining({ scale: true }));
     expect(yAxes[1]).toEqual(expect.objectContaining({ min: 0 }));
+  });
+
+  test("传入 MACD 时在 K 线下方绘制 DIFF、DEA 与红绿柱", () => {
+    const option = buildKlineOption(dailyBarsFixture, undefined, macdIndicatorFixture);
+    const grids = option.grid as unknown[];
+    const zoom = option.dataZoom as Array<{ xAxisIndex?: number[] }>;
+    const series = option.series as Array<{ name: string; type: string; data: unknown[] }>;
+
+    expect(grids).toHaveLength(3);
+    expect(zoom[0].xAxisIndex).toEqual([0, 1, 2]);
+    expect(series.map((item) => item.name)).toEqual([
+      "K 线",
+      "成交量",
+      "DIFF",
+      "DEA",
+      "MACD 柱",
+    ]);
+    expect(series[2]).toEqual(expect.objectContaining({ type: "line" }));
+    expect(series[4]).toEqual(expect.objectContaining({ type: "bar" }));
   });
 
   test("上涨与下跌使用 A 股红涨绿跌并同时保留数值含义", () => {

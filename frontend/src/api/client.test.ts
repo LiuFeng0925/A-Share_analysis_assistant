@@ -98,3 +98,17 @@ test("股票列表请求会携带 MACD 筛选参数", async () => {
     expect.objectContaining({ signal: expect.any(AbortSignal) }),
   );
 });
+
+test("按日线读取个股 MACD 指标", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ market: "SH", code: "600519", period: "1d", items: [] })),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+
+  await marketApi.getMacdIndicator("SH", "600519");
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/stocks/SH/600519/indicators/macd?period=1d",
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
+});

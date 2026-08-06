@@ -2,17 +2,37 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { marketApi } from "../api/client";
-import { dailyBarsFixture, stockDetailFixture, summaryFixture, todayBarsFixture } from "../test/fixtures";
+import {
+  dailyBarsFixture,
+  macdIndicatorFixture,
+  stockDetailFixture,
+  summaryFixture,
+  todayBarsFixture,
+} from "../test/fixtures";
 import { StockDetailPage } from "./StockDetailPage";
 
 vi.mock("../api/client", () => ({
   isAbortError: (error: unknown) => error instanceof DOMException && error.name === "AbortError",
-  marketApi: { getStock: vi.fn(), getBars: vi.fn(), getSummary: vi.fn(), getStocks: vi.fn() },
+  marketApi: {
+    getStock: vi.fn(),
+    getBars: vi.fn(),
+    getSummary: vi.fn(),
+    getStocks: vi.fn(),
+    getMacdIndicator: vi.fn(),
+  },
 }));
 
 vi.mock("../components/KlineChart", () => ({
-  KlineChart: ({ series }: { series: typeof dailyBarsFixture }) => (
-    <div data-testid="kline-chart">{series.period}:{series.items.length}</div>
+  KlineChart: ({
+    series,
+    macd,
+  }: {
+    series: typeof dailyBarsFixture;
+    macd?: typeof macdIndicatorFixture | null;
+  }) => (
+    <div data-testid="kline-chart">
+      {series.period}:{series.items.length}:{macd?.summary.recent_signal_label ?? "无 MACD"}
+    </div>
   ),
 }));
 
@@ -26,6 +46,7 @@ beforeEach(() => {
     page_size: 10,
     items: [],
   });
+  vi.mocked(marketApi.getMacdIndicator).mockReset().mockResolvedValue(macdIndicatorFixture);
 });
 
 afterEach(() => {
@@ -62,6 +83,21 @@ test("默认请求最近 60 个交易日的前复权日 K", async () => {
     expect.objectContaining({ signal: expect.any(AbortSignal) }),
   );
   expect(screen.getByRole("button", { name: "日K" })).toHaveAttribute("aria-pressed", "true");
+});
+
+test("详情页展示 MACD 结果并把日线指标传给 K 线副图", async () => {
+  renderDetail();
+
+  expect(await screen.findByText("MACD 指标")).toBeInTheDocument();
+  expect(screen.getByText("近 3 日金叉")).toBeInTheDocument();
+  expect(screen.getByText("零轴线上")).toBeInTheDocument();
+  expect(screen.getByText("DIFF 0.18")).toBeInTheDocument();
+  expect(screen.getByTestId("kline-chart")).toHaveTextContent("近 3 日金叉");
+  expect(marketApi.getMacdIndicator).toHaveBeenCalledWith(
+    "SH",
+    "600519",
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
 });
 
 test("今日按钮请求当天原生一分钟 K 并解释颗粒度", async () => {

@@ -8,6 +8,7 @@ export type MacdSignalFilter = Exclude<MacdSignal, "none">;
 export type MacdZeroAxis = "above" | "below" | "unknown";
 export type MacdZeroAxisFilter = Exclude<MacdZeroAxis, "unknown">;
 export type MacdRecentWindow = "today" | "3d" | "5d";
+export type MacdQuality = "ok" | "partial" | "insufficient" | "error";
 
 export interface MarketSummary {
   total: number;
@@ -42,7 +43,7 @@ export interface StockQuote {
   macd_recent_signal_days: number | null;
   macd_signal_label: string | null;
   macd_zero_axis: MacdZeroAxis | null;
-  macd_quality: "ok" | "partial" | "insufficient" | "error" | null;
+  macd_quality: MacdQuality | null;
 }
 
 export interface StockPage {
@@ -105,4 +106,39 @@ export interface BarQuery {
   period: BarPeriod;
   range: BarRange;
   adjustment: Adjustment;
+}
+
+export interface MacdPoint {
+  bar_time: string;
+  diff: number | null;
+  dea: number | null;
+  histogram: number | null;
+  signal_type: MacdSignal;
+  zero_axis: MacdZeroAxis;
+  is_intraday: boolean;
+  quality: MacdQuality;
+}
+
+export interface MacdSummary {
+  calculated_at: string;
+  market_time: string | null;
+  diff: number | null;
+  dea: number | null;
+  histogram: number | null;
+  signal_type: MacdSignal;
+  signal_date: string | null;
+  recent_signal_days: number | null;
+  recent_signal_label: string;
+  zero_axis: MacdZeroAxis;
+  status: string;
+  is_intraday: boolean;
+  quality: MacdQuality;
+}
+
+export interface MacdIndicator {
+  market: Market;
+  code: string;
+  period: "1d";
+  summary: MacdSummary;
+  items: MacdPoint[];
 }
