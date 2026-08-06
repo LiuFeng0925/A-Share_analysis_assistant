@@ -164,6 +164,30 @@ async def test_scheduler_collects_only_when_market_is_open():
     assert open_collector.calls == 1
 
 
+async def test_scheduler_refreshes_indicators_after_successful_collection():
+    clock = RecordingClock(True)
+    collector = RecordingCollector()
+    refresh_times: list[datetime] = []
+
+    async def refresh_indicators(at: datetime) -> None:
+        refresh_times.append(at)
+
+    scheduler = create_scheduler(
+        clock,
+        collector,
+        _do_nothing,
+        indicator_callback=refresh_indicators,
+    )
+    job = next(
+        job for job in scheduler.get_jobs() if job.func.__name__ == "collect_if_open"
+    )
+
+    await job.func()
+
+    assert collector.calls == 1
+    assert len(refresh_times) == 1
+
+
 async def test_lifespan_uses_shanghai_date_for_trading_day_window(
     monkeypatch, repository, fake_source
 ):
@@ -451,6 +475,7 @@ async def test_default_database_closes_when_scheduler_creation_fails(
         archive_callback,
         maintenance_callback,
         daily_history_callback,
+        indicator_callback,
     ):
         raise RuntimeError("模拟调度器创建失败")
 
@@ -480,7 +505,7 @@ async def test_default_database_closes_when_scheduler_start_fails(
         main_module,
         "create_scheduler",
         lambda clock, collector, archive_callback, maintenance_callback,
-        daily_history_callback: StartFailureScheduler(),
+        daily_history_callback, indicator_callback: StartFailureScheduler(),
     )
     settings = Settings(data_dir=tmp_path / "启动失败")
     app = main_module.create_app(settings=settings, source=fake_source)

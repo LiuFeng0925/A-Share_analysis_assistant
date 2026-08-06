@@ -17,6 +17,7 @@ from a_share_radar.data_sources.fixture_source import FixtureSource
 from a_share_radar.data_sources.protocol import MarketDataSource
 from a_share_radar.domain.models import Bar, BarFetchBatch, Stock
 from a_share_radar.services.bar_service import BarService, HistoryBootstrapper
+from a_share_radar.services.indicator_service import IndicatorService
 from a_share_radar.services.market_clock import MarketClock
 from a_share_radar.services.scheduler import create_scheduler, shutdown_scheduler
 from a_share_radar.services.snapshot_collector import SnapshotCollector
@@ -133,6 +134,9 @@ def create_app(
         if injected_repository is not None
         else None
     )
+    injected_indicator_service = (
+        IndicatorService(injected_repository) if injected_repository is not None else None
+    )
     stock_master_minimum_count = (
         1
         if source is not None or resolved_settings.fixture_source
@@ -145,14 +149,18 @@ def create_app(
         scheduler = None
         initial_snapshot_task = None
         history_task = None
+        indicator_task = None
         bar_service = injected_bar_service
+        indicator_service = injected_indicator_service
         try:
             repository = injected_repository or MarketRepository(resolved_database)
             bar_service = bar_service or BarService(
                 resolved_source, repository, resolved_settings.history_days
             )
+            indicator_service = indicator_service or IndicatorService(repository)
             app.state.repository = repository
             app.state.bar_service = bar_service
+            app.state.indicator_service = indicator_service
 
             if resolved_settings.fixture_source:
                 trading_days, persisted_fixture_now = await _persist_fixture_data(
@@ -209,6 +217,15 @@ def create_app(
             app.state.clock = clock
             app.state.collector = collector
 
+            async def refresh_macd_later(at: datetime) -> None:
+                try:
+                    await indicator_service.refresh_market_macd(
+                        at,
+                        market_open=clock.is_open(at),
+                    )
+                except Exception:
+                    logger.exception("MACD 指标刷新失败，继续保留上一批有效指标")
+
             now = resolved_now_provider()
             data_status = await _run_blocking_safely(repository.data_status)
             expected_quote_count = max(
@@ -218,6 +235,7 @@ def create_app(
             async def collect_initial_snapshot_later(snapshot_at: datetime) -> None:
                 try:
                     await collector.collect_once(snapshot_at)
+                    await refresh_macd_later(snapshot_at)
                 except Exception:
                     logger.exception("首次全市场行情采集失败，继续使用本地已有数据")
 
@@ -229,8 +247,15 @@ def create_app(
                     collect_initial_snapshot_later(now)
                 )
                 app.state.initial_snapshot_task = initial_snapshot_task
+            else:
+                indicator_task = asyncio.create_task(refresh_macd_later(now))
+                app.state.indicator_task = indicator_task
 
-            history_task = asyncio.create_task(bootstrapper.run())
+            async def bootstrap_history_later() -> None:
+                await bootstrapper.run()
+                await refresh_macd_later(resolved_now_provider())
+
+            history_task = asyncio.create_task(bootstrap_history_later())
             app.state.history_task = history_task
 
             async def archive_at(at: datetime) -> None:
@@ -281,6 +306,7 @@ def create_app(
 
             async def daily_history_later() -> None:
                 await bootstrapper.run()
+                await refresh_macd_later(resolved_now_provider())
 
             scheduler = create_scheduler(
                 clock,
@@ -288,6 +314,7 @@ def create_app(
                 archive_later,
                 maintenance_later,
                 daily_history_later,
+                refresh_macd_later,
             )
             app.state.scheduler = scheduler
             scheduler.start()
@@ -304,27 +331,37 @@ def create_app(
                         logger.exception("首次全市场行情采集任务异常退出")
             finally:
                 try:
-                    if history_task is not None:
-                        history_task.cancel()
+                    if indicator_task is not None:
+                        indicator_task.cancel()
                         try:
-                            await history_task
+                            await indicator_task
                         except asyncio.CancelledError:
                             pass
                         except Exception:
-                            logger.exception("日 K 回补任务异常退出")
+                            logger.exception("MACD 预热任务异常退出")
                 finally:
                     try:
-                        if scheduler is not None and scheduler.running:
-                            await shutdown_scheduler(scheduler)
-                    finally:
-                        if database is None:
+                        if history_task is not None:
+                            history_task.cancel()
                             try:
-                                if bar_service is not None:
-                                    await bar_service.close()
-                            finally:
-                                resolved_database.close()
-                        elif bar_service is not None:
-                            await bar_service.close()
+                                await history_task
+                            except asyncio.CancelledError:
+                                pass
+                            except Exception:
+                                logger.exception("日 K 回补任务异常退出")
+                    finally:
+                        try:
+                            if scheduler is not None and scheduler.running:
+                                await shutdown_scheduler(scheduler)
+                        finally:
+                            if database is None:
+                                try:
+                                    if bar_service is not None:
+                                        await bar_service.close()
+                                finally:
+                                    resolved_database.close()
+                            elif bar_service is not None:
+                                await bar_service.close()
 
     app = FastAPI(title="A 股雷达", version="0.1.0", lifespan=lifespan)
     app.add_middleware(
@@ -345,6 +382,8 @@ def create_app(
     app.state.scheduler = None
     app.state.initial_snapshot_task = None
     app.state.history_task = None
+    app.state.indicator_task = None
+    app.state.indicator_service = injected_indicator_service
     app.state.now_provider = resolved_now_provider
 
     @app.exception_handler(RequestValidationError)

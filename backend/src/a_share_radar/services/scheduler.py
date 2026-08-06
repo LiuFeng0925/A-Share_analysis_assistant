@@ -33,6 +33,7 @@ def create_scheduler(
     archive_callback: Callable[[], Awaitable[None]],
     maintenance_callback: Callable[[], Awaitable[None]] | None = None,
     daily_history_callback: Callable[[], Awaitable[None]] | None = None,
+    indicator_callback: Callable[[datetime], Awaitable[None]] | None = None,
 ) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=SHANGHAI)
     jobs_idle = asyncio.Event()
@@ -62,6 +63,11 @@ def create_scheduler(
                 return
             try:
                 await collector.collect_once(now)
+                if indicator_callback is not None:
+                    try:
+                        await indicator_callback(now)
+                    except Exception:
+                        logger.exception("MACD 指标刷新失败，继续保留上一批有效指标")
             except Exception:
                 logger.exception("全市场行情采集失败，继续保留上一批有效数据")
 

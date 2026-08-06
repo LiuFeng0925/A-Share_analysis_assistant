@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict
@@ -37,6 +38,12 @@ class StockQuoteResponse(AttributeModel):
     total_market_cap: float | None
     captured_at: AwareDatetime | None
     quality_status: QualityStatus | None
+    macd_signal_type: str | None = None
+    macd_signal_date: date | None = None
+    macd_recent_signal_days: int | None = None
+    macd_signal_label: str | None = None
+    macd_zero_axis: str | None = None
+    macd_quality: str | None = None
 
 
 class StockPageResponse(AttributeModel):
@@ -73,6 +80,41 @@ class BarSeriesResponse(AttributeModel):
     fetch_valid_row_count: int | None
     fetch_invalid_row_count: int | None
     items: list[BarResponse]
+
+
+class MacdPointResponse(AttributeModel):
+    bar_time: AwareDatetime
+    diff: float | None
+    dea: float | None
+    histogram: float | None
+    signal_type: str
+    zero_axis: str
+    is_intraday: bool
+    quality: str
+
+
+class MacdSummaryResponse(AttributeModel):
+    calculated_at: AwareDatetime
+    market_time: AwareDatetime | None
+    diff: float | None
+    dea: float | None
+    histogram: float | None
+    signal_type: str
+    signal_date: date | None
+    recent_signal_days: int | None
+    recent_signal_label: str
+    zero_axis: str
+    status: str
+    is_intraday: bool
+    quality: str
+
+
+class MacdIndicatorResponse(AttributeModel):
+    market: Market
+    code: str
+    period: str
+    summary: MacdSummaryResponse
+    items: list[MacdPointResponse]
 
 
 class DataStatusResponse(AttributeModel):

@@ -9,6 +9,7 @@ from a_share_radar.api.schemas import (
     BarResponse,
     BarSeriesResponse,
     DataStatusResponse,
+    MacdIndicatorResponse,
     MarketSummaryResponse,
     StockPageResponse,
     StockQuoteResponse,
@@ -32,6 +33,10 @@ SortOrder = Literal["asc", "desc"]
 Period = Literal["1m", "5m", "15m", "30m", "60m", "1d", "1w", "1mo"]
 Range = Literal["today", "5d", "60d", "6mo", "ytd", "1y", "5y", "all"]
 Adjustment = Literal["none", "qfq", "hfq"]
+MacdSignalQuery = Literal["golden_cross", "death_cross"]
+MacdZeroAxisQuery = Literal["above", "below"]
+MacdRecentWindowQuery = Literal["today", "3d", "5d"]
+IndicatorPeriod = Literal["1d"]
 
 
 def request_now(request: Request) -> datetime:
@@ -61,9 +66,20 @@ def stock_list(
     sort_order: SortOrder = "asc",
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=10, le=200)] = 50,
+    macd_signal: MacdSignalQuery | None = None,
+    macd_zero_axis: MacdZeroAxisQuery | None = None,
+    macd_recent_window: MacdRecentWindowQuery | None = None,
 ):
     return request.app.state.repository.list_stocks(
-        query, market, sort_by, sort_order, page, page_size
+        query,
+        market,
+        sort_by,
+        sort_order,
+        page,
+        page_size,
+        macd_signal=macd_signal,
+        macd_zero_axis=macd_zero_axis,
+        macd_recent_window=macd_recent_window,
     )
 
 
@@ -73,6 +89,49 @@ def stock_detail(request: Request, market: Market, code: str):
     if stock is None:
         raise HTTPException(status_code=404, detail="未找到该股票")
     return stock
+
+
+@router.get(
+    "/stocks/{market}/{code}/indicators/macd",
+    response_model=MacdIndicatorResponse,
+)
+async def stock_macd_indicator(
+    request: Request,
+    market: Market,
+    code: str,
+    period: IndicatorPeriod = "1d",
+):
+    stock = await asyncio.to_thread(
+        request.app.state.repository.get_stock, market, code
+    )
+    if stock is None:
+        raise HTTPException(status_code=404, detail="未找到该股票")
+    calculation = await asyncio.to_thread(
+        request.app.state.repository.get_macd, market, code, period
+    )
+    if calculation is None:
+        indicator_service = getattr(request.app.state, "indicator_service", None)
+        if indicator_service is not None:
+            at = request_now(request)
+            clock = getattr(request.app.state, "clock", None)
+            market_open = bool(clock is not None and clock.is_open(at))
+            await indicator_service.refresh_stock_macd(
+                stock,
+                at,
+                market_open=market_open,
+            )
+            calculation = await asyncio.to_thread(
+                request.app.state.repository.get_macd, market, code, period
+            )
+    if calculation is None:
+        raise HTTPException(status_code=404, detail="MACD 指标暂不可用")
+    return MacdIndicatorResponse(
+        market=market,
+        code=code,
+        period=period,
+        summary=calculation.summary,
+        items=list(calculation.points),
+    )
 
 
 @router.get("/stocks/{market}/{code}/bars", response_model=BarSeriesResponse)
