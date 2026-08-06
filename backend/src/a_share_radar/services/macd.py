@@ -24,21 +24,32 @@ def calculate_macd_series(
     trading_days: Sequence[date],
     now: datetime,
     market_open: bool,
+    period: str = "1d",
 ) -> MacdCalculation:
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("MACD 计算时间必须包含时区")
-    daily_bars = _daily_bars(bars)
-    market, code = _identity(daily_bars, latest_quote)
-    calculation_bars, has_intraday = _with_intraday_quote(
-        daily_bars, latest_quote, now.astimezone(SHANGHAI), market_open
-    )
+    selected_bars = _period_bars(bars, period)
+    market, code = _identity(selected_bars, latest_quote)
+    if period == "1d":
+        calculation_bars, has_intraday = _with_intraday_quote(
+            selected_bars, latest_quote, now.astimezone(SHANGHAI), market_open
+        )
+    else:
+        calculation_bars = selected_bars
+        has_intraday = bool(
+            calculation_bars
+            and (
+                not calculation_bars[-1].is_complete
+                or calculation_bars[-1].quality_status is QualityStatus.PARTIAL
+            )
+        )
     quality = MacdQuality.PARTIAL if has_intraday else MacdQuality.OK
     if len(calculation_bars) < MINIMUM_MACD_BARS:
         return MacdCalculation(
             summary=MacdSummary(
                 market=market,
                 code=code,
-                period="1d",
+                period=period,
                 calculated_at=now,
                 market_time=calculation_bars[-1].bar_time if calculation_bars else None,
                 diff=None,
@@ -68,7 +79,7 @@ def calculate_macd_series(
         MacdPoint(
             market=bar.market,
             code=bar.code,
-            period="1d",
+            period=period,
             bar_time=bar.bar_time,
             diff=diff,
             dea=dea,
@@ -92,7 +103,7 @@ def calculate_macd_series(
         summary=MacdSummary(
             market=latest.market,
             code=latest.code,
-            period="1d",
+            period=period,
             calculated_at=now,
             market_time=latest.bar_time,
             diff=latest.diff,
@@ -113,9 +124,9 @@ def calculate_macd_series(
     )
 
 
-def _daily_bars(bars: Sequence[Bar]) -> list[Bar]:
+def _period_bars(bars: Sequence[Bar], period: str) -> list[Bar]:
     return sorted(
-        (bar for bar in bars if bar.period == "1d"),
+        (bar for bar in bars if bar.period == period),
         key=lambda bar: bar.bar_time,
     )
 

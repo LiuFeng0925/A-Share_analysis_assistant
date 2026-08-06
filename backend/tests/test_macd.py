@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -22,6 +23,27 @@ def daily_bar(index: int, close_price: float) -> Bar:
         close_price=close_price,
         volume=1_000_000,
         amount=close_price * 1_000_000,
+        source="fixture",
+        is_complete=True,
+        acquired_at=bar_time,
+        quality_status=QualityStatus.OK,
+    )
+
+
+def bar_with_period(index: int, close_price: float, period: str) -> Bar:
+    bar_time = datetime(2026, 7, 11, 9, 30, tzinfo=TZ) + timedelta(minutes=5 * index)
+    return Bar(
+        code="600519",
+        market=Market.SH,
+        period=period,
+        adjustment="none" if period == "1m" else "qfq",
+        bar_time=bar_time,
+        open_price=close_price,
+        high_price=close_price,
+        low_price=close_price,
+        close_price=close_price,
+        volume=100_000,
+        amount=close_price * 100_000,
         source="fixture",
         is_complete=True,
         acquired_at=bar_time,
@@ -114,3 +136,33 @@ def test_macd_marks_insufficient_history_without_signal():
     assert result.summary.signal_type == "none"
     assert result.summary.recent_signal_label == "数据不足"
     assert result.points == ()
+
+
+def test_macd_calculates_requested_minute_period_without_daily_quote_synthesis():
+    bars = [bar_with_period(index, 10.0, "5m") for index in range(40)]
+    bars[-1] = replace(
+        bars[-1],
+        close_price=12.0,
+        is_complete=False,
+        quality_status=QualityStatus.PARTIAL,
+    )
+    now = datetime(2026, 7, 11, 11, 30, tzinfo=TZ)
+
+    result = calculate_macd_series(
+        bars,
+        latest_quote=quote(99.0, now),
+        trading_days=[now.date()],
+        now=now,
+        market_open=True,
+        period="5m",
+    )
+
+    assert result.summary.period == "5m"
+    assert result.summary.market_time == bars[-1].bar_time
+    assert result.summary.quality == "partial"
+    assert result.summary.is_intraday is True
+    assert result.points[-1].period == "5m"
+    assert result.points[-1].is_intraday is True
+    assert result.points[-1].diff is not None
+    assert result.points[-1].dea is not None
+    assert result.points[-1].histogram is not None
