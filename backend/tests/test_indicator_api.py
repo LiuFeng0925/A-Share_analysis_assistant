@@ -23,14 +23,14 @@ async def get(app, path, *, params=None):
         return await client.get(path, params=params)
 
 
-def seed_macd(app, code: str = "600519") -> None:
+def seed_macd(app, code: str = "600519", period: str = "1d") -> None:
     market_time = datetime(2026, 8, 4, 15, 0, tzinfo=TZ)
     app.state.repository.upsert_macd(
         MacdCalculation(
             summary=MacdSummary(
                 market=Market.SH,
                 code=code,
-                period="1d",
+                period=period,
                 calculated_at=datetime(2026, 8, 4, 15, 5, tzinfo=TZ),
                 market_time=market_time,
                 diff=0.18,
@@ -49,7 +49,7 @@ def seed_macd(app, code: str = "600519") -> None:
                 MacdPoint(
                     market=Market.SH,
                     code=code,
-                    period="1d",
+                    period=period,
                     bar_time=market_time,
                     diff=0.18,
                     dea=0.11,
@@ -112,11 +112,18 @@ async def test_stock_macd_indicator_endpoint_refreshes_when_cache_is_missing(
 ):
     class FakeIndicatorService:
         def __init__(self) -> None:
-            self.calls: list[tuple[str, bool]] = []
+            self.calls: list[tuple[str, bool, str]] = []
 
-        async def refresh_stock_macd(self, stock, now: datetime, *, market_open: bool) -> None:
-            self.calls.append((stock.code, market_open))
-            seed_macd(app_with_fixture_data)
+        async def refresh_stock_macd(
+            self,
+            stock,
+            now: datetime,
+            *,
+            market_open: bool,
+            period: str = "1d",
+        ) -> None:
+            self.calls.append((stock.code, market_open, period))
+            seed_macd(app_with_fixture_data, period=period)
 
     indicator_service = FakeIndicatorService()
     app_with_fixture_data.state.indicator_service = indicator_service
@@ -133,7 +140,44 @@ async def test_stock_macd_indicator_endpoint_refreshes_when_cache_is_missing(
 
     assert response.status_code == 200
     assert response.json()["summary"]["recent_signal_label"] == "近 3 日金叉"
-    assert indicator_service.calls == [("600519", False)]
+    assert indicator_service.calls == [("600519", False, "1d")]
+
+
+async def test_stock_macd_indicator_endpoint_accepts_minute_period_and_refreshes_that_period(
+    app_with_fixture_data,
+):
+    class FakeIndicatorService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, bool, str]] = []
+
+        async def refresh_stock_macd(
+            self,
+            stock,
+            now: datetime,
+            *,
+            market_open: bool,
+            period: str = "1d",
+        ) -> None:
+            self.calls.append((stock.code, market_open, period))
+            seed_macd(app_with_fixture_data, period=period)
+
+    indicator_service = FakeIndicatorService()
+    app_with_fixture_data.state.indicator_service = indicator_service
+    app_with_fixture_data.state.clock = type(
+        "OpenClock",
+        (),
+        {"is_open": lambda self, at: True},
+    )()
+
+    response = await get(
+        app_with_fixture_data,
+        "/api/stocks/SH/600519/indicators/macd",
+        params={"period": "5m"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["period"] == "5m"
+    assert indicator_service.calls == [("600519", True, "5m")]
 
 
 async def test_stock_macd_indicator_returns_404_for_unknown_stock(app_with_fixture_data):

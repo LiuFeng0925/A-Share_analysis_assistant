@@ -36,7 +36,7 @@ Adjustment = Literal["none", "qfq", "hfq"]
 MacdSignalQuery = Literal["golden_cross", "death_cross"]
 MacdZeroAxisQuery = Literal["above", "below"]
 MacdRecentWindowQuery = Literal["today", "3d", "5d"]
-IndicatorPeriod = Literal["1d"]
+IndicatorPeriod = Literal["1m", "5m", "15m", "30m", "60m", "1d", "1w", "1mo"]
 
 
 def request_now(request: Request) -> datetime:
@@ -119,6 +119,7 @@ async def stock_macd_indicator(
                 stock,
                 at,
                 market_open=market_open,
+                period=period,
             )
             calculation = await asyncio.to_thread(
                 request.app.state.repository.get_macd, market, code, period

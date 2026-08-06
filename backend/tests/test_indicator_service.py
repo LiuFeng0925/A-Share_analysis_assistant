@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -21,6 +22,27 @@ def daily_bar(index: int, close_price: float) -> Bar:
         close_price=close_price,
         volume=1_000_000,
         amount=close_price * 1_000_000,
+        source="fixture",
+        is_complete=True,
+        acquired_at=bar_time,
+        quality_status=QualityStatus.OK,
+    )
+
+
+def five_minute_bar(index: int, close_price: float) -> Bar:
+    bar_time = datetime(2026, 7, 11, 9, 30, tzinfo=TZ) + timedelta(minutes=5 * index)
+    return Bar(
+        code="600519",
+        market=Market.SH,
+        period="5m",
+        adjustment="qfq",
+        bar_time=bar_time,
+        open_price=close_price,
+        high_price=close_price,
+        low_price=close_price,
+        close_price=close_price,
+        volume=100_000,
+        amount=close_price * 100_000,
         source="fixture",
         is_complete=True,
         acquired_at=bar_time,
@@ -71,3 +93,32 @@ async def test_indicator_service_refreshes_stock_macd_from_daily_bars_and_latest
     assert calculation.summary.signal_type == "golden_cross"
     assert calculation.summary.recent_signal_label == "盘中金叉"
     assert calculation.summary.is_intraday is True
+
+
+async def test_indicator_service_refreshes_stock_macd_for_requested_period(repository):
+    now = datetime(2026, 7, 11, 11, 30, tzinfo=TZ)
+    repository.upsert_stocks([Stock("600519", Market.SH, "贵州茅台")])
+    repository.replace_trading_days({now.date()})
+    bars = [five_minute_bar(index, 10.0) for index in range(40)]
+    bars[-1] = replace(
+        bars[-1],
+        close_price=12.0,
+        is_complete=False,
+        quality_status=QualityStatus.PARTIAL,
+    )
+    repository.upsert_bars(bars)
+    stock = repository.get_stock(Market.SH, "600519")
+    assert stock is not None
+
+    await IndicatorService(repository).refresh_stock_macd(
+        stock,
+        now,
+        market_open=True,
+        period="5m",
+    )
+
+    calculation = repository.get_macd(Market.SH, "600519", "5m")
+    assert calculation is not None
+    assert calculation.summary.period == "5m"
+    assert calculation.summary.market_time == bars[-1].bar_time
+    assert calculation.summary.quality == "partial"
