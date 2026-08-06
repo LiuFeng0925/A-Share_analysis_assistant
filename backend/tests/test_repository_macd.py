@@ -1,4 +1,4 @@
-from datetime import date, datetime, time
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from a_share_radar.domain.indicators import (
