@@ -9,6 +9,14 @@ from zoneinfo import ZoneInfo
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from a_share_radar.domain.indicators import (
+    MacdCalculation,
+    MacdPoint,
+    MacdQuality,
+    MacdSignal,
+    MacdSummary,
+    ZeroAxisPosition,
+)
 from a_share_radar.domain.models import Bar, Market, QualityStatus, QuoteSnapshot, Stock
 from a_share_radar.storage.database import Database
 
@@ -34,6 +42,12 @@ class StockQuoteRow:
     total_market_cap: float | None
     source: str | None
     quality_status: QualityStatus | None
+    macd_signal_type: MacdSignal | None = None
+    macd_signal_date: date | None = None
+    macd_recent_signal_days: int | None = None
+    macd_signal_label: str | None = None
+    macd_zero_axis: ZeroAxisPosition | None = None
+    macd_quality: MacdQuality | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,8 +117,15 @@ _QUOTE_COLUMNS = """
     CAST(q.captured_at AS VARCHAR), q.latest_price, q.change_percent, q.change_amount,
     q.open_price, q.high_price, q.low_price, q.previous_close,
     q.volume, q.amount, q.turnover_rate, q.total_market_cap,
-    q.source, q.quality_status
+    q.source, q.quality_status,
+    m.signal_type, CAST(m.signal_date AS VARCHAR), m.recent_signal_days,
+    m.recent_signal_label, m.zero_axis, m.quality
 """
+_MACD_JOIN = """
+    LEFT JOIN indicator_macd_latest m
+      ON m.market = s.market AND m.code = s.code AND m.period = '1d'
+"""
+_MACD_RECENT_WINDOWS = {"today": 0, "3d": 2, "5d": 4}
 
 _SNAPSHOT_BATCH_RELATION = "snapshot_batch_input"
 _ARCHIVE_EXISTING_RELATION = "archive_existing_input"
@@ -728,6 +749,9 @@ class MarketRepository:
         sort_order: str,
         page: int,
         page_size: int,
+        macd_signal: str | None = None,
+        macd_zero_axis: str | None = None,
+        macd_recent_window: str | None = None,
     ) -> StockPage:
         if sort_by not in SORT_COLUMNS:
             raise ValueError(f"不支持的排序字段：{sort_by}")
@@ -736,6 +760,18 @@ class MarketRepository:
             raise ValueError(f"不支持的排序方向：{sort_order}")
         if page < 1 or page_size < 1:
             raise ValueError("页码和每页数量必须大于零")
+        if macd_signal is not None and macd_signal not in {
+            MacdSignal.GOLDEN_CROSS.value,
+            MacdSignal.DEATH_CROSS.value,
+        }:
+            raise ValueError(f"不支持的 MACD 信号：{macd_signal}")
+        if macd_zero_axis is not None and macd_zero_axis not in {
+            ZeroAxisPosition.ABOVE.value,
+            ZeroAxisPosition.BELOW.value,
+        }:
+            raise ValueError(f"不支持的 MACD 零轴位置：{macd_zero_axis}")
+        if macd_recent_window is not None and macd_recent_window not in _MACD_RECENT_WINDOWS:
+            raise ValueError(f"不支持的 MACD 最近时间：{macd_recent_window}")
 
         conditions: list[str] = []
         parameters: list[Any] = []
@@ -745,13 +781,31 @@ class MarketRepository:
         if market is not None:
             conditions.append("s.market = ?")
             parameters.append(market.value)
+        if macd_signal is not None:
+            conditions.append("m.signal_type = ?")
+            parameters.append(macd_signal)
+        if macd_zero_axis is not None:
+            conditions.append("m.zero_axis = ?")
+            parameters.append(macd_zero_axis)
+        if macd_recent_window is not None:
+            if macd_signal is None:
+                conditions.append("m.signal_type <> 'none'")
+            conditions.append("m.recent_signal_days IS NOT NULL")
+            conditions.append("m.recent_signal_days <= ?")
+            parameters.append(_MACD_RECENT_WINDOWS[macd_recent_window])
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         offset = (page - 1) * page_size
 
         with self.database.lock:
             connection = self.database.connection
             total = connection.execute(
-                f"SELECT COUNT(*) FROM stock_master s {where_clause}", parameters
+                f"""
+                SELECT COUNT(*)
+                FROM stock_master s
+                {_MACD_JOIN}
+                {where_clause}
+                """,
+                parameters,
             ).fetchone()[0]
             rows = connection.execute(
                 f"""
@@ -759,6 +813,7 @@ class MarketRepository:
                 FROM stock_master s
                 LEFT JOIN latest_quote q
                   ON q.market = s.market AND q.code = s.code
+                {_MACD_JOIN}
                 {where_clause}
                 ORDER BY {SORT_COLUMNS[sort_by]} {normalized_order.upper()} NULLS LAST,
                          s.market ASC, s.code ASC
@@ -781,6 +836,7 @@ class MarketRepository:
                 FROM stock_master s
                 LEFT JOIN latest_quote q
                   ON q.market = s.market AND q.code = s.code
+                {_MACD_JOIN}
                 WHERE s.market = ? AND s.code = ?
                 """,
                 (market.value, code),
@@ -887,6 +943,142 @@ class MarketRepository:
             ),
             snapshot_quality_status=None if latest_run is None else latest_run[2],
         )
+
+    def upsert_macd(self, calculation: MacdCalculation) -> None:
+        summary = calculation.summary
+        point_rows = [
+            (
+                point.market.value,
+                point.code,
+                point.period,
+                point.bar_time,
+                point.diff,
+                point.dea,
+                point.histogram,
+                point.signal_type.value,
+                point.zero_axis.value,
+                point.is_intraday,
+                point.quality.value,
+            )
+            for point in calculation.points
+        ]
+        with self.database.lock:
+            connection = self.database.connection
+            connection.execute("BEGIN TRANSACTION")
+            try:
+                connection.execute(
+                    """
+                    INSERT OR REPLACE INTO indicator_macd_latest (
+                      market, code, period, calculated_at, market_time, diff,
+                      dea, histogram, signal_type, signal_date,
+                      recent_signal_days, recent_signal_label, zero_axis,
+                      status, is_intraday, quality
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        summary.market.value,
+                        summary.code,
+                        summary.period,
+                        summary.calculated_at,
+                        summary.market_time,
+                        summary.diff,
+                        summary.dea,
+                        summary.histogram,
+                        summary.signal_type.value,
+                        summary.signal_date,
+                        summary.recent_signal_days,
+                        summary.recent_signal_label,
+                        summary.zero_axis.value,
+                        summary.status,
+                        summary.is_intraday,
+                        summary.quality.value,
+                    ),
+                )
+                connection.execute(
+                    """
+                    DELETE FROM indicator_macd_series
+                    WHERE market = ? AND code = ? AND period = ?
+                    """,
+                    (summary.market.value, summary.code, summary.period),
+                )
+                if point_rows:
+                    connection.executemany(
+                        """
+                        INSERT OR REPLACE INTO indicator_macd_series (
+                          market, code, period, bar_time, diff, dea, histogram,
+                          signal_type, zero_axis, is_intraday, quality
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        point_rows,
+                    )
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+
+    def get_macd(self, market: Market, code: str, period: str = "1d") -> MacdCalculation | None:
+        with self.database.lock:
+            connection = self.database.connection
+            summary_row = connection.execute(
+                """
+                SELECT market, code, period, CAST(calculated_at AS VARCHAR),
+                       CAST(market_time AS VARCHAR), diff, dea, histogram,
+                       signal_type, CAST(signal_date AS VARCHAR),
+                       recent_signal_days, recent_signal_label, zero_axis,
+                       status, is_intraday, quality
+                FROM indicator_macd_latest
+                WHERE market = ? AND code = ? AND period = ?
+                """,
+                (market.value, code, period),
+            ).fetchone()
+            if summary_row is None:
+                return None
+            point_rows = connection.execute(
+                """
+                SELECT market, code, period, CAST(bar_time AS VARCHAR),
+                       diff, dea, histogram, signal_type, zero_axis,
+                       is_intraday, quality
+                FROM indicator_macd_series
+                WHERE market = ? AND code = ? AND period = ?
+                ORDER BY bar_time ASC
+                """,
+                (market.value, code, period),
+            ).fetchall()
+        summary = MacdSummary(
+            market=Market(summary_row[0]),
+            code=summary_row[1],
+            period=summary_row[2],
+            calculated_at=datetime.fromisoformat(summary_row[3]),
+            market_time=None if summary_row[4] is None else datetime.fromisoformat(summary_row[4]),
+            diff=summary_row[5],
+            dea=summary_row[6],
+            histogram=summary_row[7],
+            signal_type=MacdSignal(summary_row[8]),
+            signal_date=None if summary_row[9] is None else date.fromisoformat(summary_row[9]),
+            recent_signal_days=summary_row[10],
+            recent_signal_label=summary_row[11],
+            zero_axis=ZeroAxisPosition(summary_row[12]),
+            status=summary_row[13],
+            is_intraday=summary_row[14],
+            quality=MacdQuality(summary_row[15]),
+        )
+        points = tuple(
+            MacdPoint(
+                market=Market(row[0]),
+                code=row[1],
+                period=row[2],
+                bar_time=datetime.fromisoformat(row[3]),
+                diff=row[4],
+                dea=row[5],
+                histogram=row[6],
+                signal_type=MacdSignal(row[7]),
+                zero_axis=ZeroAxisPosition(row[8]),
+                is_intraday=row[9],
+                quality=MacdQuality(row[10]),
+            )
+            for row in point_rows
+        )
+        return MacdCalculation(summary=summary, points=points)
 
     def get_bars(
         self,
@@ -1074,6 +1266,12 @@ class MarketRepository:
             open_price=row[9], high_price=row[10], low_price=row[11], previous_close=row[12],
             volume=row[13], amount=row[14], turnover_rate=row[15], total_market_cap=row[16],
             source=row[17], quality_status=None if row[18] is None else QualityStatus(row[18]),
+            macd_signal_type=None if row[19] is None else MacdSignal(row[19]),
+            macd_signal_date=None if row[20] is None else date.fromisoformat(row[20]),
+            macd_recent_signal_days=row[21],
+            macd_signal_label=row[22],
+            macd_zero_axis=None if row[23] is None else ZeroAxisPosition(row[23]),
+            macd_quality=None if row[24] is None else MacdQuality(row[24]),
         )
 
     @staticmethod

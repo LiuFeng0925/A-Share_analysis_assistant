@@ -116,6 +116,41 @@ CREATE TABLE IF NOT EXISTS trading_calendar (
   trade_date DATE PRIMARY KEY,
   updated_at TIMESTAMPTZ NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS indicator_macd_latest (
+  market VARCHAR NOT NULL,
+  code VARCHAR NOT NULL,
+  period VARCHAR NOT NULL,
+  calculated_at TIMESTAMPTZ NOT NULL,
+  market_time TIMESTAMPTZ,
+  diff DOUBLE,
+  dea DOUBLE,
+  histogram DOUBLE,
+  signal_type VARCHAR NOT NULL,
+  signal_date DATE,
+  recent_signal_days INTEGER,
+  recent_signal_label VARCHAR NOT NULL,
+  zero_axis VARCHAR NOT NULL,
+  status VARCHAR NOT NULL,
+  is_intraday BOOLEAN NOT NULL,
+  quality VARCHAR NOT NULL,
+  PRIMARY KEY (market, code, period)
+);
+
+CREATE TABLE IF NOT EXISTS indicator_macd_series (
+  market VARCHAR NOT NULL,
+  code VARCHAR NOT NULL,
+  period VARCHAR NOT NULL,
+  bar_time TIMESTAMPTZ NOT NULL,
+  diff DOUBLE,
+  dea DOUBLE,
+  histogram DOUBLE,
+  signal_type VARCHAR NOT NULL,
+  zero_axis VARCHAR NOT NULL,
+  is_intraday BOOLEAN NOT NULL,
+  quality VARCHAR NOT NULL,
+  PRIMARY KEY (market, code, period, bar_time)
+);
 """
 
 MIGRATION_SQL = (
