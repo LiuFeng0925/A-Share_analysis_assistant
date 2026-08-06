@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 import akshare as ak
 import pandas as pd
+import requests
 
 from a_share_radar.domain.bar_completion import bar_is_complete
 from a_share_radar.domain.models import (
@@ -21,6 +22,8 @@ from a_share_radar.domain.models import (
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 _PROVISIONAL_CAPTURED_AT = datetime(1970, 1, 1, tzinfo=SHANGHAI)
+_EASTMONEY_SOURCE = "akshare-eastmoney"
+_TENCENT_SOURCE = "akshare-tencent"
 logger = logging.getLogger(__name__)
 
 
@@ -64,8 +67,18 @@ def _integer(value: object) -> int | None:
 
 
 def _shares_from_lots(value: object) -> int | None:
-    lots = _integer(value)
-    return None if lots is None else lots * 100
+    lots = _number(value)
+    return None if lots is None else round(lots * 100)
+
+
+def _amount_from_ten_thousand_yuan(value: object) -> float | None:
+    amount = _number(value)
+    return None if amount is None else amount * 10_000
+
+
+def _amount_from_hundred_million_yuan(value: object) -> float | None:
+    amount = _number(value)
+    return None if amount is None else amount * 100_000_000
 
 
 def _valid_ohlc(open_price: float, high: float, low: float, close: float) -> bool:
@@ -117,7 +130,7 @@ def _bar_batch(
 
 
 class AkshareSource:
-    name = "akshare-eastmoney"
+    name = _EASTMONEY_SOURCE
 
     @staticmethod
     def market_for_code(code: str) -> Market:
@@ -128,14 +141,26 @@ class AkshareSource:
         return Market.SZ
 
     @classmethod
+    def identity_for_symbol(cls, symbol: object) -> tuple[Market, str]:
+        raw_symbol = str(symbol).strip().lower()
+        if raw_symbol.startswith(("sh", "sz", "bj")) and len(raw_symbol) >= 8:
+            prefix = raw_symbol[:2]
+            code = raw_symbol[2:].zfill(6)
+            market = {"sh": Market.SH, "sz": Market.SZ, "bj": Market.BJ}[prefix]
+            return market, code
+        code = raw_symbol.split(".", maxsplit=1)[0].zfill(6)
+        return cls.market_for_code(code), code
+
+    @classmethod
     def normalize_snapshot(cls, frame: pd.DataFrame, captured_at: datetime) -> list[QuoteSnapshot]:
         result: list[QuoteSnapshot] = []
         for row in frame.to_dict("records"):
+            market, code = cls.identity_for_symbol(row["代码"])
             latest = _number(row.get("最新价"))
             result.append(
                 QuoteSnapshot(
-                    code=str(row["代码"]).zfill(6),
-                    market=cls.market_for_code(str(row["代码"])),
+                    code=code,
+                    market=market,
                     name=str(row["名称"]),
                     captured_at=captured_at,
                     latest_price=latest,
@@ -153,6 +178,43 @@ class AkshareSource:
                     quality_status=(
                         QualityStatus.OK if latest is not None else QualityStatus.PARTIAL
                     ),
+                )
+            )
+        return result
+
+    @classmethod
+    def normalize_tencent_snapshot(
+        cls, frame: pd.DataFrame, captured_at: datetime
+    ) -> list[QuoteSnapshot]:
+        result: list[QuoteSnapshot] = []
+        for row in frame.to_dict("records"):
+            market, code = cls.identity_for_symbol(row["code"])
+            latest = _number(row.get("zxj"))
+            change_amount = _number(row.get("zd"))
+            previous_close = (
+                latest - change_amount
+                if latest is not None and change_amount is not None
+                else None
+            )
+            result.append(
+                QuoteSnapshot(
+                    code=code,
+                    market=market,
+                    name=str(row["name"]),
+                    captured_at=captured_at,
+                    latest_price=latest,
+                    change_percent=_number(row.get("zdf")),
+                    change_amount=change_amount,
+                    open_price=None,
+                    high_price=None,
+                    low_price=None,
+                    previous_close=previous_close,
+                    volume=_shares_from_lots(row.get("volume")),
+                    amount=_amount_from_ten_thousand_yuan(row.get("turnover")),
+                    turnover_rate=_number(row.get("hsl")),
+                    total_market_cap=_amount_from_hundred_million_yuan(row.get("zsz")),
+                    source=_TENCENT_SOURCE,
+                    quality_status=QualityStatus.PARTIAL,
                 )
             )
         return result
@@ -232,10 +294,34 @@ class AkshareSource:
             )
         except asyncio.CancelledError:
             raise
-        except TimeoutError:
-            logger.exception("加载全市场行情快照超时")
-            raise
-        normalized = self.normalize_snapshot(frame, _PROVISIONAL_CAPTURED_AT)
+        except (
+            TimeoutError,
+            requests.RequestException,
+            ValueError,
+            KeyError,
+            TypeError,
+        ) as primary_error:
+            logger.warning(
+                "东方财富全市场行情快照失败，切换腾讯备用源：%s", primary_error
+            )
+            try:
+                frame = await asyncio.wait_for(
+                    _run_provider_thread(ak.stock_zh_a_spot_tx, wait_on_cancel=False),
+                    timeout_seconds,
+                )
+            except asyncio.CancelledError:
+                raise
+            except TimeoutError:
+                logger.exception("加载腾讯全市场行情快照超时")
+                raise
+            except (requests.RequestException, ValueError, KeyError, TypeError):
+                logger.exception("加载腾讯全市场行情快照失败")
+                raise
+            normalized = self.normalize_tencent_snapshot(
+                frame, _PROVISIONAL_CAPTURED_AT
+            )
+        else:
+            normalized = self.normalize_snapshot(frame, _PROVISIONAL_CAPTURED_AT)
         captured_at = datetime.now(SHANGHAI)
         return [replace(quote, captured_at=captured_at) for quote in normalized]
 

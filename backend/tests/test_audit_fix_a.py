@@ -313,6 +313,43 @@ def test_partial_high_low_never_mix_with_old_price_provenance(repository):
     assert current.quality_status == QualityStatus.OK
 
 
+def test_partial_snapshot_with_current_core_quote_advances_without_old_range_mix(repository):
+    repository.upsert_stocks([make_stock(0)])
+    repository.save_snapshot([make_quote(0)])
+    partial_time = CAPTURED_AT + timedelta(minutes=1)
+    repository.save_snapshot(
+        [
+            make_quote(
+                0,
+                captured_at=partial_time,
+                latest_price=10.5,
+                open_price=None,
+                high_price=None,
+                low_price=None,
+                previous_close=10.4,
+                volume=250,
+                amount=2600.0,
+                quality_status=QualityStatus.PARTIAL,
+                source="fallback-source",
+            )
+        ]
+    )
+
+    current = repository.get_stock(Market.SH, "000000")
+
+    assert current is not None
+    assert current.captured_at == partial_time
+    assert current.latest_price == 10.5
+    assert current.open_price is None
+    assert current.high_price is None
+    assert current.low_price is None
+    assert current.previous_close == 10.4
+    assert current.volume == 250
+    assert current.amount == 2600.0
+    assert current.source == "fallback-source"
+    assert current.quality_status == QualityStatus.PARTIAL
+
+
 def test_ok_row_missing_required_field_does_not_advance_latest(repository):
     repository.upsert_stocks([make_stock(0)])
     repository.save_snapshot([make_quote(0)])

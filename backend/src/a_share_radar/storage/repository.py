@@ -330,24 +330,32 @@ class MarketRepository:
             LEFT JOIN latest_quote AS current
               ON current.market = batch.market AND current.code = batch.code
             WHERE batch.batch_row = 1
-              AND batch.quality_status = 'ok'
               AND batch.latest_price IS NOT NULL
-              AND batch.open_price IS NOT NULL
-              AND batch.high_price IS NOT NULL
-              AND batch.low_price IS NOT NULL
-              AND batch.previous_close IS NOT NULL
               AND batch.volume IS NOT NULL
               AND batch.amount IS NOT NULL
               AND batch.latest_price >= 0
-              AND batch.open_price >= 0
-              AND batch.high_price >= 0
-              AND batch.low_price >= 0
-              AND batch.previous_close >= 0
+              AND (batch.open_price IS NULL OR batch.open_price >= 0)
+              AND (batch.high_price IS NULL OR batch.high_price >= 0)
+              AND (batch.low_price IS NULL OR batch.low_price >= 0)
+              AND (batch.previous_close IS NULL OR batch.previous_close >= 0)
               AND batch.volume >= 0
               AND batch.amount >= 0
-              AND batch.high_price >= batch.low_price
-              AND batch.open_price BETWEEN batch.low_price AND batch.high_price
-              AND batch.latest_price BETWEEN batch.low_price AND batch.high_price
+              AND (
+                batch.high_price IS NULL
+                OR batch.low_price IS NULL
+                OR batch.high_price >= batch.low_price
+              )
+              AND (
+                batch.open_price IS NULL
+                OR batch.high_price IS NULL
+                OR batch.low_price IS NULL
+                OR batch.open_price BETWEEN batch.low_price AND batch.high_price
+              )
+              AND (
+                batch.high_price IS NULL
+                OR batch.low_price IS NULL
+                OR batch.latest_price BETWEEN batch.low_price AND batch.high_price
+              )
               AND (
                 current.captured_at IS NULL
                 OR batch.captured_at >= current.captured_at
