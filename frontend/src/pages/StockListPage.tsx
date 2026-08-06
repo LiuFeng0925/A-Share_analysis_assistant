@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isAbortError, marketApi } from "../api/client";
-import type { Market, MarketSummary as MarketSummaryData, StockPage, StockQuery } from "../api/types";
+import type {
+  MacdRecentWindow,
+  MacdSignalFilter,
+  MacdZeroAxisFilter,
+  Market,
+  MarketSummary as MarketSummaryData,
+  StockPage,
+  StockQuery,
+} from "../api/types";
 import { MarketSummary } from "../components/MarketSummary";
 import { StockTable } from "../components/StockTable";
 import { usePolling } from "../hooks/usePolling";
@@ -33,6 +41,9 @@ export function StockListPage() {
   const [page, setPage] = useState(1);
   const [sortBy, setSortBy] = useState<StockQuery["sortBy"]>("code");
   const [sortOrder, setSortOrder] = useState<StockQuery["sortOrder"]>("asc");
+  const [macdSignal, setMacdSignal] = useState<MacdSignalFilter | "">("");
+  const [macdZeroAxis, setMacdZeroAxis] = useState<MacdZeroAxisFilter | "">("");
+  const [macdRecentWindow, setMacdRecentWindow] = useState<MacdRecentWindow | "">("");
   const [summary, setSummary] = useState<MarketSummaryData | null>(null);
   const [stockPage, setStockPage] = useState<StockPage | null>(null);
   const [loading, setLoading] = useState(false);
@@ -70,6 +81,9 @@ export function StockListPage() {
           pageSize: PAGE_SIZE,
           sortBy,
           sortOrder,
+          macdSignal: macdSignal || undefined,
+          macdZeroAxis: macdZeroAxis || undefined,
+          macdRecentWindow: macdRecentWindow || undefined,
         }, { signal }),
       ]);
       if (!mounted.current || sequence !== requestSequence.current) return;
@@ -82,7 +96,7 @@ export function StockListPage() {
     } finally {
       if (mounted.current && sequence === requestSequence.current) setLoading(false);
     }
-  }, [market, page, query, sortBy, sortOrder]);
+  }, [macdRecentWindow, macdSignal, macdZeroAxis, market, page, query, sortBy, sortOrder]);
 
   usePolling(load, 60_000);
 
@@ -98,6 +112,7 @@ export function StockListPage() {
 
   const totalPages = stockPage ? Math.max(1, Math.ceil(stockPage.total / PAGE_SIZE)) : 1;
   const hasData = stockPage !== null;
+  const hasIndicatorFilters = macdSignal !== "" || macdZeroAxis !== "" || macdRecentWindow !== "";
   const marketStatus = summary?.market_status === "open"
     ? "交易中"
     : summary?.market_status === "closed"
@@ -159,6 +174,72 @@ export function StockListPage() {
             {stockPage ? `${stockPage.total.toLocaleString("zh-CN")} 只股票` : "正在读取股票"}
           </span>
           {loading && hasData && <span className="refreshing" role="status">正在刷新…</span>}
+        </div>
+
+        <div className="indicator-filter-bar" aria-label="技术指标筛选">
+          <span className="indicator-filter-title">
+            <small>指标筛选</small>
+            MACD 雷达
+          </span>
+          <label className="indicator-filter">
+            <span>MACD 信号</span>
+            <select
+              aria-label="MACD 信号"
+              value={macdSignal}
+              onChange={(event) => {
+                setMacdSignal(event.target.value as MacdSignalFilter | "");
+                setPage(1);
+              }}
+            >
+              <option value="">全部信号</option>
+              <option value="golden_cross">最近金叉</option>
+              <option value="death_cross">最近死叉</option>
+            </select>
+          </label>
+          <label className="indicator-filter">
+            <span>零轴位置</span>
+            <select
+              aria-label="零轴位置"
+              value={macdZeroAxis}
+              onChange={(event) => {
+                setMacdZeroAxis(event.target.value as MacdZeroAxisFilter | "");
+                setPage(1);
+              }}
+            >
+              <option value="">零轴不限</option>
+              <option value="above">零轴线上</option>
+              <option value="below">零轴线下</option>
+            </select>
+          </label>
+          <label className="indicator-filter">
+            <span>出现时间</span>
+            <select
+              aria-label="出现时间"
+              value={macdRecentWindow}
+              onChange={(event) => {
+                setMacdRecentWindow(event.target.value as MacdRecentWindow | "");
+                setPage(1);
+              }}
+            >
+              <option value="">时间不限</option>
+              <option value="today">今日</option>
+              <option value="3d">近 3 日</option>
+              <option value="5d">近 5 日</option>
+            </select>
+          </label>
+          <button
+            type="button"
+            className="indicator-filter-clear"
+            disabled={!hasIndicatorFilters || loading}
+            onClick={() => {
+              setMacdSignal("");
+              setMacdZeroAxis("");
+              setMacdRecentWindow("");
+              setPage(1);
+            }}
+          >
+            清空指标
+          </button>
         </div>
 
         {error && (

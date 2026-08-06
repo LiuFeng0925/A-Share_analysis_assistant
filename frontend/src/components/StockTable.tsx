@@ -61,6 +61,18 @@ function formatCapturedAt(value: string | null) {
   }).format(date).replaceAll("/", "-");
 }
 
+function macdSignalClass(signal: StockQuote["macd_signal_type"]) {
+  if (signal === "golden_cross") return "is-golden";
+  if (signal === "death_cross") return "is-death";
+  return "is-empty";
+}
+
+function formatMacdSignal(stock: StockQuote) {
+  if (stock.macd_signal_label) return stock.macd_signal_label;
+  if (stock.macd_quality === "insufficient") return "数据不足";
+  return "--";
+}
+
 function SortButton({
   field,
   label,
@@ -104,6 +116,7 @@ export function StockTable({ stocks, sortBy, sortOrder, onSort }: StockTableProp
             <th scope="col" aria-sort={ariaSort("code")}>
               <SortButton field="code" label="股票" {...{ sortBy, sortOrder, onSort }} />
             </th>
+            <th scope="col">MACD 信号</th>
             <th scope="col" aria-sort={ariaSort("latest_price")}>
               <SortButton field="latest_price" label="最新价" {...{ sortBy, sortOrder, onSort }} />
             </th>
@@ -158,6 +171,11 @@ export function StockTable({ stocks, sortBy, sortOrder, onSort }: StockTableProp
                       <small className="data-value">{stock.code}</small>
                     </span>
                   </div>
+                </td>
+                <td>
+                  <span className={`macd-signal ${macdSignalClass(stock.macd_signal_type)}`}>
+                    {formatMacdSignal(stock)}
+                  </span>
                 </td>
                 <td className={`data-value price-cell ${changeTone}`}>
                   {formatNumber(stock.latest_price)}

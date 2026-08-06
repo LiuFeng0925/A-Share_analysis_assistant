@@ -106,6 +106,37 @@ test("支持市场筛选、排序和分页", async () => {
   );
 });
 
+test("支持 MACD 信号、零轴位置和最近出现时间筛选", async () => {
+  render(
+    <MemoryRouter>
+      <StockListPage />
+    </MemoryRouter>,
+  );
+
+  await screen.findByRole("row", { name: /贵州茅台/ });
+  fireEvent.change(screen.getByLabelText("MACD 信号"), {
+    target: { value: "golden_cross" },
+  });
+  fireEvent.change(screen.getByLabelText("零轴位置"), {
+    target: { value: "above" },
+  });
+  fireEvent.change(screen.getByLabelText("出现时间"), {
+    target: { value: "3d" },
+  });
+
+  await waitFor(() =>
+    expect(marketApi.getStocks).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        macdSignal: "golden_cross",
+        macdZeroAxis: "above",
+        macdRecentWindow: "3d",
+        page: 1,
+      }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    ),
+  );
+});
+
 test("股票行可使用 Enter 键进入详情", async () => {
   render(
     <MemoryRouter initialEntries={["/"]}>

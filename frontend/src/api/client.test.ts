@@ -74,3 +74,27 @@ test("HTTP 错误继续提供稳定的中文提示", async () => {
 
   await expect(marketApi.getSummary()).rejects.toThrow("行情接口失败：503");
 });
+
+test("股票列表请求会携带 MACD 筛选参数", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ items: [], total: 0, page: 1, page_size: 50 })),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+
+  await marketApi.getStocks({
+    query: "茅台",
+    market: "SH",
+    page: 1,
+    pageSize: 50,
+    sortBy: "code",
+    sortOrder: "asc",
+    macdSignal: "golden_cross",
+    macdZeroAxis: "above",
+    macdRecentWindow: "3d",
+  });
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/market/stocks?query=%E8%8C%85%E5%8F%B0&market=SH&page=1&page_size=50&sort_by=code&sort_order=asc&macd_signal=golden_cross&macd_zero_axis=above&macd_recent_window=3d",
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
+});

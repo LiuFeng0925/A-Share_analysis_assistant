@@ -294,6 +294,70 @@ tr:focus-visible {
   border-bottom: 1px solid var(--border);
 }
 
+.indicator-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 54px;
+  padding: 10px 16px;
+  background: linear-gradient(90deg, #fbfcff 0%, #f8fbff 55%, #fbfcff 100%);
+  border-bottom: 1px solid var(--border);
+}
+
+.indicator-filter-title {
+  display: grid;
+  gap: 2px;
+  min-width: 112px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.indicator-filter-title small {
+  color: var(--brand);
+  font-family: var(--font-data);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.indicator-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.indicator-filter select {
+  height: 34px;
+  min-width: 118px;
+  padding: 0 28px 0 10px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.indicator-filter-clear {
+  min-height: 34px;
+  margin-left: auto;
+  padding: 0 12px;
+  color: var(--brand);
+  background: var(--brand-soft);
+  border: 1px solid #d7e1ff;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.indicator-filter-clear:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+}
+
 .search-field {
   position: relative;
   flex: 1 1 380px;
@@ -365,7 +429,7 @@ tr:focus-visible {
 
 .stock-table {
   width: 100%;
-  min-width: 1380px;
+  min-width: 1490px;
   border-collapse: collapse;
   table-layout: fixed;
 }
@@ -386,11 +450,17 @@ tr:focus-visible {
 
 .stock-table th:nth-child(2),
 .stock-table td:nth-child(2) {
-  width: 104px;
+  width: 122px;
+  text-align: left;
 }
 
 .stock-table th:nth-child(3),
 .stock-table td:nth-child(3) {
+  width: 104px;
+}
+
+.stock-table th:nth-child(4),
+.stock-table td:nth-child(4) {
   width: 112px;
 }
 
@@ -488,6 +558,30 @@ tr:focus-visible {
   font-family: var(--font-data);
   font-size: 10px;
   font-weight: 800;
+}
+
+.macd-signal {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 78px;
+  min-height: 25px;
+  padding: 0 9px;
+  color: var(--muted);
+  background: #f2f4f8;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.macd-signal.is-golden {
+  color: #b4232a;
+  background: #fff0f1;
+}
+
+.macd-signal.is-death {
+  color: #08764d;
+  background: #eaf8f1;
 }
 
 .price-cell {
@@ -1221,6 +1315,14 @@ tr:focus-visible {
     flex-wrap: wrap;
   }
 
+  .indicator-filter-bar {
+    flex-wrap: wrap;
+  }
+
+  .indicator-filter-title {
+    flex: 1 0 100%;
+  }
+
   .search-field {
     flex-basis: 100%;
     max-width: none;
@@ -1228,6 +1330,14 @@ tr:focus-visible {
 
   .market-filter {
     flex: 1;
+  }
+
+  .indicator-filter {
+    flex: 1 1 170px;
+  }
+
+  .indicator-filter-clear {
+    margin-left: 0;
   }
 }
 

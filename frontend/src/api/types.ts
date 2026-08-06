@@ -3,6 +3,11 @@ export type QualityStatus = "ok" | "partial" | "stale" | "error";
 export type BarPeriod = "1m" | "5m" | "15m" | "30m" | "60m" | "1d" | "1w" | "1mo";
 export type BarRange = "today" | "5d" | "60d" | "6mo" | "ytd" | "1y" | "5y" | "all";
 export type Adjustment = "none" | "qfq" | "hfq";
+export type MacdSignal = "none" | "golden_cross" | "death_cross";
+export type MacdSignalFilter = Exclude<MacdSignal, "none">;
+export type MacdZeroAxis = "above" | "below" | "unknown";
+export type MacdZeroAxisFilter = Exclude<MacdZeroAxis, "unknown">;
+export type MacdRecentWindow = "today" | "3d" | "5d";
 
 export interface MarketSummary {
   total: number;
@@ -32,6 +37,12 @@ export interface StockQuote {
   total_market_cap: number | null;
   captured_at: string | null;
   quality_status: QualityStatus | null;
+  macd_signal_type: MacdSignal | null;
+  macd_signal_date: string | null;
+  macd_recent_signal_days: number | null;
+  macd_signal_label: string | null;
+  macd_zero_axis: MacdZeroAxis | null;
+  macd_quality: "ok" | "partial" | "insufficient" | "error" | null;
 }
 
 export interface StockPage {
@@ -54,6 +65,9 @@ export interface StockQuery {
     | "turnover_rate"
     | "total_market_cap";
   sortOrder: "asc" | "desc";
+  macdSignal?: MacdSignalFilter;
+  macdZeroAxis?: MacdZeroAxisFilter;
+  macdRecentWindow?: MacdRecentWindow;
 }
 
 export interface Bar {

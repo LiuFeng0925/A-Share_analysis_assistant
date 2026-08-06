@@ -65,6 +65,9 @@ export const marketApi = {
     query.set("page_size", String(params.pageSize));
     query.set("sort_by", params.sortBy);
     query.set("sort_order", params.sortOrder);
+    if (params.macdSignal) query.set("macd_signal", params.macdSignal);
+    if (params.macdZeroAxis) query.set("macd_zero_axis", params.macdZeroAxis);
+    if (params.macdRecentWindow) query.set("macd_recent_window", params.macdRecentWindow);
     return request<StockPage>(`/api/market/stocks?${query}`, options);
   },
   getStock: (market: Market, code: string, options?: RequestOptions) =>

@@ -25,6 +25,7 @@ test("一行展示今日区间、更新时间，并按亿元和万亿元格式�
   expect(screen.getAllByRole("columnheader").map((header) => header.textContent?.replace(/[↑↓↕]/g, "")))
     .toEqual([
       "股票",
+      "MACD 信号",
       "最新价",
       "涨跌幅",
       "涨跌额",
@@ -37,6 +38,7 @@ test("一行展示今日区间、更新时间，并按亿元和万亿元格式�
       "更新时间",
     ]);
   expect(screen.getByRole("columnheader", { name: "成交量（股）" })).toBeInTheDocument();
+  expect(screen.getByText("近 3 日金叉")).toBeInTheDocument();
   expect(screen.getByText("1,551.01 — 1,599.90")).toBeInTheDocument();
   expect(screen.getByText("08-04 10:26:00")).toBeInTheDocument();
   expect(screen.getByText("1 亿")).toBeInTheDocument();
