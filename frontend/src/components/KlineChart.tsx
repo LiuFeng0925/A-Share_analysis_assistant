@@ -9,8 +9,8 @@ import {
   isFiniteNumber,
 } from "../utils/marketFormat";
 
-const DEFAULT_ZOOM_START = 70;
 const DEFAULT_ZOOM_END = 100;
+const DEFAULT_VISIBLE_BAR_COUNT = 60;
 const MACD_LEGEND_LABELS: Record<string, string> = {
   DIFF: "DIFF 蓝线",
   DEA: "DEA 黄线",
@@ -32,6 +32,15 @@ function seriesIdentity(series: BarSeries) {
   return `${series.market}/${series.code}/${series.period}/${series.range}/${series.adjustment}`;
 }
 
+function defaultZoomForSeries(series: BarSeries): ZoomWindow {
+  const total = series.items.length;
+  if (total <= DEFAULT_VISIBLE_BAR_COUNT) return { start: 0, end: DEFAULT_ZOOM_END };
+  return {
+    start: ((total - DEFAULT_VISIBLE_BAR_COUNT) / total) * 100,
+    end: DEFAULT_ZOOM_END,
+  };
+}
+
 function tooltipContent(series: BarSeries, dataIndex: number, macd?: MacdIndicator | null) {
   const bar = series.items[dataIndex];
   if (!bar) return "暂无 K 线数据";
@@ -51,7 +60,7 @@ function tooltipContent(series: BarSeries, dataIndex: number, macd?: MacdIndicat
 
 export function buildKlineOption(
   series: BarSeries,
-  zoom: ZoomWindow = { start: DEFAULT_ZOOM_START, end: DEFAULT_ZOOM_END },
+  zoom: ZoomWindow = defaultZoomForSeries(series),
   macd?: MacdIndicator | null,
 ): EChartsOption {
   const hasMacd = Boolean(macd?.items.length);
@@ -256,14 +265,14 @@ interface KlineChartProps {
 export function KlineChart({ series, macd = null }: KlineChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<ECharts | null>(null);
-  const zoomRef = useRef<ZoomWindow>({ start: DEFAULT_ZOOM_START, end: DEFAULT_ZOOM_END });
-  const [zoomWindow, setZoomWindow] = useState<ZoomWindow>({
-    start: DEFAULT_ZOOM_START,
-    end: DEFAULT_ZOOM_END,
-  });
+  const initialZoom = defaultZoomForSeries(series);
+  const zoomRef = useRef<ZoomWindow>(initialZoom);
+  const [zoomWindow, setZoomWindow] = useState<ZoomWindow>(initialZoom);
+  const manualZoomRef = useRef(false);
   const identityRef = useRef("");
 
-  const commitZoomWindow = useCallback((next: ZoomWindow) => {
+  const commitZoomWindow = useCallback((next: ZoomWindow, manual = false) => {
+    if (manual) manualZoomRef.current = true;
     zoomRef.current = next;
     setZoomWindow(next);
   }, []);
@@ -278,7 +287,7 @@ export function KlineChart({ series, macd = null }: KlineChartProps) {
       const event = rawEvent as DataZoomEvent;
       const next = event.batch?.[0] ?? event;
       if (isFiniteNumber(next.start) && isFiniteNumber(next.end)) {
-        commitZoomWindow({ start: next.start, end: next.end });
+        commitZoomWindow({ start: next.start, end: next.end }, true);
       }
     };
     chart.on("datazoom", handleDataZoom);
@@ -297,9 +306,13 @@ export function KlineChart({ series, macd = null }: KlineChartProps) {
 
   useEffect(() => {
     const identity = seriesIdentity(series);
+    const defaultZoom = defaultZoomForSeries(series);
     if (identityRef.current !== identity) {
       identityRef.current = identity;
-      commitZoomWindow({ start: DEFAULT_ZOOM_START, end: DEFAULT_ZOOM_END });
+      manualZoomRef.current = false;
+      commitZoomWindow(defaultZoom);
+    } else if (!manualZoomRef.current) {
+      commitZoomWindow(defaultZoom);
     }
     chartRef.current?.setOption(buildKlineOption(series, zoomRef.current, macd), true);
   }, [commitZoomWindow, macd, series]);

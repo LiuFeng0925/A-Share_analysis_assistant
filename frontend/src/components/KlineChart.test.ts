@@ -7,6 +7,17 @@ import { buildKlineOption, KlineChart } from "./KlineChart";
 
 vi.mock("echarts", () => ({ init: vi.fn() }));
 
+function makeBars(count: number) {
+  return {
+    ...dailyBarsFixture,
+    items: Array.from({ length: count }, (_, index) => ({
+      ...dailyBarsFixture.items[0],
+      bar_time: `2026-${String(Math.floor(index / 28) + 1).padStart(2, "0")}-${String((index % 28) + 1).padStart(2, "0")}T15:00:00+08:00`,
+      close_price: dailyBarsFixture.items[0].close_price + index,
+    })),
+  };
+}
+
 describe("KlineChart", () => {
   afterEach(() => {
     vi.mocked(echarts.init).mockReset();
@@ -60,6 +71,22 @@ describe("KlineChart", () => {
     ]);
     expect(series[2]).toEqual(expect.objectContaining({ type: "line" }));
     expect(series[4]).toEqual(expect.objectContaining({ type: "bar" }));
+  });
+
+  test("默认显示最近 60 根 K 线，数据不足 60 根时显示全部", () => {
+    const longOption = buildKlineOption(makeBars(120));
+    const shortOption = buildKlineOption(makeBars(30));
+
+    expect(longOption.dataZoom).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ start: 50, end: 100 }),
+      ]),
+    );
+    expect(shortOption.dataZoom).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ start: 0, end: 100 }),
+      ]),
+    );
   });
 
   test("上涨与下跌使用 A 股红涨绿跌并同时保留数值含义", () => {
@@ -150,13 +177,13 @@ describe("KlineChart", () => {
     chart.dispatchAction.mockImplementation((action) => {
       dataZoomHandler?.({ start: action.start, end: action.end });
     });
-    const { rerender, unmount } = render(createElement(KlineChart, { series: todayBarsFixture }));
+    const { rerender, unmount } = render(createElement(KlineChart, { series: makeBars(120) }));
     expect(chart.setOption).toHaveBeenCalledWith(expect.any(Object), true);
     expect(observe).toHaveBeenCalledTimes(1);
     const visibleRange = screen.getByLabelText("K 线当前可见区间");
-    expect(visibleRange).toHaveAttribute("data-start", "70");
+    expect(visibleRange).toHaveAttribute("data-start", "50");
     expect(visibleRange).toHaveAttribute("data-end", "100");
-    expect(visibleRange).toHaveAttribute("data-window", "30");
+    expect(visibleRange).toHaveAttribute("data-window", "50");
 
     act(() => dataZoomHandler?.({ start: 20, end: 80 }));
     fireEvent.click(screen.getByRole("button", { name: "放大 K 线" }));
@@ -168,10 +195,7 @@ describe("KlineChart", () => {
     expect(visibleRange).toHaveAttribute("data-window", "40");
 
     rerender(createElement(KlineChart, {
-      series: {
-        ...todayBarsFixture,
-        items: [todayBarsFixture.items[0], { ...todayBarsFixture.items[0], bar_time: "2026-08-04T10:32:00+08:00" }],
-      },
+      series: makeBars(121),
     }));
     const refreshedOption = chart.setOption.mock.calls.at(-1)?.[0] as {
       dataZoom: Array<{ start: number; end: number }>;
@@ -203,17 +227,17 @@ describe("KlineChart", () => {
       off: vi.fn(),
     };
     vi.mocked(echarts.init).mockReturnValue(chart as never);
-    render(createElement(KlineChart, { series: todayBarsFixture }));
+    render(createElement(KlineChart, { series: makeBars(120) }));
     const visibleRange = screen.getByLabelText("K 线当前可见区间");
 
     fireEvent.click(screen.getByRole("button", { name: "放大 K 线" }));
 
     expect(chart.dispatchAction).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "dataZoom", start: 80, end: 90 }),
+      expect.objectContaining({ type: "dataZoom", start: 60, end: 90 }),
     );
-    expect(visibleRange).toHaveAttribute("data-start", "70");
+    expect(visibleRange).toHaveAttribute("data-start", "50");
     expect(visibleRange).toHaveAttribute("data-end", "100");
-    expect(visibleRange).toHaveAttribute("data-window", "30");
+    expect(visibleRange).toHaveAttribute("data-window", "50");
   });
 
   test("为每根数据柱提供屏幕阅读器可读摘要", () => {
