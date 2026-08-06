@@ -321,6 +321,13 @@ tr:focus-visible {
   letter-spacing: 0.08em;
 }
 
+.indicator-filter-note {
+  max-width: 260px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .indicator-filter {
   display: flex;
   align-items: center;
@@ -1489,6 +1496,11 @@ tr:focus-visible {
 
   .indicator-filter-title {
     flex: 1 0 100%;
+  }
+
+  .indicator-filter-note {
+    flex: 1 0 100%;
+    max-width: none;
   }
 
   .search-field {

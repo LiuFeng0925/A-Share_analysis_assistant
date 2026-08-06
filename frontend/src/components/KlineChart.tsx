@@ -11,6 +11,11 @@ import {
 
 const DEFAULT_ZOOM_START = 70;
 const DEFAULT_ZOOM_END = 100;
+const MACD_LEGEND_LABELS: Record<string, string> = {
+  DIFF: "DIFF 蓝线",
+  DEA: "DEA 黄线",
+  "MACD 柱": "MACD 红绿柱",
+};
 
 interface ZoomWindow {
   start: number;
@@ -78,6 +83,32 @@ export function buildKlineOption(
   return {
     animation: false,
     axisPointer: { link: [{ xAxisIndex: "all" }] },
+    title: hasMacd
+      ? {
+          text: "MACD（日线）",
+          left: 56,
+          top: "70.5%",
+          textStyle: {
+            color: "#172033",
+            fontSize: 12,
+            fontWeight: 700,
+          },
+        }
+      : undefined,
+    legend: hasMacd
+      ? {
+          data: ["DIFF", "DEA", "MACD 柱"],
+          formatter: (name: string) => MACD_LEGEND_LABELS[name] ?? name,
+          left: 148,
+          top: "70.2%",
+          itemWidth: 18,
+          itemHeight: 8,
+          textStyle: {
+            color: "#687386",
+            fontSize: 11,
+          },
+        }
+      : undefined,
     tooltip: {
       trigger: "axis",
       formatter: (params: unknown) => {

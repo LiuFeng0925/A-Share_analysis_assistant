@@ -114,6 +114,9 @@ test("支持 MACD 信号、零轴位置和最近出现时间筛选", async () =>
   );
 
   await screen.findByRole("row", { name: /贵州茅台/ });
+  expect(screen.getByText("近 5 个交易日内，按最后一次 MACD 交叉信号筛选。")).toBeInTheDocument();
+  expect(screen.getByRole("option", { name: "近 5 日金叉" })).toBeInTheDocument();
+  expect(screen.getByRole("option", { name: "近 5 日死叉" })).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("MACD 信号"), {
     target: { value: "golden_cross" },
   });

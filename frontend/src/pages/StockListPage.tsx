@@ -181,6 +181,9 @@ export function StockListPage() {
             <small>指标筛选</small>
             MACD 雷达
           </span>
+          <span className="indicator-filter-note">
+            近 5 个交易日内，按最后一次 MACD 交叉信号筛选。
+          </span>
           <label className="indicator-filter">
             <span>MACD 信号</span>
             <select
@@ -192,8 +195,8 @@ export function StockListPage() {
               }}
             >
               <option value="">全部信号</option>
-              <option value="golden_cross">最近金叉</option>
-              <option value="death_cross">最近死叉</option>
+              <option value="golden_cross">近 5 日金叉</option>
+              <option value="death_cross">近 5 日死叉</option>
             </select>
           </label>
           <label className="indicator-filter">

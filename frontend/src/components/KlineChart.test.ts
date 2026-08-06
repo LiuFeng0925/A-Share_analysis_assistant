@@ -33,9 +33,24 @@ describe("KlineChart", () => {
     const grids = option.grid as unknown[];
     const zoom = option.dataZoom as Array<{ xAxisIndex?: number[] }>;
     const series = option.series as Array<{ name: string; type: string; data: unknown[] }>;
+    const title = option.title as { text: string; left: number; top: string };
+    const legend = option.legend as {
+      data: string[];
+      formatter: (name: string) => string;
+      left: number;
+      top: string;
+    };
 
     expect(grids).toHaveLength(3);
     expect(zoom[0].xAxisIndex).toEqual([0, 1, 2]);
+    expect(title).toEqual(expect.objectContaining({ text: "MACD（日线）", left: 56 }));
+    expect(legend).toEqual(expect.objectContaining({
+      data: ["DIFF", "DEA", "MACD 柱"],
+      left: 148,
+    }));
+    expect(legend.formatter("DIFF")).toBe("DIFF 蓝线");
+    expect(legend.formatter("DEA")).toBe("DEA 黄线");
+    expect(legend.formatter("MACD 柱")).toBe("MACD 红绿柱");
     expect(series.map((item) => item.name)).toEqual([
       "K 线",
       "成交量",
