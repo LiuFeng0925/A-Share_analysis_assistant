@@ -299,7 +299,7 @@ async def test_bars_map_invalid_combinations_to_422_with_chinese_detail(
     assert response.json() == {"detail": message}
 
 
-async def test_upstream_value_error_is_not_exposed_as_query_validation_error(
+async def test_upstream_value_error_returns_empty_bars_without_leaking_detail(
     app_with_fixture_data, fake_source
 ):
     fake_source.minute_error = ValueError("上游字段转换失败：敏感原文")
@@ -312,8 +312,11 @@ async def test_upstream_value_error_is_not_exposed_as_query_validation_error(
             params={"period": "1m", "range": "today"},
         )
 
-    assert response.status_code == 500
-    assert response.json() == {"detail": "系统内部错误"}
+    body = response.json()
+    assert response.status_code == 200
+    assert body["items"] == []
+    assert body["fetch_quality_status"] == "error"
+    assert body["fetch_raw_row_count"] == 0
     assert "敏感原文" not in response.text
 
 

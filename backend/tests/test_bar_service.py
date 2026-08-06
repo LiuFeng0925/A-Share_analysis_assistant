@@ -317,15 +317,23 @@ async def test_minute_source_failure_returns_saved_bars(repository, fake_source)
     assert bars == [fake_source.bar_rows[0]]
 
 
-async def test_minute_source_failure_without_cache_raises(repository, fake_source):
+async def test_minute_source_failure_without_cache_returns_empty_bars(
+    repository, fake_source
+):
     fake_source.minute_error = RuntimeError("模拟分钟接口不可用")
     service = BarService(fake_source, repository, history_days=60)
     now = datetime(2026, 8, 4, 10, 31, tzinfo=TZ)
 
-    with pytest.raises(RuntimeError, match="模拟分钟接口不可用"):
-        await service.get_bars(
-            Market.SH, "600519", "1m", "today", "none", now
-        )
+    bars = await service.get_bars(
+        Market.SH, "600519", "1m", "today", "none", now
+    )
+
+    with repository.database.lock:
+        audits = repository.database.connection.execute(
+            "SELECT status, quality_status, raw_row_count FROM bar_range_check"
+        ).fetchall()
+    assert bars == []
+    assert audits == [("failed", "error", 0)]
 
 
 async def test_same_key_concurrent_requests_access_source_serially(
@@ -382,12 +390,12 @@ async def test_keyed_lock_is_reclaimed_after_source_error(repository, fake_sourc
     service = BarService(fake_source, repository, history_days=60)
     now = datetime(2026, 8, 4, 10, 31, tzinfo=TZ)
 
-    with pytest.raises(RuntimeError, match="模拟分钟接口不可用"):
-        await service.get_bars(
-            Market.SH, "600519", "1m", "today", "none", now
-        )
+    bars = await service.get_bars(
+        Market.SH, "600519", "1m", "today", "none", now
+    )
 
     await asyncio.sleep(0)
+    assert bars == []
     assert service.inflight_count == 0
 
 

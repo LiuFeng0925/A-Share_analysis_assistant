@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -129,6 +129,85 @@ async def test_fetch_market_snapshot_falls_back_to_tencent_when_eastmoney_discon
     assert quotes[0].market is Market.SZ
     assert quotes[0].code == "000001"
     assert quotes[0].source == "akshare-tencent"
+
+
+async def test_fetch_daily_bars_uses_tencent_daily_source(monkeypatch):
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def fetch_tencent(**kwargs):
+        calls.append(("tencent", kwargs))
+        return pd.DataFrame(
+            [
+                {
+                    "date": "2026-08-06",
+                    "open": 43.53,
+                    "close": 41.30,
+                    "high": 43.60,
+                    "low": 41.08,
+                    "volume": 88_290_100.0,
+                    "turnover": 0.0531,
+                    "amount": 3_721_211_700.0,
+                }
+            ]
+        )
+
+    def fail_eastmoney(**kwargs):
+        calls.append(("eastmoney", kwargs))
+        raise AssertionError("日 K 应优先使用腾讯源")
+
+    monkeypatch.setattr(source_module.ak, "stock_zh_a_hist_tx", fetch_tencent)
+    monkeypatch.setattr(source_module.ak, "stock_zh_a_hist", fail_eastmoney)
+
+    batch = await AkshareSource().fetch_daily_bars(
+        "600988", date(2026, 8, 5), date(2026, 8, 6), "1d", "qfq"
+    )
+
+    assert [name for name, _ in calls] == ["tencent"]
+    assert batch.source == "akshare-tencent"
+    assert batch.bars[0].bar_time.date() == date(2026, 8, 6)
+    assert batch.bars[0].volume == 88_290_100
+    assert batch.bars[0].amount == 3_721_211_700.0
+
+
+async def test_fetch_minute_bars_uses_sina_minute_source(monkeypatch):
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def fetch_sina(**kwargs):
+        calls.append(("sina", kwargs))
+        return pd.DataFrame(
+            [
+                {
+                    "day": "2026-08-06 15:00:00",
+                    "open": 41.40,
+                    "high": 41.49,
+                    "low": 41.21,
+                    "close": 41.30,
+                    "volume": 1_136_000.0,
+                    "amount": 46_920_000.0,
+                }
+            ]
+        )
+
+    def fail_eastmoney(**kwargs):
+        calls.append(("eastmoney", kwargs))
+        raise AssertionError("分钟 K 应优先使用新浪源")
+
+    monkeypatch.setattr(source_module.ak, "stock_zh_a_minute", fetch_sina)
+    monkeypatch.setattr(source_module.ak, "stock_zh_a_hist_min_em", fail_eastmoney)
+
+    batch = await AkshareSource().fetch_minute_bars(
+        "600988",
+        datetime(2026, 8, 6, 9, 30, tzinfo=TZ),
+        datetime(2026, 8, 6, 15, 0, tzinfo=TZ),
+        "15m",
+        "none",
+    )
+
+    assert [name for name, _ in calls] == ["sina"]
+    assert batch.source == "akshare-sina"
+    assert batch.bars[0].bar_time == datetime(2026, 8, 6, 15, 0, tzinfo=TZ)
+    assert batch.bars[0].source == "akshare-sina"
+    assert batch.bars[0].volume == 1_136_000
 
 
 def test_minute_bar_keeps_provider_time():

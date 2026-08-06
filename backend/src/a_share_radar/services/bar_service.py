@@ -315,7 +315,8 @@ class BarService:
             if cached:
                 logger.exception("分钟 K 线增量抓取失败，返回本地缓存")
                 return []
-            raise
+            logger.exception("分钟 K 线增量抓取失败且本地无缓存，返回空结果")
+            return []
 
     async def _fetch_history_increment(
         self,
