@@ -181,7 +181,7 @@ def test_候选低点移动后旧金叉不再作为对应交叉():
     assert event.corresponding_signal_time is None
 
 
-def test_候选低点移动保留首次发现时间并更新节点时间():
+def test_候选低点移动后形成时间跟随当前有效低点():
     bars = moved_candidate_bars()
 
     event = next(
@@ -193,7 +193,7 @@ def test_候选低点移动保留首次发现时间并更新节点时间():
         if event.is_valid
     )
 
-    assert event.detected_at == bars[-2].bar_time
+    assert event.detected_at == bars[-1].bar_time
     assert event.updated_at == bars[-1].bar_time
 
 

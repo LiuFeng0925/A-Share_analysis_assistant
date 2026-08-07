@@ -11,7 +11,7 @@ from a_share_radar.storage.repository import MarketRepository, StockQuoteRow
 
 logger = logging.getLogger(__name__)
 SHANGHAI = ZoneInfo("Asia/Shanghai")
-MACD_DIVERGENCE_ALGORITHM_VERSION = datetime(2026, 8, 7, 21, 50, tzinfo=SHANGHAI)
+MACD_DIVERGENCE_ALGORITHM_VERSION = datetime(2026, 8, 7, 23, 55, tzinfo=SHANGHAI)
 MACD_LOOKBACK_DAYS = 220
 SUPPORTED_MACD_PERIODS = {"1m", "5m", "15m", "30m", "60m", "1d", "1w", "1mo"}
 MACD_LOOKBACK_DAYS_BY_PERIOD = {

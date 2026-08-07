@@ -195,12 +195,14 @@ function divergenceSignalLabel(event: MacdDivergence) {
 function divergenceTooltipContent(event: MacdDivergence) {
   const direction = event.direction === "bottom" ? "底背离" : "顶背离";
   const status = event.status === "forming" ? "形成中" : "已确认";
+  const anchorLabel = event.direction === "bottom"
+    ? { one: "前低1", two: "前低2", pivot: "背离低点" }
+    : { one: "前高1", two: "前高2", pivot: "背离高点" };
   return [
     `${direction}${status}`,
-    `发现时间 ${formatShanghaiDateTime(event.detected_at)}`,
-    `锚点一 ${formatShanghaiDateTime(event.anchor_one_time)}　价格 ${formatMarketNumber(event.anchor_one_price)}　DIFF ${formatMarketNumber(event.anchor_one_diff)}`,
-    `锚点二 ${formatShanghaiDateTime(event.anchor_two_time)}　价格 ${formatMarketNumber(event.anchor_two_price)}　DIFF ${formatMarketNumber(event.anchor_two_diff)}`,
-    `节点价格 ${formatMarketNumber(event.pivot_price)}　节点 DIFF ${formatMarketNumber(event.pivot_diff)}`,
+    `${anchorLabel.one} ${formatShanghaiDateTime(event.anchor_one_time)}　价格 ${formatMarketNumber(event.anchor_one_price)}　DIFF ${formatMarketNumber(event.anchor_one_diff)}`,
+    `${anchorLabel.two} ${formatShanghaiDateTime(event.anchor_two_time)}　价格 ${formatMarketNumber(event.anchor_two_price)}　DIFF ${formatMarketNumber(event.anchor_two_diff)}`,
+    `${anchorLabel.pivot}价格 ${formatMarketNumber(event.pivot_price)}　DIFF ${formatMarketNumber(event.pivot_diff)}`,
     event.confirmed_at ? `确认时间 ${formatShanghaiDateTime(event.confirmed_at)}` : null,
     `对应交叉：${divergenceSignalLabel(event)}`,
     event.corresponding_signal_time ? `交叉时间 ${formatShanghaiDateTime(event.corresponding_signal_time)}` : null,
@@ -210,7 +212,6 @@ function divergenceTooltipContent(event: MacdDivergence) {
 
 function relatedDivergenceTime(event: MacdDivergence, barTime: string) {
   return [
-    event.detected_at,
     event.anchor_one_time,
     event.anchor_two_time,
     event.pivot_time,
@@ -244,8 +245,8 @@ function buildPriceDivergenceMarks(events: MacdDivergence[], categories: string[
   return events.flatMap((event) => {
     const directionName = event.direction === "bottom" ? "底背离" : "顶背离";
     const anchorLabel = event.direction === "bottom"
-      ? { one: "前低", two: "新低" }
-      : { one: "前高", two: "新高" };
+      ? { one: "前低1", two: "前低2", pivot: "背离低点", markName: "低点" }
+      : { one: "前高1", two: "前高2", pivot: "背离高点", markName: "高点" };
     const confirmationTime = event.confirmed_at
       ? chartTimeFor(event.confirmed_at, categories)
       : null;
@@ -272,6 +273,15 @@ function buildPriceDivergenceMarks(events: MacdDivergence[], categories: string[
         value: event.anchor_two_price,
         label: anchorLabel.two,
         direction: event.direction,
+        weak: true,
+        symbolSize: 5,
+      }),
+      namedMarkPoint({
+        name: `${directionName}${anchorLabel.markName}`,
+        time: chartTimeFor(event.pivot_time, categories),
+        value: event.pivot_price,
+        label: anchorLabel.pivot,
+        direction: event.direction,
       }),
       confirmationTime
         ? namedMarkPoint({
@@ -291,19 +301,13 @@ function buildPriceDivergenceLines(events: MacdDivergence[], categories: string[
   return mergeVerticalLines(events.flatMap((event) => {
     const directionName = event.direction === "bottom" ? "底背离" : "顶背离";
     const anchorLabel = event.direction === "bottom"
-      ? { one: "前低", two: "新低" }
-      : { one: "前高", two: "新高" };
+      ? { one: "前低1", two: "前低2", pivot: "背离低点" }
+      : { one: "前高1", two: "前高2", pivot: "背离高点" };
     const confirmationTime = event.confirmed_at
       ? chartTimeFor(event.confirmed_at, categories)
       : null;
 
     return [
-      {
-        name: `${directionName}出现`,
-        time: chartTimeFor(event.detected_at, categories),
-        label: "出现",
-        direction: event.direction,
-      },
       {
         name: `${directionName}${anchorLabel.one}`,
         time: chartTimeFor(event.anchor_one_time, categories),
@@ -315,6 +319,13 @@ function buildPriceDivergenceLines(events: MacdDivergence[], categories: string[
         name: `${directionName}${anchorLabel.two}`,
         time: chartTimeFor(event.anchor_two_time, categories),
         label: anchorLabel.two,
+        direction: event.direction,
+        weak: true,
+      },
+      {
+        name: `${directionName}${anchorLabel.pivot}`,
+        time: chartTimeFor(event.pivot_time, categories),
+        label: anchorLabel.pivot,
         direction: event.direction,
       },
       ...(confirmationTime
@@ -333,19 +344,13 @@ function buildDiffEventLines(events: MacdDivergence[], categories: string[]): Ve
   return events.flatMap((event) => {
     const directionName = event.direction === "bottom" ? "底背离" : "顶背离";
     const anchorLabel = event.direction === "bottom"
-      ? { one: "前低", two: "新低" }
-      : { one: "前高", two: "新高" };
+      ? { one: "前低1", two: "前低2", pivot: "背离低点" }
+      : { one: "前高1", two: "前高2", pivot: "背离高点" };
     const confirmationTime = event.confirmed_at
       ? chartTimeFor(event.confirmed_at, categories)
       : null;
 
     return [
-      {
-        name: `${directionName}DIFF出现`,
-        time: chartTimeFor(event.detected_at, categories),
-        label: "出现",
-        direction: event.direction,
-      },
       {
         name: `${directionName}DIFF${anchorLabel.one}`,
         time: chartTimeFor(event.anchor_one_time, categories),
@@ -358,6 +363,13 @@ function buildDiffEventLines(events: MacdDivergence[], categories: string[]): Ve
         time: chartTimeFor(event.anchor_two_time, categories),
         label: anchorLabel.two,
         direction: event.direction,
+        weak: true,
+      },
+      {
+        name: `${directionName}DIFF${anchorLabel.pivot}`,
+        time: chartTimeFor(event.pivot_time, categories),
+        label: anchorLabel.pivot,
+        direction: event.direction,
       },
       ...(confirmationTime
         ? [{
@@ -369,6 +381,52 @@ function buildDiffEventLines(events: MacdDivergence[], categories: string[]): Ve
         : []),
     ];
   });
+}
+
+function isPlainPivot(
+  series: BarSeries,
+  index: number,
+  direction: "bottom" | "top",
+  sideBars = 3,
+) {
+  const item = series.items[index];
+  if (!item || index < sideBars || index + sideBars >= series.items.length) return false;
+  const price = direction === "bottom" ? item.low_price : item.high_price;
+  return series.items.every((bar, barIndex) => {
+    if (barIndex < index - sideBars || barIndex > index + sideBars || barIndex === index) {
+      return true;
+    }
+    const nearbyPrice = direction === "bottom" ? bar.low_price : bar.high_price;
+    return direction === "bottom" ? price < nearbyPrice : price > nearbyPrice;
+  });
+}
+
+function buildPlainPivotMarks(series: BarSeries) {
+  if (series.period !== "1d") return [];
+  return series.items.flatMap((bar, index) => [
+    isPlainPivot(series, index, "bottom")
+      ? namedMarkPoint({
+          name: "普通低点",
+          time: bar.bar_time,
+          value: bar.low_price,
+          label: "低",
+          direction: "bottom",
+          weak: true,
+          symbolSize: 4,
+        })
+      : null,
+    isPlainPivot(series, index, "top")
+      ? namedMarkPoint({
+          name: "普通高点",
+          time: bar.bar_time,
+          value: bar.high_price,
+          label: "高",
+          direction: "top",
+          weak: true,
+          symbolSize: 4,
+        })
+      : null,
+  ].filter((mark): mark is NonNullable<typeof mark> => mark !== null));
 }
 
 function buildMacdCrossLines(macd: MacdIndicator | null | undefined, categories: string[]): VerticalLineDraft[] {
@@ -413,7 +471,9 @@ export function buildKlineOption(
     };
   });
   const divergences = series.period === "1d" ? activeMacd?.divergences ?? [] : [];
-  const priceDivergenceMarks = buildPriceDivergenceMarks(divergences, categories, series);
+  const priceDivergenceMarks = divergences.length
+    ? buildPriceDivergenceMarks(divergences, categories, series)
+    : buildPlainPivotMarks(series);
   const priceDivergenceLines = buildPriceDivergenceLines(divergences, categories);
   const diffDivergenceLines = mergeVerticalLines([
     ...buildDiffEventLines(divergences, categories),

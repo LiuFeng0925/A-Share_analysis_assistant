@@ -157,7 +157,7 @@ def _scan_direction(
                     candidate.anchor_one_index,
                     candidate.anchor_two_index,
                     index,
-                    detected_at=candidate.detected_at,
+                    detected_at=point.bar_time,
                     updated_at=point.bar_time,
                 )
                 _record_signal(candidate, point, direction)
