@@ -67,16 +67,24 @@ def macd_calculation(
     return MacdCalculation(summary=summary, points=(point,), divergences=divergences)
 
 
-def bottom_divergence(
-    code: str, *, period: str = "1d", detected_at: datetime | None = None
+def macd_divergence(
+    code: str,
+    *,
+    period: str = "1d",
+    direction: MacdDivergenceDirection = MacdDivergenceDirection.BOTTOM,
+    status: MacdDivergenceStatus = MacdDivergenceStatus.CONFIRMED,
+    detected_at: datetime | None = None,
+    is_valid: bool = True,
+    corresponding_signal: MacdSignal = MacdSignal.GOLDEN_CROSS,
+    recent_days: int = 1,
 ) -> MacdDivergenceEvent:
     detected_at = detected_at or datetime(2026, 8, 6, 15, 0, tzinfo=TZ)
     return MacdDivergenceEvent(
         market=Market.SH,
         code=code,
         period=period,
-        direction=MacdDivergenceDirection.BOTTOM,
-        status=MacdDivergenceStatus.CONFIRMED,
+        direction=direction,
+        status=status,
         anchor_one_time=datetime(2026, 7, 28, 15, 0, tzinfo=TZ),
         anchor_one_price=100.0,
         anchor_one_diff=-1.2,
@@ -88,12 +96,18 @@ def bottom_divergence(
         pivot_diff=-0.8,
         detected_at=detected_at,
         confirmed_at=datetime(2026, 8, 7, 15, 0, tzinfo=TZ),
-        invalidated_at=None,
-        is_valid=True,
-        corresponding_signal=MacdSignal.GOLDEN_CROSS,
+        invalidated_at=None if is_valid else datetime(2026, 8, 7, 15, 0, tzinfo=TZ),
+        is_valid=is_valid,
+        corresponding_signal=corresponding_signal,
         corresponding_signal_time=datetime(2026, 8, 7, 15, 0, tzinfo=TZ),
-        recent_days=1,
+        recent_days=recent_days,
     )
+
+
+def bottom_divergence(
+    code: str, *, period: str = "1d", detected_at: datetime | None = None
+) -> MacdDivergenceEvent:
+    return macd_divergence(code, period=period, detected_at=detected_at)
 
 
 def test_repository_saves_and_loads_macd_calculation(repository):
@@ -368,3 +382,119 @@ def test_list_stocks_ignores_non_daily_macd_for_filters(repository):
     )
 
     assert page.total == 0
+
+
+def test_股票列表按背离类型多选并返回去重标签(repository):
+    repository.upsert_stocks(
+        [
+            Stock("600519", Market.SH, "贵州茅台"),
+            Stock("601318", Market.SH, "中国平安"),
+            Stock("600036", Market.SH, "招商银行"),
+        ]
+    )
+    repository.upsert_macd(
+        macd_calculation(
+            "600519",
+            signal=MacdSignal.GOLDEN_CROSS,
+            zero_axis=ZeroAxisPosition.ABOVE,
+            days=2,
+            label="近 3 日金叉",
+            divergences=(
+                macd_divergence("600519"),
+                macd_divergence("600519", detected_at=datetime(2026, 8, 6, 14, 0, tzinfo=TZ)),
+            ),
+        )
+    )
+    repository.upsert_macd(
+        macd_calculation(
+            "601318",
+            signal=MacdSignal.DEATH_CROSS,
+            zero_axis=ZeroAxisPosition.BELOW,
+            days=4,
+            label="近 5 日死叉",
+            divergences=(
+                macd_divergence(
+                    "601318",
+                    direction=MacdDivergenceDirection.TOP,
+                    status=MacdDivergenceStatus.FORMING,
+                    corresponding_signal=MacdSignal.NONE,
+                ),
+            ),
+        )
+    )
+    repository.upsert_macd(
+        macd_calculation(
+            "600036",
+            signal=MacdSignal.NONE,
+            zero_axis=ZeroAxisPosition.ABOVE,
+            days=None,
+            label="无信号",
+            divergences=(
+                macd_divergence(
+                    "600036",
+                    direction=MacdDivergenceDirection.TOP,
+                    status=MacdDivergenceStatus.CONFIRMED,
+                    recent_days=5,
+                ),
+            ),
+        )
+    )
+
+    page = repository.list_stocks(
+        None,
+        None,
+        "code",
+        "asc",
+        1,
+        50,
+        macd_divergences=["bottom_confirmed", "top_forming"],
+    )
+
+    assert page.total == 2
+    assert [item.code for item in page.items] == ["600519", "601318"]
+    assert page.items[0].macd_divergence_labels == ("bottom_confirmed",)
+    assert page.items[1].macd_divergence_labels == ("top_forming",)
+
+
+def test_股票列表背离交叉和最近时间可作用于任意有效背离(repository):
+    repository.upsert_stocks(
+        [
+            Stock("600519", Market.SH, "贵州茅台"),
+            Stock("601318", Market.SH, "中国平安"),
+            Stock("600036", Market.SH, "招商银行"),
+        ]
+    )
+    for code, event in (
+        ("600519", macd_divergence("600519", recent_days=4)),
+        (
+            "601318",
+            macd_divergence(
+                "601318", corresponding_signal=MacdSignal.NONE, recent_days=1
+            ),
+        ),
+        ("600036", macd_divergence("600036", recent_days=5)),
+    ):
+        repository.upsert_macd(
+            macd_calculation(
+                code,
+                signal=MacdSignal.NONE,
+                zero_axis=ZeroAxisPosition.ABOVE,
+                days=None,
+                label="无信号",
+                divergences=(event,),
+            )
+        )
+
+    page = repository.list_stocks(
+        None,
+        None,
+        "code",
+        "asc",
+        1,
+        50,
+        macd_divergence_cross="present",
+        macd_divergence_recent_window="5d",
+    )
+
+    assert page.total == 1
+    assert [item.code for item in page.items] == ["600519"]

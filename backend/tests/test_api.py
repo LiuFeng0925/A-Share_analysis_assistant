@@ -105,6 +105,28 @@ async def test_stock_list_can_return_an_empty_later_page(app_with_fixture_data):
     assert response.json() == {"items": [], "total": 2, "page": 2, "page_size": 10}
 
 
+async def test_股票列表支持四种背离状态多选且非法值返回422(app_with_fixture_data):
+    selected = await get(
+        app_with_fixture_data,
+        "/api/market/stocks",
+        params=[
+            ("macd_divergences", "bottom_forming"),
+            ("macd_divergences", "bottom_confirmed"),
+            ("macd_divergence_cross", "present"),
+            ("macd_divergence_recent_window", "5d"),
+            ("page_size", "10"),
+        ],
+    )
+    invalid = await get(
+        app_with_fixture_data,
+        "/api/market/stocks",
+        params={"macd_divergences": "unknown", "page_size": 10},
+    )
+
+    assert selected.status_code == 200
+    assert invalid.status_code == 422
+
+
 async def test_stock_detail_returns_latest_quote(app_with_fixture_data):
     response = await get(app_with_fixture_data, "/api/stocks/SH/600519")
 

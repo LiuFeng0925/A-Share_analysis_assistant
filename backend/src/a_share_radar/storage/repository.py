@@ -51,6 +51,7 @@ class StockQuoteRow:
     macd_signal_label: str | None = None
     macd_zero_axis: ZeroAxisPosition | None = None
     macd_quality: MacdQuality | None = None
+    macd_divergence_labels: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,13 +123,28 @@ _QUOTE_COLUMNS = """
     q.volume, q.amount, q.turnover_rate, q.total_market_cap,
     q.source, q.quality_status,
     m.signal_type, CAST(m.signal_date AS VARCHAR), m.recent_signal_days,
-    m.recent_signal_label, m.zero_axis, m.quality
+    m.recent_signal_label, m.zero_axis, m.quality,
+    (
+      SELECT string_agg(DISTINCT d.direction || '_' || d.status, ',' ORDER BY d.direction || '_' || d.status)
+      FROM indicator_macd_divergence d
+      WHERE d.market = s.market
+        AND d.code = s.code
+        AND d.period = '1d'
+        AND d.is_valid = TRUE
+    )
 """
 _MACD_JOIN = """
     LEFT JOIN indicator_macd_latest m
       ON m.market = s.market AND m.code = s.code AND m.period = '1d'
 """
 _MACD_RECENT_WINDOWS = {"today": 0, "3d": 2, "5d": 4}
+_MACD_DIVERGENCE_KEYS = {
+    "bottom_forming": ("bottom", "forming"),
+    "bottom_confirmed": ("bottom", "confirmed"),
+    "top_forming": ("top", "forming"),
+    "top_confirmed": ("top", "confirmed"),
+}
+_MACD_DIVERGENCE_CROSS = {"present", "absent"}
 
 _SNAPSHOT_BATCH_RELATION = "snapshot_batch_input"
 _ARCHIVE_EXISTING_RELATION = "archive_existing_input"
@@ -755,6 +771,9 @@ class MarketRepository:
         macd_signal: str | None = None,
         macd_zero_axis: str | None = None,
         macd_recent_window: str | None = None,
+        macd_divergences: list[str] | None = None,
+        macd_divergence_cross: str | None = None,
+        macd_divergence_recent_window: str | None = None,
     ) -> StockPage:
         if sort_by not in SORT_COLUMNS:
             raise ValueError(f"不支持的排序字段：{sort_by}")
@@ -775,6 +794,23 @@ class MarketRepository:
             raise ValueError(f"不支持的 MACD 零轴位置：{macd_zero_axis}")
         if macd_recent_window is not None and macd_recent_window not in _MACD_RECENT_WINDOWS:
             raise ValueError(f"不支持的 MACD 最近时间：{macd_recent_window}")
+        if macd_divergences is not None:
+            unsupported_divergences = set(macd_divergences) - _MACD_DIVERGENCE_KEYS.keys()
+            if unsupported_divergences:
+                unsupported = next(iter(unsupported_divergences))
+                raise ValueError(f"不支持的 MACD 背离：{unsupported}")
+        if (
+            macd_divergence_cross is not None
+            and macd_divergence_cross not in _MACD_DIVERGENCE_CROSS
+        ):
+            raise ValueError(f"不支持的 MACD 背离交叉：{macd_divergence_cross}")
+        if (
+            macd_divergence_recent_window is not None
+            and macd_divergence_recent_window not in _MACD_RECENT_WINDOWS
+        ):
+            raise ValueError(
+                f"不支持的 MACD 背离最近时间：{macd_divergence_recent_window}"
+            )
 
         conditions: list[str] = []
         parameters: list[Any] = []
@@ -796,6 +832,46 @@ class MarketRepository:
             conditions.append("m.recent_signal_days IS NOT NULL")
             conditions.append("m.recent_signal_days <= ?")
             parameters.append(_MACD_RECENT_WINDOWS[macd_recent_window])
+        if (
+            macd_divergences
+            or macd_divergence_cross is not None
+            or macd_divergence_recent_window is not None
+        ):
+            divergence_conditions = [
+                "d.market = s.market",
+                "d.code = s.code",
+                "d.period = '1d'",
+                "d.is_valid = TRUE",
+            ]
+            if macd_divergences:
+                selected_types = [
+                    _MACD_DIVERGENCE_KEYS[divergence]
+                    for divergence in dict.fromkeys(macd_divergences)
+                ]
+                divergence_conditions.append(
+                    "(" + " OR ".join(
+                        "(d.direction = ? AND d.status = ?)"
+                        for _ in selected_types
+                    ) + ")"
+                )
+                parameters.extend(
+                    value for selected_type in selected_types for value in selected_type
+                )
+            if macd_divergence_cross is not None:
+                operator = "<>" if macd_divergence_cross == "present" else "="
+                divergence_conditions.append(
+                    f"d.corresponding_signal {operator} 'none'"
+                )
+            if macd_divergence_recent_window is not None:
+                divergence_conditions.append("d.recent_days <= ?")
+                parameters.append(
+                    _MACD_RECENT_WINDOWS[macd_divergence_recent_window]
+                )
+            conditions.append(
+                "EXISTS (SELECT 1 FROM indicator_macd_divergence d WHERE "
+                + " AND ".join(divergence_conditions)
+                + ")"
+            )
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         offset = (page - 1) * page_size
 
@@ -1381,6 +1457,9 @@ class MarketRepository:
             macd_signal_label=row[22],
             macd_zero_axis=None if row[23] is None else ZeroAxisPosition(row[23]),
             macd_quality=None if row[24] is None else MacdQuality(row[24]),
+            macd_divergence_labels=(
+                () if row[25] is None else tuple(dict.fromkeys(row[25].split(",")))
+            ),
         )
 
     @staticmethod

@@ -1,7 +1,7 @@
 from datetime import date
 from typing import Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from a_share_radar.domain.models import Market, QualityStatus
 
@@ -44,6 +44,7 @@ class StockQuoteResponse(AttributeModel):
     macd_signal_label: str | None = None
     macd_zero_axis: str | None = None
     macd_quality: str | None = None
+    macd_divergence_labels: list[str] = Field(default_factory=list)
 
 
 class StockPageResponse(AttributeModel):
@@ -109,12 +110,32 @@ class MacdSummaryResponse(AttributeModel):
     quality: str
 
 
+class MacdDivergenceResponse(AttributeModel):
+    direction: Literal["bottom", "top"]
+    status: Literal["forming", "confirmed"]
+    anchor_one_time: AwareDatetime
+    anchor_one_price: float
+    anchor_one_diff: float
+    anchor_two_time: AwareDatetime
+    anchor_two_price: float
+    anchor_two_diff: float
+    pivot_time: AwareDatetime
+    pivot_price: float
+    pivot_diff: float
+    detected_at: AwareDatetime
+    confirmed_at: AwareDatetime | None
+    corresponding_signal: Literal["none", "golden_cross", "death_cross"]
+    corresponding_signal_time: AwareDatetime | None
+    recent_days: int
+
+
 class MacdIndicatorResponse(AttributeModel):
     market: Market
     code: str
     period: str
     summary: MacdSummaryResponse
     items: list[MacdPointResponse]
+    divergences: list[MacdDivergenceResponse]
 
 
 class DataStatusResponse(AttributeModel):
