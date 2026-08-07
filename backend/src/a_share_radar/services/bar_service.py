@@ -10,7 +10,11 @@ from zoneinfo import ZoneInfo
 from a_share_radar.data_sources.protocol import MarketDataSource
 from a_share_radar.domain.bar_completion import DAILY_FINAL_TIME, bar_is_complete
 from a_share_radar.domain.models import Bar, BarFetchBatch, Market, QualityStatus, Stock
-from a_share_radar.storage.repository import BarIngestionAudit, MarketRepository
+from a_share_radar.storage.repository import (
+    BarIngestionAudit,
+    MarketRepository,
+    StockQuoteRow,
+)
 
 logger = logging.getLogger(__name__)
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -270,14 +274,19 @@ class BarService:
                 market, code, period, adjustment, start, end, cached
             )
         else:
+            fetched: list[Bar] = []
             try:
-                await self._fetch_history_increment(
+                fetched = await self._fetch_history_increment(
                     market, code, period, adjustment, start, end, cached, now
                 )
             except Exception:
                 if not cached:
                     raise
                 logger.exception("历史 K 线增量抓取失败，返回本地缓存")
+            if period == "1d":
+                await self._fill_daily_bar_from_latest_quote_if_lagged(
+                    market, code, adjustment, start, end, cached, fetched, now
+                )
         return await _run_repository_call(
             self.repository.get_bars,
             market,
@@ -347,6 +356,76 @@ class BarService:
                 fetch_start = max(start.date(), tail.bar_time.date() - timedelta(days=overlap_days))
         return await self._fetch_daily_provider(
             market, code, fetch_start, end.date(), period, adjustment
+        )
+
+    async def _fill_daily_bar_from_latest_quote_if_lagged(
+        self,
+        market: Market,
+        code: str,
+        adjustment: str,
+        start: datetime,
+        end: datetime,
+        cached: list[Bar],
+        fetched: list[Bar],
+        now: datetime,
+    ) -> None:
+        latest_quote = await _run_repository_call(self.repository.get_stock, market, code)
+        supplemental = self._daily_bar_from_latest_quote(
+            latest_quote, adjustment, start, end, cached, fetched, now
+        )
+        if supplemental is not None:
+            await _run_repository_call(self.repository.upsert_bars, [supplemental])
+
+    @staticmethod
+    def _daily_bar_from_latest_quote(
+        latest_quote: StockQuoteRow | None,
+        adjustment: str,
+        start: datetime,
+        end: datetime,
+        cached: list[Bar],
+        fetched: list[Bar],
+        now: datetime,
+    ) -> Bar | None:
+        if (
+            latest_quote is None
+            or latest_quote.latest_price is None
+            or latest_quote.captured_at is None
+        ):
+            return None
+        quote_time = latest_quote.captured_at.astimezone(SHANGHAI)
+        quote_day = quote_time.date()
+        if quote_day < start.date() or quote_day > end.date() or quote_day > now.date():
+            return None
+        if cached and cached[-1].bar_time.date() >= quote_day:
+            return None
+        if fetched and max(bar.bar_time.date() for bar in fetched) >= quote_day:
+            return None
+
+        open_price = latest_quote.open_price or latest_quote.latest_price
+        high_price = latest_quote.high_price or max(open_price, latest_quote.latest_price)
+        low_price = latest_quote.low_price or min(open_price, latest_quote.latest_price)
+        close_price = latest_quote.latest_price
+        is_complete = bar_is_complete(
+            "1d",
+            datetime.combine(quote_day, time(15, 0), tzinfo=SHANGHAI),
+            quote_time,
+        )
+        return Bar(
+            code=latest_quote.code,
+            market=latest_quote.market,
+            period="1d",
+            adjustment=adjustment,
+            bar_time=datetime.combine(quote_day, time(15, 0), tzinfo=SHANGHAI),
+            open_price=open_price,
+            high_price=max(high_price, open_price, close_price),
+            low_price=min(low_price, open_price, close_price),
+            close_price=close_price,
+            volume=latest_quote.volume or 0,
+            amount=latest_quote.amount or 0.0,
+            source=latest_quote.source or "latest-quote",
+            is_complete=is_complete,
+            acquired_at=quote_time,
+            quality_status=QualityStatus.PARTIAL,
         )
 
     async def _fetch_daily_provider(

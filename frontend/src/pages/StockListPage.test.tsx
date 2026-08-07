@@ -106,7 +106,7 @@ test("支持市场筛选、排序和分页", async () => {
   );
 });
 
-test("支持 MACD 信号、零轴位置和最近出现时间筛选", async () => {
+test("MACD 筛选收敛为单行控件并移除说明文案", async () => {
   render(
     <MemoryRouter>
       <StockListPage />
@@ -115,17 +115,18 @@ test("支持 MACD 信号、零轴位置和最近出现时间筛选", async () =>
 
   await screen.findByRole("row", { name: /贵州茅台/ });
   expect(screen.getByText("日 K MACD 雷达")).toBeInTheDocument();
-  expect(screen.getByText("近 5 个交易日内，按日 K 的最后一次 MACD 交叉信号筛选。")).toBeInTheDocument();
+  expect(screen.queryByText("近 5 个交易日内，按日 K 的最后一次 MACD 交叉信号筛选。")).not.toBeInTheDocument();
   expect(screen.getByRole("option", { name: "近 5 日金叉" })).toBeInTheDocument();
   expect(screen.getByRole("option", { name: "近 5 日死叉" })).toBeInTheDocument();
+  expect(screen.queryByLabelText("出现时间")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("背离对应交叉")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("背离出现时间")).not.toBeInTheDocument();
+
   fireEvent.change(screen.getByLabelText("日 K MACD 信号"), {
-    target: { value: "golden_cross" },
+    target: { value: "golden_cross:3d" },
   });
   fireEvent.change(screen.getByLabelText("零轴位置"), {
     target: { value: "above" },
-  });
-  fireEvent.change(screen.getByLabelText("出现时间"), {
-    target: { value: "3d" },
   });
 
   await waitFor(() =>
@@ -149,23 +150,17 @@ test("支持组合 MACD 背离筛选", async () => {
   );
 
   await screen.findByRole("row", { name: /贵州茅台/ });
+  fireEvent.click(screen.getByRole("button", { name: "MACD 背离：不限" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "底背离形成中" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "顶背离已确认" }));
-  fireEvent.change(screen.getByLabelText("背离对应交叉"), {
-    target: { value: "present" },
-  });
-  fireEvent.change(screen.getByLabelText("背离出现时间"), {
-    target: { value: "5d" },
-  });
 
   await waitFor(() => expect(marketApi.getStocks).toHaveBeenLastCalledWith(
     expect.objectContaining({
       macdDivergences: ["bottom_forming", "top_confirmed"],
-      macdDivergenceCross: "present",
-      macdDivergenceRecentWindow: "5d",
     }),
     expect.any(Object),
   ));
+  expect(screen.getByRole("button", { name: "MACD 背离：已选 2 项" })).toBeInTheDocument();
 });
 
 test("清空指标会清空 MACD 背离筛选", async () => {
@@ -176,6 +171,7 @@ test("清空指标会清空 MACD 背离筛选", async () => {
   );
 
   await screen.findByRole("row", { name: /贵州茅台/ });
+  fireEvent.click(screen.getByRole("button", { name: "MACD 背离：不限" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "底背离已确认" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "清空指标" })).toBeEnabled());
   fireEvent.click(screen.getByRole("button", { name: "清空指标" }));
