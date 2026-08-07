@@ -24,6 +24,16 @@ class MacdQuality(StrEnum):
     ERROR = "error"
 
 
+class MacdDivergenceDirection(StrEnum):
+    BOTTOM = "bottom"
+    TOP = "top"
+
+
+class MacdDivergenceStatus(StrEnum):
+    FORMING = "forming"
+    CONFIRMED = "confirmed"
+
+
 @dataclass(frozen=True, slots=True)
 class MacdPoint:
     market: Market
@@ -60,6 +70,32 @@ class MacdSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class MacdDivergenceEvent:
+    market: Market
+    code: str
+    period: str
+    direction: MacdDivergenceDirection
+    status: MacdDivergenceStatus
+    anchor_one_time: datetime
+    anchor_one_price: float
+    anchor_one_diff: float
+    anchor_two_time: datetime
+    anchor_two_price: float
+    anchor_two_diff: float
+    pivot_time: datetime
+    pivot_price: float
+    pivot_diff: float
+    detected_at: datetime
+    confirmed_at: datetime | None
+    invalidated_at: datetime | None
+    is_valid: bool
+    corresponding_signal: MacdSignal
+    corresponding_signal_time: datetime | None
+    recent_days: int
+
+
+@dataclass(frozen=True, slots=True)
 class MacdCalculation:
     summary: MacdSummary
     points: tuple[MacdPoint, ...]
+    divergences: tuple[MacdDivergenceEvent, ...] = ()
