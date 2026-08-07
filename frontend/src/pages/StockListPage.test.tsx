@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { marketApi } from "../api/client";
 import { summaryFixture, stockPageFixture } from "../test/fixtures";
 import { StockListPage } from "./StockListPage";
@@ -12,7 +12,13 @@ vi.mock("../api/client", () => ({
 beforeEach(() => {
   vi.mocked(marketApi.getSummary).mockReset().mockResolvedValue(summaryFixture);
   vi.mocked(marketApi.getStocks).mockReset().mockResolvedValue(stockPageFixture);
+  window.sessionStorage.clear();
 });
+
+function LocationProbe() {
+  const location = useLocation();
+  return <output aria-label="当前列表地址">{`${location.pathname}${location.search}`}</output>;
+}
 
 test("一只股票只占一行并在防抖后按名称搜索", async () => {
   render(
@@ -180,6 +186,82 @@ test("清空指标会清空 MACD 背离筛选", async () => {
     expect.objectContaining({ macdDivergences: undefined }),
     expect.any(Object),
   ));
+});
+
+test("从地址参数恢复筛选状态并请求对应列表", async () => {
+  render(
+    <MemoryRouter initialEntries={[
+      "/?query=%E8%8C%85%E5%8F%B0&market=SH&page=2&sort_by=amount&sort_order=desc&macd_signal=golden_cross&macd_recent_window=3d&macd_zero_axis=above&macd_divergences=bottom_forming&macd_divergences=top_confirmed",
+    ]}>
+      <Routes>
+        <Route path="/" element={<><LocationProbe /><StockListPage /></>} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  expect(await screen.findByRole("row", { name: /贵州茅台/ })).toBeInTheDocument();
+  expect(screen.getByPlaceholderText("搜索股票代码或名称")).toHaveValue("茅台");
+  expect(screen.getByLabelText("市场筛选")).toHaveValue("SH");
+  expect(screen.getByLabelText("日 K MACD 信号")).toHaveValue("golden_cross:3d");
+  expect(screen.getByLabelText("零轴位置")).toHaveValue("above");
+  expect(screen.getByRole("button", { name: "MACD 背离：已选 2 项" })).toBeInTheDocument();
+  expect(screen.getByLabelText("当前列表地址")).toHaveTextContent("query=%E8%8C%85%E5%8F%B0");
+  expect(marketApi.getStocks).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      query: "茅台",
+      market: "SH",
+      page: 2,
+      sortBy: "amount",
+      sortOrder: "desc",
+      macdSignal: "golden_cross",
+      macdRecentWindow: "3d",
+      macdZeroAxis: "above",
+      macdDivergences: ["bottom_forming", "top_confirmed"],
+    }),
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
+});
+
+test("返回列表页时恢复对应筛选地址的浏览位置", async () => {
+  const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+  window.sessionStorage.setItem(
+    "stock-list-scroll:/?market=SZ&macd_signal=death_cross&macd_recent_window=5d",
+    "432",
+  );
+
+  render(
+    <MemoryRouter initialEntries={["/?market=SZ&macd_signal=death_cross&macd_recent_window=5d"]}>
+      <StockListPage />
+    </MemoryRouter>,
+  );
+
+  expect(await screen.findByRole("row", { name: /贵州茅台/ })).toBeInTheDocument();
+  expect(screen.getByLabelText("市场筛选")).toHaveValue("SZ");
+  expect(screen.getByLabelText("日 K MACD 信号")).toHaveValue("death_cross:5d");
+  expect(scrollTo).toHaveBeenCalledWith({ top: 432, left: 0, behavior: "auto" });
+
+  scrollTo.mockRestore();
+});
+
+test("筛选操作会同步到列表地址，供详情返回时复用", async () => {
+  render(
+    <MemoryRouter initialEntries={["/"]}>
+      <Routes>
+        <Route path="/" element={<><LocationProbe /><StockListPage /></>} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  await screen.findByRole("row", { name: /贵州茅台/ });
+  fireEvent.change(screen.getByLabelText("市场筛选"), { target: { value: "SH" } });
+  fireEvent.change(screen.getByLabelText("日 K MACD 信号"), { target: { value: "golden_cross:5d" } });
+  fireEvent.click(screen.getByRole("button", { name: "MACD 背离：不限" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "底背离已确认" }));
+
+  await waitFor(() => expect(screen.getByLabelText("当前列表地址")).toHaveTextContent("market=SH"));
+  expect(screen.getByLabelText("当前列表地址")).toHaveTextContent("macd_signal=golden_cross");
+  expect(screen.getByLabelText("当前列表地址")).toHaveTextContent("macd_recent_window=5d");
+  expect(screen.getByLabelText("当前列表地址")).toHaveTextContent("macd_divergences=bottom_confirmed");
 });
 
 test("股票行可使用 Enter 键进入详情", async () => {

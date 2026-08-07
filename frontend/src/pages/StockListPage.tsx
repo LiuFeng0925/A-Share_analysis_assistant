@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useLocation, useSearchParams } from "react-router-dom";
 import { isAbortError, marketApi } from "../api/client";
 import type {
   MacdDivergenceFilter,
@@ -16,6 +17,9 @@ import { usePolling } from "../hooks/usePolling";
 
 const PAGE_SIZE = 50;
 type MacdSignalSelection = "" | `${MacdSignalFilter}:${MacdRecentWindow}`;
+const DEFAULT_SORT_BY: StockQuery["sortBy"] = "code";
+const DEFAULT_SORT_ORDER: StockQuery["sortOrder"] = "asc";
+const SCROLL_STORAGE_PREFIX = "stock-list-scroll:";
 
 const DIVERGENCE_OPTIONS: Array<{ value: MacdDivergenceFilter; label: string; direction: "bottom" | "top"; confirmed: boolean }> = [
   { value: "bottom_forming", label: "底背离形成中", direction: "bottom", confirmed: false },
@@ -42,6 +46,92 @@ function parseMacdSignalSelection(value: MacdSignalSelection): {
   return { signal, recentWindow };
 }
 
+function isMarket(value: string | null): value is Market {
+  return value === "SH" || value === "SZ" || value === "BJ";
+}
+
+function isSortBy(value: string | null): value is StockQuery["sortBy"] {
+  return value === "code"
+    || value === "latest_price"
+    || value === "change_percent"
+    || value === "amount"
+    || value === "turnover_rate"
+    || value === "total_market_cap";
+}
+
+function isSortOrder(value: string | null): value is StockQuery["sortOrder"] {
+  return value === "asc" || value === "desc";
+}
+
+function isMacdSignal(value: string | null): value is MacdSignalFilter {
+  return value === "golden_cross" || value === "death_cross";
+}
+
+function isMacdRecentWindow(value: string | null): value is MacdRecentWindow {
+  return value === "today" || value === "3d" || value === "5d";
+}
+
+function isMacdZeroAxis(value: string | null): value is MacdZeroAxisFilter {
+  return value === "above" || value === "below";
+}
+
+function isMacdDivergence(value: string): value is MacdDivergenceFilter {
+  return DIVERGENCE_OPTIONS.some((option) => option.value === value);
+}
+
+function numberFromParams(params: URLSearchParams, key: string, fallback: number) {
+  const parsed = Number(params.get(key));
+  if (!Number.isInteger(parsed) || parsed < 1) return fallback;
+  return parsed;
+}
+
+function macdSignalSelectionFromParams(params: URLSearchParams): MacdSignalSelection {
+  const signal = params.get("macd_signal");
+  if (!isMacdSignal(signal)) return "";
+  const recentWindow = params.get("macd_recent_window");
+  return `${signal}:${isMacdRecentWindow(recentWindow) ? recentWindow : "5d"}`;
+}
+
+function macdDivergencesFromParams(params: URLSearchParams) {
+  const selected = new Set(params.getAll("macd_divergences").filter(isMacdDivergence));
+  return DIVERGENCE_OPTIONS
+    .map((option) => option.value)
+    .filter((value) => selected.has(value));
+}
+
+function stockListParamsFromState({
+  query,
+  market,
+  page,
+  sortBy,
+  sortOrder,
+  macdSignalSelection,
+  macdZeroAxis,
+  macdDivergences,
+}: {
+  query: string;
+  market: Market | "";
+  page: number;
+  sortBy: StockQuery["sortBy"];
+  sortOrder: StockQuery["sortOrder"];
+  macdSignalSelection: MacdSignalSelection;
+  macdZeroAxis: MacdZeroAxisFilter | "";
+  macdDivergences: MacdDivergenceFilter[];
+}) {
+  const params = new URLSearchParams();
+  if (query) params.set("query", query);
+  if (market) params.set("market", market);
+  if (page > 1) params.set("page", String(page));
+  if (sortBy !== DEFAULT_SORT_BY) params.set("sort_by", sortBy);
+  if (sortOrder !== DEFAULT_SORT_ORDER) params.set("sort_order", sortOrder);
+  const macdSignal = parseMacdSignalSelection(macdSignalSelection);
+  if (macdSignal.signal) params.set("macd_signal", macdSignal.signal);
+  if (macdSignal.recentWindow) params.set("macd_recent_window", macdSignal.recentWindow);
+  if (macdZeroAxis) params.set("macd_zero_axis", macdZeroAxis);
+  macdDivergences.forEach((value) => params.append("macd_divergences", value));
+  return params;
+}
+
 function formatUpdateTime(value: string | null) {
   if (!value) return "等待首次行情";
   const date = new Date(value);
@@ -62,15 +152,30 @@ function readableError(error: unknown) {
 }
 
 export function StockListPage() {
-  const [searchInput, setSearchInput] = useState("");
-  const [query, setQuery] = useState("");
-  const [market, setMarket] = useState<Market | "">("");
-  const [page, setPage] = useState(1);
-  const [sortBy, setSortBy] = useState<StockQuery["sortBy"]>("code");
-  const [sortOrder, setSortOrder] = useState<StockQuery["sortOrder"]>("asc");
-  const [macdSignalSelection, setMacdSignalSelection] = useState<MacdSignalSelection>("");
-  const [macdZeroAxis, setMacdZeroAxis] = useState<MacdZeroAxisFilter | "">("");
-  const [macdDivergences, setMacdDivergences] = useState<MacdDivergenceFilter[]>([]);
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialQuery = searchParams.get("query")?.trim() ?? "";
+  const initialMarket = searchParams.get("market");
+  const initialSortBy = searchParams.get("sort_by");
+  const initialSortOrder = searchParams.get("sort_order");
+  const initialMacdZeroAxis = searchParams.get("macd_zero_axis");
+  const [searchInput, setSearchInput] = useState(initialQuery);
+  const [query, setQuery] = useState(initialQuery);
+  const [market, setMarket] = useState<Market | "">(isMarket(initialMarket) ? initialMarket : "");
+  const [page, setPage] = useState(() => numberFromParams(searchParams, "page", 1));
+  const [sortBy, setSortBy] = useState<StockQuery["sortBy"]>(isSortBy(initialSortBy) ? initialSortBy : DEFAULT_SORT_BY);
+  const [sortOrder, setSortOrder] = useState<StockQuery["sortOrder"]>(
+    isSortOrder(initialSortOrder) ? initialSortOrder : DEFAULT_SORT_ORDER,
+  );
+  const [macdSignalSelection, setMacdSignalSelection] = useState<MacdSignalSelection>(
+    () => macdSignalSelectionFromParams(searchParams),
+  );
+  const [macdZeroAxis, setMacdZeroAxis] = useState<MacdZeroAxisFilter | "">(
+    isMacdZeroAxis(initialMacdZeroAxis) ? initialMacdZeroAxis : "",
+  );
+  const [macdDivergences, setMacdDivergences] = useState<MacdDivergenceFilter[]>(
+    () => macdDivergencesFromParams(searchParams),
+  );
   const [divergenceMenuOpen, setDivergenceMenuOpen] = useState(false);
   const [summary, setSummary] = useState<MarketSummaryData | null>(null);
   const [stockPage, setStockPage] = useState<StockPage | null>(null);
@@ -78,6 +183,7 @@ export function StockListPage() {
   const [error, setError] = useState<string | null>(null);
   const requestSequence = useRef(0);
   const mounted = useRef(true);
+  const restoredScrollKey = useRef<string | null>(null);
   const selectedMacdSignal = parseMacdSignalSelection(macdSignalSelection);
 
   useEffect(() => {
@@ -95,6 +201,40 @@ export function StockListPage() {
       requestSequence.current += 1;
     };
   }, []);
+
+  useEffect(() => {
+    const nextParams = stockListParamsFromState({
+      query,
+      market,
+      page,
+      sortBy,
+      sortOrder,
+      macdSignalSelection,
+      macdZeroAxis,
+      macdDivergences,
+    });
+    if (nextParams.toString() !== searchParams.toString()) {
+      setSearchParams(nextParams, { replace: true });
+    }
+  }, [
+    macdDivergences,
+    macdSignalSelection,
+    macdZeroAxis,
+    market,
+    page,
+    query,
+    searchParams,
+    setSearchParams,
+    sortBy,
+    sortOrder,
+  ]);
+
+  useEffect(() => {
+    const scrollKey = `${SCROLL_STORAGE_PREFIX}${location.pathname}${location.search}`;
+    return () => {
+      window.sessionStorage.setItem(scrollKey, String(window.scrollY));
+    };
+  }, [location.pathname, location.search]);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     const sequence = ++requestSequence.current;
@@ -138,6 +278,17 @@ export function StockListPage() {
   ]);
 
   usePolling(load, 60_000);
+
+  useEffect(() => {
+    if (stockPage === null) return;
+    const scrollKey = `${SCROLL_STORAGE_PREFIX}${location.pathname}${location.search}`;
+    if (restoredScrollKey.current === scrollKey) return;
+    restoredScrollKey.current = scrollKey;
+    const savedTop = Number(window.sessionStorage.getItem(scrollKey));
+    if (Number.isFinite(savedTop) && savedTop > 0) {
+      window.scrollTo({ top: savedTop, left: 0, behavior: "auto" });
+    }
+  }, [stockPage, location.pathname, location.search]);
 
   const handleSort = (field: StockQuery["sortBy"]) => {
     setPage(1);
