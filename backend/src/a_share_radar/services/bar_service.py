@@ -340,6 +340,17 @@ class BarService:
     ) -> list[Bar]:
         fetch_start = start.date()
         if cached:
+            repair_start = self._earliest_daily_volume_repair_date(cached)
+            if period == "1d" and repair_start is not None:
+                return await self._fetch_daily_provider(
+                    market,
+                    code,
+                    max(start.date(), repair_start),
+                    end.date(),
+                    period,
+                    adjustment,
+                    force=True,
+                )
             tail = cached[-1]
             if period == "1d":
                 if tail.quality_status is not QualityStatus.OK:
@@ -359,6 +370,29 @@ class BarService:
         return await self._fetch_daily_provider(
             market, code, fetch_start, end.date(), period, adjustment
         )
+
+    @classmethod
+    def _earliest_daily_volume_repair_date(cls, bars: list[Bar]) -> date | None:
+        repair_dates = [
+            bar.bar_time.date()
+            for bar in bars
+            if cls._daily_volume_unit_looks_like_lots(bar)
+        ]
+        return min(repair_dates, default=None)
+
+    @staticmethod
+    def _daily_volume_unit_looks_like_lots(bar: Bar) -> bool:
+        if (
+            bar.period != "1d"
+            or "tencent" not in bar.source.lower()
+            or bar.quality_status is not QualityStatus.OK
+            or bar.volume <= 0
+            or bar.amount <= 0
+            or bar.close_price <= 0
+        ):
+            return False
+        turnover_ratio = bar.amount / (bar.close_price * bar.volume)
+        return 20 <= turnover_ratio <= 200
 
     async def _fill_daily_bar_from_latest_quote_if_lagged(
         self,
@@ -564,6 +598,7 @@ class BarService:
         end: date,
         period: str,
         adjustment: str,
+        force: bool = False,
     ) -> list[Bar]:
         async def operation(
             requested_start: RangeValue, requested_end: RangeValue
@@ -585,6 +620,7 @@ class BarService:
             start,
             end,
             operation,
+            force=force,
         )
 
     async def _fetch_minute_provider(
@@ -628,6 +664,7 @@ class BarService:
         start: RangeValue,
         end: RangeValue,
         operation: ProviderOperation,
+        force: bool = False,
     ) -> list[Bar]:
         series_key: ProviderSeriesKey = (
             kind,
@@ -648,6 +685,7 @@ class BarService:
                 start,
                 end,
                 operation,
+                force,
             )
         )
         self._provider_inflight.add(task)
@@ -670,23 +708,27 @@ class BarService:
         start: RangeValue,
         end: RangeValue,
         operation: ProviderOperation,
+        force: bool,
     ) -> list[Bar]:
         async with lock:
             range_start, range_end = self._storage_range(kind, start, end)
-            confirmed = await _run_repository_call(
-                self.repository.list_confirmed_bar_ranges,
-                market,
-                code,
-                period,
-                adjustment,
-                range_start,
-                range_end,
-                self._now(),
-            )
-            confirmed_values = self._restore_ranges(kind, confirmed)
-            remaining = self._subtract_confirmed_ranges(
-                start, end, confirmed_values, period
-            )
+            if force:
+                remaining = [(start, end)]
+            else:
+                confirmed = await _run_repository_call(
+                    self.repository.list_confirmed_bar_ranges,
+                    market,
+                    code,
+                    period,
+                    adjustment,
+                    range_start,
+                    range_end,
+                    self._now(),
+                )
+                confirmed_values = self._restore_ranges(kind, confirmed)
+                remaining = self._subtract_confirmed_ranges(
+                    start, end, confirmed_values, period
+                )
             fetched: list[Bar] = []
             for requested_start, requested_end in remaining:
                 fetched.extend(

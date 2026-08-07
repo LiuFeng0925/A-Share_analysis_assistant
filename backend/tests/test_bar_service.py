@@ -603,6 +603,70 @@ async def test_daily_query_aggregates_today_from_thirty_minute_bars_when_quote_h
     assert bars[-1].quality_status is QualityStatus.PARTIAL
 
 
+async def test_daily_query_repairs_confirmed_bars_with_suspicious_volume_unit(
+    repository, fake_source
+):
+    fake_source.bar_rows = [
+        Bar(
+            "600519",
+            Market.SH,
+            "1d",
+            "qfq",
+            datetime(2026, 8, 5, 15, 0, tzinfo=TZ),
+            5.30,
+            5.33,
+            5.21,
+            5.26,
+            130_713,
+            68_735_600.0,
+            "fixture-tencent",
+            True,
+            datetime(2026, 8, 5, 17, 0, tzinfo=TZ),
+            QualityStatus.OK,
+        ),
+        Bar(
+            "600519",
+            Market.SH,
+            "1d",
+            "qfq",
+            datetime(2026, 8, 6, 15, 0, tzinfo=TZ),
+            5.27,
+            5.29,
+            5.16,
+            5.25,
+            11_737_600,
+            61_304_500.0,
+            "fixture-tencent",
+            True,
+            datetime(2026, 8, 6, 17, 0, tzinfo=TZ),
+            QualityStatus.OK,
+        ),
+    ]
+    service = BarService(fake_source, repository, history_days=60, query_ttl_seconds=0)
+    await service._fetch_daily_provider(
+        Market.SH, "600519", date(2026, 8, 5), date(2026, 8, 6), "1d", "qfq"
+    )
+    fake_source.daily_requests.clear()
+    fake_source.bar_rows = [
+        replace(fake_source.bar_rows[0], volume=13_071_300),
+        fake_source.bar_rows[1],
+    ]
+
+    bars = await service.get_bars(
+        Market.SH,
+        "600519",
+        "1d",
+        "60d",
+        "qfq",
+        datetime(2026, 8, 6, 17, 30, tzinfo=TZ),
+    )
+
+    assert fake_source.daily_requests[-1].start == date(2026, 8, 5)
+    assert fake_source.daily_requests[-1].end == date(2026, 8, 6)
+    assert bars[-2].bar_time.date() == date(2026, 8, 5)
+    assert bars[-2].volume == 13_071_300
+
+
 async def test_same_key_concurrent_requests_access_source_serially(
     monkeypatch, repository, fake_source
 ):
