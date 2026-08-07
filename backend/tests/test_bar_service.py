@@ -412,6 +412,197 @@ async def test_daily_query_fills_lagged_today_bar_from_latest_quote(
     assert bars[-1].quality_status is QualityStatus.PARTIAL
 
 
+async def test_daily_query_refetches_partial_tail_and_overwrites_flat_quote_bar(
+    repository, fake_source
+):
+    repository.upsert_bars(
+        [
+            Bar(
+                "600519",
+                Market.SH,
+                "1d",
+                "qfq",
+                datetime(2026, 8, 6, 15, 0, tzinfo=TZ),
+                38.0,
+                40.0,
+                37.0,
+                39.0,
+                50_000_000,
+                1_950_000_000.0,
+                "fixture-history",
+                True,
+                datetime(2026, 8, 6, 15, 20, tzinfo=TZ),
+                QualityStatus.OK,
+            ),
+            Bar(
+                "600519",
+                Market.SH,
+                "1d",
+                "qfq",
+                datetime(2026, 8, 7, 15, 0, tzinfo=TZ),
+                42.09,
+                42.09,
+                42.09,
+                42.09,
+                77_441_700,
+                3_195_898_000.0,
+                "fixture-quote",
+                True,
+                datetime(2026, 8, 7, 15, 1, tzinfo=TZ),
+                QualityStatus.PARTIAL,
+            ),
+        ]
+    )
+    fake_source.bar_rows = [
+        Bar(
+            "600519",
+            Market.SH,
+            "1d",
+            "qfq",
+            datetime(2026, 8, 7, 15, 0, tzinfo=TZ),
+            41.02,
+            42.09,
+            40.20,
+            42.09,
+            77_441_700,
+            3_195_898_000.0,
+            "fixture-tencent",
+            True,
+            datetime(2026, 8, 7, 17, 0, tzinfo=TZ),
+            QualityStatus.OK,
+        )
+    ]
+    service = BarService(fake_source, repository, history_days=60, query_ttl_seconds=0)
+
+    bars = await service.get_bars(
+        Market.SH,
+        "600519",
+        "1d",
+        "60d",
+        "qfq",
+        datetime(2026, 8, 7, 17, 30, tzinfo=TZ),
+    )
+
+    assert fake_source.daily_requests[-1].start == date(2026, 8, 7)
+    assert fake_source.daily_requests[-1].end == date(2026, 8, 7)
+    assert bars[-1].open_price == 41.02
+    assert bars[-1].high_price == 42.09
+    assert bars[-1].low_price == 40.20
+    assert bars[-1].close_price == 42.09
+    assert bars[-1].source == "fixture-tencent"
+    assert bars[-1].quality_status is QualityStatus.OK
+
+
+async def test_daily_query_aggregates_today_from_thirty_minute_bars_when_quote_has_no_ohlc(
+    repository, fake_source
+):
+    quote_time = datetime(2026, 8, 7, 15, 5, tzinfo=TZ)
+    repository.commit_snapshot_success(
+        [
+            QuoteSnapshot(
+                "600519",
+                Market.SH,
+                "贵州茅台",
+                quote_time,
+                42.09,
+                1.23,
+                0.51,
+                None,
+                None,
+                None,
+                41.58,
+                3_600,
+                151_524.0,
+                0.1,
+                1_000_000_000.0,
+                "fixture-tencent-quote",
+                QualityStatus.PARTIAL,
+            )
+        ],
+        started_at=quote_time,
+        source="fixture-tencent-quote",
+        market_time=quote_time,
+        expected_row_count=1,
+        quality_status="partial",
+    )
+    repository.upsert_bars(
+        [
+            Bar(
+                "600519",
+                Market.SH,
+                "1d",
+                "qfq",
+                datetime(2026, 8, 6, 15, 0, tzinfo=TZ),
+                40.0,
+                41.0,
+                39.0,
+                40.8,
+                10_000_000,
+                408_000_000.0,
+                "fixture-history",
+                True,
+                datetime(2026, 8, 6, 15, 20, tzinfo=TZ),
+                QualityStatus.OK,
+            )
+        ]
+    )
+    fake_source.bar_rows = [
+        Bar(
+            "600519",
+            Market.SH,
+            "30m",
+            "none",
+            datetime(2026, 8, 7, 10, 0, tzinfo=TZ),
+            41.02,
+            41.39,
+            40.20,
+            41.06,
+            25_245_724,
+            1_025_000_000.0,
+            "fixture-minute",
+            True,
+        ),
+        Bar(
+            "600519",
+            Market.SH,
+            "30m",
+            "none",
+            datetime(2026, 8, 7, 15, 0, tzinfo=TZ),
+            41.69,
+            42.09,
+            41.62,
+            42.09,
+            7_244_110,
+            305_000_000.0,
+            "fixture-minute",
+            True,
+        ),
+    ]
+    service = BarService(fake_source, repository, history_days=60, query_ttl_seconds=0)
+
+    bars = await service.get_bars(
+        Market.SH,
+        "600519",
+        "1d",
+        "60d",
+        "qfq",
+        datetime(2026, 8, 7, 15, 30, tzinfo=TZ),
+    )
+
+    assert fake_source.daily_requests[-1].start == date(2026, 8, 7)
+    assert fake_source.minute_requests[-1].period == "30m"
+    assert fake_source.minute_requests[-1].adjustment == "none"
+    assert bars[-1].bar_time == datetime(2026, 8, 7, 15, 0, tzinfo=TZ)
+    assert bars[-1].open_price == 41.02
+    assert bars[-1].high_price == 42.09
+    assert bars[-1].low_price == 40.20
+    assert bars[-1].close_price == 42.09
+    assert bars[-1].volume == 32_489_834
+    assert bars[-1].amount == 1_330_000_000.0
+    assert bars[-1].source == "intraday-30m"
+    assert bars[-1].quality_status is QualityStatus.PARTIAL
+
+
 async def test_same_key_concurrent_requests_access_source_serially(
     monkeypatch, repository, fake_source
 ):

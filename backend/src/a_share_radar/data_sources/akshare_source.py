@@ -81,6 +81,25 @@ def _shares_from_lots(value: object) -> int | None:
     return None if lots is None else round(lots * 100)
 
 
+def _shares_from_provider_volume(
+    value: object,
+    close_price: float,
+    amount: float | None,
+    volume_is_lots: bool,
+) -> int | None:
+    if volume_is_lots:
+        return _shares_from_lots(value)
+    volume = _integer(value)
+    if volume is None:
+        return None
+    if amount is None or volume <= 0 or close_price <= 0:
+        return volume
+    turnover_ratio = amount / (close_price * volume)
+    if 20 <= turnover_ratio <= 200:
+        return volume * 100
+    return volume
+
+
 def _amount_from_ten_thousand_yuan(value: object) -> float | None:
     amount = _number(value)
     return None if amount is None else amount * 10_000
@@ -271,12 +290,10 @@ class AkshareSource:
                 low_price = float(_field(row, "最低", "low"))
                 close_price = float(_field(row, "收盘", "close"))
                 raw_volume = _field(row, "成交量", "volume", "vol")
-                volume = (
-                    _shares_from_lots(raw_volume)
-                    if volume_is_lots
-                    else _integer(raw_volume)
-                )
                 amount = _number(_optional_field(row, "成交额", "amount"))
+                volume = _shares_from_provider_volume(
+                    raw_volume, close_price, amount, volume_is_lots
+                )
                 if amount is None and volume is not None:
                     amount = close_price * volume
                 if (
@@ -480,12 +497,10 @@ class AkshareSource:
                 low_price = float(_field(row, "最低", "low"))
                 close_price = float(_field(row, "收盘", "close"))
                 raw_volume = _field(row, "成交量", "volume", "vol")
-                volume = (
-                    _shares_from_lots(raw_volume)
-                    if volume_is_lots
-                    else _integer(raw_volume)
-                )
                 amount = _number(_optional_field(row, "成交额", "amount"))
+                volume = _shares_from_provider_volume(
+                    raw_volume, close_price, amount, volume_is_lots
+                )
                 if amount is None and volume is not None:
                     amount = close_price * volume
                 if (

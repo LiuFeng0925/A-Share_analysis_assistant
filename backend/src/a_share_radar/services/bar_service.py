@@ -342,7 +342,9 @@ class BarService:
         if cached:
             tail = cached[-1]
             if period == "1d":
-                if tail.bar_time.date() < end.date():
+                if tail.quality_status is not QualityStatus.OK:
+                    fetch_start = tail.bar_time.date()
+                elif tail.bar_time.date() < end.date():
                     fetch_start = tail.bar_time.date() + timedelta(days=1)
                 elif not tail.is_complete:
                     fetch_start = tail.bar_time.date()
@@ -373,8 +375,133 @@ class BarService:
         supplemental = self._daily_bar_from_latest_quote(
             latest_quote, adjustment, start, end, cached, fetched, now
         )
+        if supplemental is None:
+            supplemental = await self._daily_bar_from_intraday_minutes_if_lagged(
+                market, code, adjustment, start, end, cached, fetched, now, latest_quote
+            )
         if supplemental is not None:
             await _run_repository_call(self.repository.upsert_bars, [supplemental])
+
+    async def _daily_bar_from_intraday_minutes_if_lagged(
+        self,
+        market: Market,
+        code: str,
+        adjustment: str,
+        start: datetime,
+        end: datetime,
+        cached: list[Bar],
+        fetched: list[Bar],
+        now: datetime,
+        latest_quote: StockQuoteRow | None,
+    ) -> Bar | None:
+        quote_day = self._supplemental_quote_day(
+            latest_quote, start, end, cached, fetched, now
+        )
+        if quote_day is None:
+            return None
+        minute_start = datetime.combine(quote_day, time(9, 30), tzinfo=SHANGHAI)
+        minute_end = min(
+            datetime.combine(quote_day, time(15, 0), tzinfo=SHANGHAI),
+            end,
+            now.astimezone(SHANGHAI),
+        )
+        if minute_end < minute_start:
+            return None
+        minute_bars = await _run_repository_call(
+            self.repository.get_bars,
+            market,
+            code,
+            "30m",
+            minute_start,
+            minute_end,
+            "none",
+        )
+        try:
+            await self._fetch_minute_provider(
+                market, code, minute_start, minute_end, "30m", "none"
+            )
+            minute_bars = await _run_repository_call(
+                self.repository.get_bars,
+                market,
+                code,
+                "30m",
+                minute_start,
+                minute_end,
+                "none",
+            )
+        except Exception:
+            if not minute_bars:
+                logger.exception("用 30 分钟 K 聚合今日线失败，且本地无分钟缓存")
+                return None
+            logger.exception("用 30 分钟 K 聚合今日线时增量抓取失败，使用本地分钟缓存")
+        return self._daily_bar_from_minute_bars(
+            market, code, adjustment, quote_day, minute_bars, now
+        )
+
+    @staticmethod
+    def _supplemental_quote_day(
+        latest_quote: StockQuoteRow | None,
+        start: datetime,
+        end: datetime,
+        cached: list[Bar],
+        fetched: list[Bar],
+        now: datetime,
+    ) -> date | None:
+        if (
+            latest_quote is None
+            or latest_quote.latest_price is None
+            or latest_quote.captured_at is None
+        ):
+            return None
+        quote_time = latest_quote.captured_at.astimezone(SHANGHAI)
+        quote_day = quote_time.date()
+        if quote_day < start.date() or quote_day > end.date() or quote_day > now.date():
+            return None
+        if cached:
+            tail = cached[-1]
+            if tail.bar_time.date() > quote_day:
+                return None
+            if tail.bar_time.date() == quote_day and tail.quality_status is QualityStatus.OK:
+                return None
+        if fetched and max(bar.bar_time.date() for bar in fetched) >= quote_day:
+            return None
+        return quote_day
+
+    @staticmethod
+    def _daily_bar_from_minute_bars(
+        market: Market,
+        code: str,
+        adjustment: str,
+        day: date,
+        minute_bars: list[Bar],
+        now: datetime,
+    ) -> Bar | None:
+        day_bars = sorted(
+            (bar for bar in minute_bars if bar.bar_time.astimezone(SHANGHAI).date() == day),
+            key=lambda bar: bar.bar_time,
+        )
+        if not day_bars:
+            return None
+        bar_time = datetime.combine(day, time(15, 0), tzinfo=SHANGHAI)
+        acquired_at = max((bar.acquired_at or bar.bar_time for bar in day_bars))
+        is_complete = bar_is_complete("1d", bar_time, now.astimezone(SHANGHAI))
+        return Bar(
+            code=code,
+            market=market,
+            period="1d",
+            adjustment=adjustment,
+            bar_time=bar_time,
+            open_price=day_bars[0].open_price,
+            high_price=max(bar.high_price for bar in day_bars),
+            low_price=min(bar.low_price for bar in day_bars),
+            close_price=day_bars[-1].close_price,
+            volume=sum(bar.volume for bar in day_bars),
+            amount=sum(bar.amount for bar in day_bars),
+            source="intraday-30m",
+            is_complete=is_complete,
+            acquired_at=acquired_at,
+            quality_status=QualityStatus.PARTIAL,
+        )
 
     @staticmethod
     def _daily_bar_from_latest_quote(
@@ -389,21 +516,22 @@ class BarService:
         if (
             latest_quote is None
             or latest_quote.latest_price is None
+            or latest_quote.open_price is None
+            or latest_quote.high_price is None
+            or latest_quote.low_price is None
             or latest_quote.captured_at is None
         ):
             return None
-        quote_time = latest_quote.captured_at.astimezone(SHANGHAI)
-        quote_day = quote_time.date()
-        if quote_day < start.date() or quote_day > end.date() or quote_day > now.date():
-            return None
-        if cached and cached[-1].bar_time.date() >= quote_day:
-            return None
-        if fetched and max(bar.bar_time.date() for bar in fetched) >= quote_day:
+        quote_day = BarService._supplemental_quote_day(
+            latest_quote, start, end, cached, fetched, now
+        )
+        if quote_day is None:
             return None
 
-        open_price = latest_quote.open_price or latest_quote.latest_price
-        high_price = latest_quote.high_price or max(open_price, latest_quote.latest_price)
-        low_price = latest_quote.low_price or min(open_price, latest_quote.latest_price)
+        quote_time = latest_quote.captured_at.astimezone(SHANGHAI)
+        open_price = latest_quote.open_price
+        high_price = latest_quote.high_price
+        low_price = latest_quote.low_price
         close_price = latest_quote.latest_price
         is_complete = bar_is_complete(
             "1d",
