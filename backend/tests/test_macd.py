@@ -51,6 +51,15 @@ def bar_with_period(index: int, close_price: float, period: str) -> Bar:
     )
 
 
+def divergence_bars() -> list[Bar]:
+    closes = [20.0] * 35 + [
+        18.0, 16.0, 14.0, 10.0, 11.0, 12.0, 13.0, 12.0, 11.0, 10.0,
+        9.0, 10.0, 11.0, 12.0, 14.0, 16.0, 18.0, 20.0, 20.0, 20.0,
+        20.0, 20.0, 18.0, 16.0, 14.0, 12.0, 10.0, 8.0,
+    ]
+    return [daily_bar(index, close) for index, close in enumerate(closes)]
+
+
 def quote(latest_price: float, captured_at: datetime) -> StockQuoteRow:
     return StockQuoteRow(
         code="600519",
@@ -166,3 +175,33 @@ def test_macd_calculates_requested_minute_period_without_daily_quote_synthesis()
     assert result.points[-1].diff is not None
     assert result.points[-1].dea is not None
     assert result.points[-1].histogram is not None
+
+
+def test_日线macd计算同时返回背离事件():
+    bars = divergence_bars()
+
+    result = calculate_macd_series(
+        bars,
+        latest_quote=None,
+        trading_days=[bar.bar_time.date() for bar in bars],
+        now=datetime(2026, 8, 7, 16, 0, tzinfo=TZ),
+        market_open=False,
+        period="1d",
+    )
+
+    assert any(event.direction.value == "bottom" for event in result.divergences)
+
+
+def test_分钟macd不计算日线背离():
+    bars = [bar_with_period(index, 10.0 + index * 0.1, "5m") for index in range(40)]
+
+    result = calculate_macd_series(
+        bars,
+        latest_quote=None,
+        trading_days=[],
+        now=datetime(2026, 8, 7, 10, 30, tzinfo=TZ),
+        market_open=True,
+        period="5m",
+    )
+
+    assert result.divergences == ()

@@ -1,8 +1,15 @@
+from dataclasses import replace
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
+import duckdb
+import pytest
+
 from a_share_radar.domain.indicators import (
     MacdCalculation,
+    MacdDivergenceDirection,
+    MacdDivergenceEvent,
+    MacdDivergenceStatus,
     MacdPoint,
     MacdQuality,
     MacdSignal,
@@ -22,6 +29,7 @@ def macd_calculation(
     days: int | None,
     label: str,
     period: str = "1d",
+    divergences: tuple[MacdDivergenceEvent, ...] = (),
 ) -> MacdCalculation:
     market_time = datetime(2026, 8, 6, 15, 0, tzinfo=TZ)
     signal_date = None if days is None else date(2026, 8, 6)
@@ -56,7 +64,34 @@ def macd_calculation(
         is_intraday=False,
         quality=MacdQuality.OK,
     )
-    return MacdCalculation(summary=summary, points=(point,))
+    return MacdCalculation(summary=summary, points=(point,), divergences=divergences)
+
+
+def bottom_divergence(code: str, *, detected_at: datetime | None = None) -> MacdDivergenceEvent:
+    detected_at = detected_at or datetime(2026, 8, 6, 15, 0, tzinfo=TZ)
+    return MacdDivergenceEvent(
+        market=Market.SH,
+        code=code,
+        period="1d",
+        direction=MacdDivergenceDirection.BOTTOM,
+        status=MacdDivergenceStatus.CONFIRMED,
+        anchor_one_time=datetime(2026, 7, 28, 15, 0, tzinfo=TZ),
+        anchor_one_price=100.0,
+        anchor_one_diff=-1.2,
+        anchor_two_time=datetime(2026, 8, 1, 15, 0, tzinfo=TZ),
+        anchor_two_price=98.0,
+        anchor_two_diff=-1.0,
+        pivot_time=detected_at,
+        pivot_price=95.0,
+        pivot_diff=-0.8,
+        detected_at=detected_at,
+        confirmed_at=datetime(2026, 8, 7, 15, 0, tzinfo=TZ),
+        invalidated_at=None,
+        is_valid=True,
+        corresponding_signal=MacdSignal.GOLDEN_CROSS,
+        corresponding_signal_time=datetime(2026, 8, 7, 15, 0, tzinfo=TZ),
+        recent_days=1,
+    )
 
 
 def test_repository_saves_and_loads_macd_calculation(repository):
@@ -77,6 +112,105 @@ def test_repository_saves_and_loads_macd_calculation(repository):
     assert stored.summary.zero_axis is ZeroAxisPosition.ABOVE
     assert stored.summary.recent_signal_label == "近 3 日金叉"
     assert stored.points[0].histogram == 0.14
+
+
+def test_仓储读取后逐字段保留macd背离事件(repository):
+    event = bottom_divergence("600519")
+    calculation = macd_calculation(
+        "600519",
+        signal=MacdSignal.GOLDEN_CROSS,
+        zero_axis=ZeroAxisPosition.ABOVE,
+        days=2,
+        label="近 3 日金叉",
+        divergences=(event,),
+    )
+
+    repository.upsert_macd(calculation)
+
+    stored = repository.get_macd(Market.SH, "600519")
+    assert stored is not None
+    assert stored.divergences == (event,)
+
+
+def test_同一股票周期再次保存会替换旧背离事件(repository):
+    first = macd_calculation(
+        "600519",
+        signal=MacdSignal.GOLDEN_CROSS,
+        zero_axis=ZeroAxisPosition.ABOVE,
+        days=2,
+        label="近 3 日金叉",
+        divergences=(bottom_divergence("600519"),),
+    )
+    second = replace(first, divergences=())
+    repository.upsert_macd(first)
+
+    repository.upsert_macd(second)
+
+    stored = repository.get_macd(Market.SH, "600519")
+    assert stored is not None
+    assert stored.divergences == ()
+
+
+def test_替换背离事件不影响其他股票(repository):
+    repository.upsert_macd(
+        macd_calculation(
+            "600519",
+            signal=MacdSignal.GOLDEN_CROSS,
+            zero_axis=ZeroAxisPosition.ABOVE,
+            days=2,
+            label="近 3 日金叉",
+            divergences=(bottom_divergence("600519"),),
+        )
+    )
+    other_event = bottom_divergence("601318")
+    repository.upsert_macd(
+        macd_calculation(
+            "601318",
+            signal=MacdSignal.GOLDEN_CROSS,
+            zero_axis=ZeroAxisPosition.ABOVE,
+            days=2,
+            label="近 3 日金叉",
+            divergences=(other_event,),
+        )
+    )
+
+    repository.upsert_macd(
+        macd_calculation(
+            "600519",
+            signal=MacdSignal.GOLDEN_CROSS,
+            zero_axis=ZeroAxisPosition.ABOVE,
+            days=2,
+            label="近 3 日金叉",
+            divergences=(),
+        )
+    )
+
+    stored = repository.get_macd(Market.SH, "601318")
+    assert stored is not None
+    assert stored.divergences == (other_event,)
+
+
+def test_保存背离事件失败会回滚摘要序列和旧事件(repository):
+    first = macd_calculation(
+        "600519",
+        signal=MacdSignal.GOLDEN_CROSS,
+        zero_axis=ZeroAxisPosition.ABOVE,
+        days=2,
+        label="近 3 日金叉",
+        divergences=(bottom_divergence("600519"),),
+    )
+    repository.upsert_macd(first)
+    invalid = replace(
+        first,
+        summary=replace(first.summary, diff=9.99),
+        divergences=(bottom_divergence("600519"), bottom_divergence("600519")),
+    )
+
+    with pytest.raises(duckdb.ConstraintException):
+        repository.upsert_macd(invalid)
+
+    stored = repository.get_macd(Market.SH, "600519")
+    assert stored == first
 
 
 def test_list_stocks_filters_and_returns_recent_macd_signal(repository):

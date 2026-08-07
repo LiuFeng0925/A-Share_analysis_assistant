@@ -151,6 +151,35 @@ CREATE TABLE IF NOT EXISTS indicator_macd_series (
   quality VARCHAR NOT NULL,
   PRIMARY KEY (market, code, period, bar_time)
 );
+
+CREATE TABLE IF NOT EXISTS indicator_macd_divergence (
+  market VARCHAR NOT NULL,
+  code VARCHAR NOT NULL,
+  period VARCHAR NOT NULL,
+  direction VARCHAR NOT NULL,
+  status VARCHAR NOT NULL,
+  anchor_one_time TIMESTAMPTZ NOT NULL,
+  anchor_one_price DOUBLE NOT NULL,
+  anchor_one_diff DOUBLE NOT NULL,
+  anchor_two_time TIMESTAMPTZ NOT NULL,
+  anchor_two_price DOUBLE NOT NULL,
+  anchor_two_diff DOUBLE NOT NULL,
+  pivot_time TIMESTAMPTZ NOT NULL,
+  pivot_price DOUBLE NOT NULL,
+  pivot_diff DOUBLE NOT NULL,
+  detected_at TIMESTAMPTZ NOT NULL,
+  confirmed_at TIMESTAMPTZ,
+  invalidated_at TIMESTAMPTZ,
+  is_valid BOOLEAN NOT NULL,
+  corresponding_signal VARCHAR NOT NULL,
+  corresponding_signal_time TIMESTAMPTZ,
+  recent_days INTEGER NOT NULL,
+  PRIMARY KEY (market, code, period, direction, detected_at)
+);
+
+CREATE INDEX IF NOT EXISTS indicator_macd_divergence_filter
+ON indicator_macd_divergence
+  (market, code, period, direction, status, is_valid, recent_days);
 """
 
 MIGRATION_SQL = (

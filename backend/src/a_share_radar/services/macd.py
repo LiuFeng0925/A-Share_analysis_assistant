@@ -12,6 +12,7 @@ from a_share_radar.domain.indicators import (
     ZeroAxisPosition,
 )
 from a_share_radar.domain.models import Bar, Market, QualityStatus
+from a_share_radar.services.macd_divergence import calculate_macd_divergences
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 MINIMUM_MACD_BARS = 35
@@ -99,6 +100,11 @@ def calculate_macd_series(
         recent_signal, trading_days, latest.bar_time.date()
     )
     signal_label = _signal_label(recent_signal, recent_signal_days, market_open)
+    divergences = (
+        calculate_macd_divergences(calculation_bars, points, trading_days)
+        if period == "1d"
+        else ()
+    )
     return MacdCalculation(
         summary=MacdSummary(
             market=latest.market,
@@ -121,6 +127,7 @@ def calculate_macd_series(
             quality=quality,
         ),
         points=points,
+        divergences=divergences,
     )
 
 

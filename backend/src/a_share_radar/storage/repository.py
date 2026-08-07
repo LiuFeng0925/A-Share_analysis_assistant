@@ -11,6 +11,9 @@ import pyarrow.parquet as pq
 
 from a_share_radar.domain.indicators import (
     MacdCalculation,
+    MacdDivergenceDirection,
+    MacdDivergenceEvent,
+    MacdDivergenceStatus,
     MacdPoint,
     MacdQuality,
     MacdSignal,
@@ -962,6 +965,32 @@ class MarketRepository:
             )
             for point in calculation.points
         ]
+        divergence_rows = [
+            (
+                event.market.value,
+                event.code,
+                event.period,
+                event.direction.value,
+                event.status.value,
+                event.anchor_one_time,
+                event.anchor_one_price,
+                event.anchor_one_diff,
+                event.anchor_two_time,
+                event.anchor_two_price,
+                event.anchor_two_diff,
+                event.pivot_time,
+                event.pivot_price,
+                event.pivot_diff,
+                event.detected_at,
+                event.confirmed_at,
+                event.invalidated_at,
+                event.is_valid,
+                event.corresponding_signal.value,
+                event.corresponding_signal_time,
+                event.recent_days,
+            )
+            for event in calculation.divergences
+        ]
         with self.database.lock:
             connection = self.database.connection
             connection.execute("BEGIN TRANSACTION")
@@ -1011,6 +1040,27 @@ class MarketRepository:
                         """,
                         point_rows,
                     )
+                connection.execute(
+                    """
+                    DELETE FROM indicator_macd_divergence
+                    WHERE market = ? AND code = ? AND period = ?
+                    """,
+                    (summary.market.value, summary.code, summary.period),
+                )
+                if divergence_rows:
+                    connection.executemany(
+                        """
+                        INSERT INTO indicator_macd_divergence (
+                          market, code, period, direction, status,
+                          anchor_one_time, anchor_one_price, anchor_one_diff,
+                          anchor_two_time, anchor_two_price, anchor_two_diff,
+                          pivot_time, pivot_price, pivot_diff, detected_at,
+                          confirmed_at, invalidated_at, is_valid,
+                          corresponding_signal, corresponding_signal_time, recent_days
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        divergence_rows,
+                    )
                 connection.execute("COMMIT")
             except Exception:
                 connection.execute("ROLLBACK")
@@ -1041,6 +1091,21 @@ class MarketRepository:
                 FROM indicator_macd_series
                 WHERE market = ? AND code = ? AND period = ?
                 ORDER BY bar_time ASC
+                """,
+                (market.value, code, period),
+            ).fetchall()
+            divergence_rows = connection.execute(
+                """
+                SELECT market, code, period, direction, status,
+                       CAST(anchor_one_time AS VARCHAR), anchor_one_price, anchor_one_diff,
+                       CAST(anchor_two_time AS VARCHAR), anchor_two_price, anchor_two_diff,
+                       CAST(pivot_time AS VARCHAR), pivot_price, pivot_diff,
+                       CAST(detected_at AS VARCHAR), CAST(confirmed_at AS VARCHAR),
+                       CAST(invalidated_at AS VARCHAR), is_valid, corresponding_signal,
+                       CAST(corresponding_signal_time AS VARCHAR), recent_days
+                FROM indicator_macd_divergence
+                WHERE market = ? AND code = ? AND period = ?
+                ORDER BY detected_at ASC, direction ASC
                 """,
                 (market.value, code, period),
             ).fetchall()
@@ -1078,7 +1143,35 @@ class MarketRepository:
             )
             for row in point_rows
         )
-        return MacdCalculation(summary=summary, points=points)
+        divergences = tuple(
+            MacdDivergenceEvent(
+                market=Market(row[0]),
+                code=row[1],
+                period=row[2],
+                direction=MacdDivergenceDirection(row[3]),
+                status=MacdDivergenceStatus(row[4]),
+                anchor_one_time=datetime.fromisoformat(row[5]),
+                anchor_one_price=row[6],
+                anchor_one_diff=row[7],
+                anchor_two_time=datetime.fromisoformat(row[8]),
+                anchor_two_price=row[9],
+                anchor_two_diff=row[10],
+                pivot_time=datetime.fromisoformat(row[11]),
+                pivot_price=row[12],
+                pivot_diff=row[13],
+                detected_at=datetime.fromisoformat(row[14]),
+                confirmed_at=None if row[15] is None else datetime.fromisoformat(row[15]),
+                invalidated_at=None if row[16] is None else datetime.fromisoformat(row[16]),
+                is_valid=row[17],
+                corresponding_signal=MacdSignal(row[18]),
+                corresponding_signal_time=(
+                    None if row[19] is None else datetime.fromisoformat(row[19])
+                ),
+                recent_days=row[20],
+            )
+            for row in divergence_rows
+        )
+        return MacdCalculation(summary=summary, points=points, divergences=divergences)
 
     def get_bars(
         self,
