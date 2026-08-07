@@ -73,8 +73,6 @@ def _scan_direction(
     events: list[MacdDivergenceEvent] = []
     candidate: _Candidate | None = None
     for index, point in enumerate(points):
-        if point.diff is None:
-            continue
         anchors = [pivot for pivot in pivots if pivot + PIVOT_SIDE_BARS <= index]
         if candidate is None:
             if len(anchors) < 2 or not _is_divergent(bars, points, anchors[-2], anchors[-1], index, direction):

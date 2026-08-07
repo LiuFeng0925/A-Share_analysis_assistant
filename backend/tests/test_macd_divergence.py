@@ -21,14 +21,40 @@ def trading_days() -> list[date]:
     return [date(2026, 7, 1) + timedelta(days=index) for index in range(20)]
 
 
-def _bars(prices: list[float], *, period: str = "1d") -> list[Bar]:
+def weekend_trading_days() -> list[date]:
+    return [
+        date(2026, 7, 8),
+        date(2026, 7, 9),
+        date(2026, 7, 10),
+        date(2026, 7, 13),
+        date(2026, 7, 14),
+        date(2026, 7, 15),
+        date(2026, 7, 16),
+        date(2026, 7, 17),
+        date(2026, 7, 20),
+        date(2026, 7, 21),
+        date(2026, 7, 22),
+        date(2026, 7, 23),
+        date(2026, 7, 24),
+        date(2026, 7, 27),
+        date(2026, 7, 28),
+        date(2026, 7, 29),
+        date(2026, 7, 30),
+        date(2026, 7, 31),
+    ]
+
+
+def _bars(
+    prices: list[float], *, period: str = "1d", days: list[date] | None = None
+) -> list[Bar]:
+    days = trading_days() if days is None else days
     return [
         Bar(
             code="600519",
             market=Market.SH,
             period=period,
             adjustment="qfq",
-            bar_time=datetime.combine(trading_days()[index], time(15, 0), tzinfo=TZ),
+            bar_time=datetime.combine(days[index], time(15, 0), tzinfo=TZ),
             open_price=price,
             high_price=price,
             low_price=price,
@@ -44,7 +70,9 @@ def _bars(prices: list[float], *, period: str = "1d") -> list[Bar]:
 
 
 def _points(
-    bars: list[Bar], diffs: list[float], signals: dict[int, MacdSignal] | None = None
+    bars: list[Bar],
+    diffs: list[float | None],
+    signals: dict[int, MacdSignal] | None = None,
 ) -> list[MacdPoint]:
     signals = signals or {}
     return [
@@ -57,7 +85,11 @@ def _points(
             dea=diff,
             histogram=0.0,
             signal_type=signals.get(index, MacdSignal.NONE),
-            zero_axis=ZeroAxisPosition.BELOW if diff < 0 else ZeroAxisPosition.ABOVE,
+            zero_axis=(
+                ZeroAxisPosition.UNKNOWN
+                if diff is None
+                else ZeroAxisPosition.BELOW if diff < 0 else ZeroAxisPosition.ABOVE
+            ),
             is_intraday=False,
             quality=MacdQuality.OK,
         )
@@ -156,6 +188,67 @@ def test_价格和diff同步创新低会使形成中背离失效():
 
     assert event.is_valid is False
     assert event.invalidated_at == invalidated_bottom_bars()[-1].bar_time
+
+
+def test_形成中右侧三根DIFF缺失仍会确认():
+    bars = _bars([12, 11, 10, 9, 10, 11, 10, 9, 8.5, 9, 10, 9, 8, 8.5, 9, 10])
+    points = _points(
+        bars,
+        [-1, -2, -3, -4, -3, -2, -2.5, -2.8, -3, -2, -1, -1.5, -2, None, None, None],
+    )
+
+    event = next(
+        event for event in calculate_macd_divergences(bars, points, trading_days()) if event.is_valid
+    )
+
+    assert event.status is MacdDivergenceStatus.CONFIRMED
+    assert event.confirmed_at == bars[-1].bar_time
+
+
+def test_形成中DIFF缺失时价格创新低仍会失效():
+    bars = _bars([12, 11, 10, 9, 10, 11, 10, 9, 8.5, 9, 10, 9, 8, 7.5])
+    points = _points(
+        bars, [-1, -2, -3, -4, -3, -2, -2.5, -2.8, -3, -2, -1, -1.5, -2, None]
+    )
+
+    event = calculate_macd_divergences(bars, points, trading_days())[-1]
+
+    assert event.is_valid is False
+    assert event.invalidated_at == bars[-1].bar_time
+
+
+def test_跨周末形成中背离按交易日计算recent_days():
+    days = weekend_trading_days()
+    bars = _bars(
+        [12, 11, 10, 9, 10, 11, 10, 9, 8.5, 9, 10, 9, 8, 8.5, 9], days=days
+    )
+    points = _points(
+        bars, [-1, -2, -3, -4, -3, -2, -2.5, -2.8, -3, -2, -1, -1.5, -2, -1.8, -1.5]
+    )
+
+    event = calculate_macd_divergences(bars, points, days)[-1]
+
+    assert event.status is MacdDivergenceStatus.FORMING
+    assert event.recent_days == 2
+
+
+def test_跨周末已确认背离按确认时间计算recent_days():
+    days = weekend_trading_days()
+    bars = _bars(
+        [12, 11, 10, 9, 10, 11, 10, 9, 8.5, 9, 10, 9, 8, 8.5, 9, 10, 10.5, 11],
+        days=days,
+    )
+    points = _points(
+        bars,
+        [-1, -2, -3, -4, -3, -2, -2.5, -2.8, -3, -2, -1, -1.5, -2, -1.8, -1.5, -1, -0.8, -0.5],
+    )
+
+    event = next(
+        event for event in calculate_macd_divergences(bars, points, days) if event.is_valid
+    )
+
+    assert event.status is MacdDivergenceStatus.CONFIRMED
+    assert event.recent_days == 2
 
 
 def test_形成中候选当日金叉会记录对应交叉():
