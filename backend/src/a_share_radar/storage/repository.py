@@ -137,7 +137,7 @@ _MACD_JOIN = """
     LEFT JOIN indicator_macd_latest m
       ON m.market = s.market AND m.code = s.code AND m.period = '1d'
 """
-_MACD_RECENT_WINDOWS = {"today": 0, "3d": 2, "5d": 4}
+_MACD_RECENT_WINDOWS = {"today": 0, "3d": 2, "5d": 4, "10d": 9, "20d": 19}
 _MACD_DIVERGENCE_KEYS = {
     "bottom_forming": ("bottom", "forming"),
     "bottom_confirmed": ("bottom", "confirmed"),

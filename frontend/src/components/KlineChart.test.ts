@@ -73,7 +73,7 @@ describe("KlineChart", () => {
     expect(series[4]).toEqual(expect.objectContaining({ type: "bar" }));
   });
 
-  test("日K背离同时标记价格节点和DIFF节点", () => {
+  test("日K背离清楚标记锚点、确认点、交叉点和日期", () => {
     const dailyBarsWithBothPivots = {
       ...dailyBarsFixture,
       items: [
@@ -89,7 +89,12 @@ describe("KlineChart", () => {
     const macdWithEquivalentTimezone = {
       ...macdIndicatorFixture,
       divergences: [
-        { ...bottomDivergence, pivot_time: "2026-08-01T07:00:00Z" },
+        {
+          ...bottomDivergence,
+          status: "confirmed" as const,
+          pivot_time: "2026-08-04T07:00:00Z",
+          confirmed_at: "2026-08-04T07:00:00Z",
+        },
         { ...topDivergence, pivot_time: "2026-08-04T07:00:00Z" },
       ],
     };
@@ -103,6 +108,8 @@ describe("KlineChart", () => {
       markPoint?: {
         data: Array<{
           coord: [string, number];
+          name: string;
+          value: string;
           symbolSize: number;
           symbolRotate: number;
           itemStyle: { color: string };
@@ -113,26 +120,49 @@ describe("KlineChart", () => {
     const priceMarks = series.find((item) => item.name === "K 线")?.markPoint?.data;
     const diffMarks = series.find((item) => item.name === "DIFF")?.markPoint?.data;
 
-    expect(priceMarks).toHaveLength(2);
-    expect(diffMarks).toHaveLength(2);
-    expect(priceMarks?.map((mark) => mark.coord)).toEqual([
-      [dailyBarsWithBothPivots.items[0].bar_time, bottomDivergence.pivot_price],
-      [dailyBarsWithBothPivots.items[1].bar_time, topDivergence.pivot_price],
-    ]);
-    expect(diffMarks?.map((mark) => mark.coord)).toEqual([
-      [dailyBarsWithBothPivots.items[0].bar_time, bottomDivergence.pivot_diff],
-      [dailyBarsWithBothPivots.items[1].bar_time, topDivergence.pivot_diff],
-    ]);
-    expect(priceMarks?.[0]).toEqual(expect.objectContaining({
-      symbolSize: 12,
+    expect(priceMarks?.map((mark) => mark.value)).toEqual(expect.arrayContaining([
+      "前低\n08-01",
+      "新低\n08-04",
+      "确认\n08-04",
+      "前高\n08-01",
+      "新高\n08-04",
+    ]));
+    expect(diffMarks?.map((mark) => mark.value)).toEqual(expect.arrayContaining([
+      "前低\n08-01",
+      "新低\n08-04",
+      "确认\n08-04",
+      "金叉\n08-04",
+    ]));
+    expect(priceMarks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        coord: [dailyBarsWithBothPivots.items[0].bar_time, bottomDivergence.anchor_one_price],
+        name: "底背离前低",
+      }),
+      expect.objectContaining({
+        coord: [dailyBarsWithBothPivots.items[1].bar_time, bottomDivergence.anchor_two_price],
+        name: "底背离新低",
+      }),
+      expect.objectContaining({
+        coord: [dailyBarsWithBothPivots.items[1].bar_time, bottomDivergence.pivot_price],
+        name: "底背离确认",
+      }),
+    ]));
+    expect(diffMarks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        coord: [dailyBarsWithBothPivots.items[1].bar_time, 0.18],
+        name: "MACD 金叉",
+      }),
+    ]));
+    expect(priceMarks).toEqual(expect.arrayContaining([expect.objectContaining({
+      symbolSize: 14,
       symbolRotate: 0,
-      itemStyle: { color: "rgba(229, 72, 77, 0.5)" },
-    }));
-    expect(priceMarks?.[1]).toEqual(expect.objectContaining({
-      symbolSize: 15,
+      itemStyle: expect.objectContaining({ color: "#e5484d" }),
+    })]));
+    expect(priceMarks).toEqual(expect.arrayContaining([expect.objectContaining({
+      symbolSize: 14,
       symbolRotate: 180,
-      itemStyle: { color: "#16a36f" },
-    }));
+      itemStyle: expect.objectContaining({ color: "#16a36f" }),
+    })]));
   });
 
   test("提示框解释背离状态、锚点和对应交叉", () => {

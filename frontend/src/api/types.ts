@@ -8,6 +8,7 @@ export type MacdSignalFilter = Exclude<MacdSignal, "none">;
 export type MacdZeroAxis = "above" | "below" | "unknown";
 export type MacdZeroAxisFilter = Exclude<MacdZeroAxis, "unknown">;
 export type MacdRecentWindow = "today" | "3d" | "5d";
+export type MacdDivergenceRecentWindow = MacdRecentWindow | "10d" | "20d";
 export type MacdDivergenceFilter =
   | "bottom_forming"
   | "bottom_confirmed"
@@ -78,7 +79,7 @@ export interface StockQuery {
   macdRecentWindow?: MacdRecentWindow;
   macdDivergences?: MacdDivergenceFilter[];
   macdDivergenceCross?: MacdDivergenceCrossFilter;
-  macdDivergenceRecentWindow?: MacdRecentWindow;
+  macdDivergenceRecentWindow?: MacdDivergenceRecentWindow;
 }
 
 export interface Bar {

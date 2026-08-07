@@ -112,13 +112,17 @@ test("股票列表请求会重复携带 MACD 背离筛选参数", async () => {
     sortOrder: "asc",
     macdDivergences: ["bottom_forming", "top_confirmed"],
     macdDivergenceCross: "present",
-    macdDivergenceRecentWindow: "5d",
+    macdDivergenceRecentWindow: "20d",
   });
 
   expect(fetchMock).toHaveBeenCalledWith(
     expect.stringContaining(
       "macd_divergences=bottom_forming&macd_divergences=top_confirmed",
     ),
+    expect.any(Object),
+  );
+  expect(fetchMock).toHaveBeenCalledWith(
+    expect.stringContaining("macd_divergence_recent_window=20d"),
     expect.any(Object),
   );
 });

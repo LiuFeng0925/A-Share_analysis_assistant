@@ -506,6 +506,10 @@ export function StockDetailPage() {
     || (!visibleBars && !matchingBarsError);
   const barsRefreshing = barsRefreshingKey === selectedBarsKey;
   const latestBar = visibleBars?.items.at(-1);
+  const latestDailyBar = visibleBars?.period === "1d" ? latestBar : undefined;
+  const quoteOpenPrice = stock?.open_price ?? latestDailyBar?.open_price ?? null;
+  const quoteHighPrice = stock?.high_price ?? latestDailyBar?.high_price ?? null;
+  const quoteLowPrice = stock?.low_price ?? latestDailyBar?.low_price ?? null;
   const matchingMacd = macd?.period === selectedPeriod.period ? macd : null;
   const chartMacd = visibleBars && matchingMacd?.period === visibleBars.period ? matchingMacd : null;
   const macdSummary = matchingMacd?.summary;
@@ -518,10 +522,10 @@ export function StockDetailPage() {
     { label: "最新价", value: formatMarketNumber(stock?.latest_price), className: change.className },
     { label: "涨跌额", value: formatSigned(stock?.change_amount), className: changeAmount.className, direction: changeAmount.label },
     { label: "涨跌幅", value: formatSigned(stock?.change_percent, "%"), className: changePercent.className, direction: changePercent.label },
-    { label: "今开", value: formatMarketNumber(stock?.open_price), className: "" },
+    { label: "今日开盘", value: formatMarketNumber(quoteOpenPrice), className: "" },
     { label: "昨收", value: formatMarketNumber(stock?.previous_close), className: "" },
-    { label: "最高", value: formatMarketNumber(stock?.high_price), className: "" },
-    { label: "最低", value: formatMarketNumber(stock?.low_price), className: "" },
+    { label: "今日最高", value: formatMarketNumber(quoteHighPrice), className: "" },
+    { label: "今日最低", value: formatMarketNumber(quoteLowPrice), className: "" },
     { label: "成交量（股）", value: formatCompact(stock?.volume), className: "" },
     { label: "成交额", value: formatCompact(stock?.amount), className: "" },
     { label: "换手率", value: isFiniteNumber(stock?.turnover_rate) ? `${formatMarketNumber(stock.turnover_rate)}%` : "—", className: "" },

@@ -113,7 +113,7 @@ async def test_股票列表支持四种背离状态多选且非法值返回422(a
             ("macd_divergences", "bottom_forming"),
             ("macd_divergences", "bottom_confirmed"),
             ("macd_divergence_cross", "present"),
-            ("macd_divergence_recent_window", "5d"),
+            ("macd_divergence_recent_window", "20d"),
             ("page_size", "10"),
         ],
     )

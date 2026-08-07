@@ -62,20 +62,60 @@ function chartTimeFor(eventTime: string, categories: string[]) {
   return categories.find((time) => sameBarTime(time, eventTime)) ?? eventTime;
 }
 
-function divergenceMarkPoint(event: MacdDivergence, value: number, coordinateTime: string) {
-  const bullish = event.direction === "bottom";
-  const confirmed = event.status === "confirmed";
+function shortShanghaiDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value.slice(5, 10);
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: "Asia/Shanghai",
+  }).format(date).replace("/", "-");
+}
+
+function macdEventTone(direction: "bottom" | "top") {
+  return direction === "bottom"
+    ? { color: "#e5484d", weakColor: "rgba(229, 72, 77, 0.6)", rotate: 0 }
+    : { color: "#16a36f", weakColor: "rgba(22, 163, 111, 0.6)", rotate: 180 };
+}
+
+function namedMarkPoint({
+  name,
+  time,
+  value,
+  label,
+  direction,
+  weak = false,
+  symbolSize = 14,
+}: {
+  name: string;
+  time: string;
+  value: number | null | undefined;
+  label: string;
+  direction: "bottom" | "top";
+  weak?: boolean;
+  symbolSize?: number;
+}) {
+  if (!isFiniteNumber(value)) return null;
+  const tone = macdEventTone(direction);
   return {
-    name: bullish ? "底背离" : "顶背离",
-    coord: [coordinateTime, value],
-    value: bullish ? "底" : "顶",
+    name,
+    coord: [time, value],
+    value: `${label}\n${shortShanghaiDate(time)}`,
     symbol: "triangle",
-    symbolRotate: bullish ? 0 : 180,
-    symbolSize: confirmed ? 15 : 12,
+    symbolRotate: tone.rotate,
+    symbolSize,
     itemStyle: {
-      color: bullish
-        ? confirmed ? "#e5484d" : "rgba(229, 72, 77, 0.5)"
-        : confirmed ? "#16a36f" : "rgba(22, 163, 111, 0.5)",
+      color: weak ? tone.weakColor : tone.color,
+    },
+    label: {
+      show: true,
+      formatter: "{c}",
+      color: tone.color,
+      fontSize: 10,
+      fontWeight: 700,
+    },
+    tooltip: {
+      formatter: `${name}<br />${formatShanghaiDateTime(time)}<br />数值 ${formatMarketNumber(value)}`,
     },
   };
 }
@@ -94,9 +134,21 @@ function divergenceTooltipContent(event: MacdDivergence) {
     `锚点一 ${formatShanghaiDateTime(event.anchor_one_time)}　价格 ${formatMarketNumber(event.anchor_one_price)}　DIFF ${formatMarketNumber(event.anchor_one_diff)}`,
     `锚点二 ${formatShanghaiDateTime(event.anchor_two_time)}　价格 ${formatMarketNumber(event.anchor_two_price)}　DIFF ${formatMarketNumber(event.anchor_two_diff)}`,
     `节点价格 ${formatMarketNumber(event.pivot_price)}　节点 DIFF ${formatMarketNumber(event.pivot_diff)}`,
+    event.confirmed_at ? `确认时间 ${formatShanghaiDateTime(event.confirmed_at)}` : null,
     `对应交叉：${divergenceSignalLabel(event)}`,
+    event.corresponding_signal_time ? `交叉时间 ${formatShanghaiDateTime(event.corresponding_signal_time)}` : null,
     event.status === "forming" ? "该背离仍在形成，后续创新低或创新高时可能更新或失效" : null,
   ];
+}
+
+function relatedDivergenceTime(event: MacdDivergence, barTime: string) {
+  return [
+    event.anchor_one_time,
+    event.anchor_two_time,
+    event.pivot_time,
+    event.confirmed_at,
+    event.corresponding_signal_time,
+  ].some((time) => Boolean(time && sameBarTime(time, barTime)));
 }
 
 function tooltipContent(series: BarSeries, dataIndex: number, macd?: MacdIndicator | null) {
@@ -104,7 +156,7 @@ function tooltipContent(series: BarSeries, dataIndex: number, macd?: MacdIndicat
   if (!bar) return "暂无 K 线数据";
   const macdPoint = macd?.items.find((item) => sameBarTime(item.bar_time, bar.bar_time));
   const divergences = series.period === "1d"
-    ? macd?.divergences.filter((event) => sameBarTime(event.pivot_time, bar.bar_time)) ?? []
+    ? macd?.divergences.filter((event) => relatedDivergenceTime(event, bar.bar_time)) ?? []
     : [];
   return [
     `<strong>${formatShanghaiDateTime(bar.bar_time)}</strong>`,
@@ -120,12 +172,115 @@ function tooltipContent(series: BarSeries, dataIndex: number, macd?: MacdIndicat
   ].filter(Boolean).join("<br />");
 }
 
+function buildPriceDivergenceMarks(events: MacdDivergence[], categories: string[], series: BarSeries) {
+  return events.flatMap((event) => {
+    const directionName = event.direction === "bottom" ? "底背离" : "顶背离";
+    const anchorLabel = event.direction === "bottom"
+      ? { one: "前低", two: "新低" }
+      : { one: "前高", two: "新高" };
+    const confirmationTime = event.confirmed_at
+      ? chartTimeFor(event.confirmed_at, categories)
+      : null;
+    const confirmationBar = confirmationTime
+      ? series.items.find((bar) => sameBarTime(bar.bar_time, confirmationTime))
+      : null;
+    const confirmationPrice = event.direction === "bottom"
+      ? confirmationBar?.low_price ?? event.pivot_price
+      : confirmationBar?.high_price ?? event.pivot_price;
+
+    return [
+      namedMarkPoint({
+        name: `${directionName}${anchorLabel.one}`,
+        time: chartTimeFor(event.anchor_one_time, categories),
+        value: event.anchor_one_price,
+        label: anchorLabel.one,
+        direction: event.direction,
+        weak: true,
+        symbolSize: 12,
+      }),
+      namedMarkPoint({
+        name: `${directionName}${anchorLabel.two}`,
+        time: chartTimeFor(event.anchor_two_time, categories),
+        value: event.anchor_two_price,
+        label: anchorLabel.two,
+        direction: event.direction,
+      }),
+      confirmationTime
+        ? namedMarkPoint({
+            name: `${directionName}确认`,
+            time: confirmationTime,
+            value: confirmationPrice,
+            label: "确认",
+            direction: event.direction,
+            symbolSize: 14,
+          })
+        : null,
+    ].filter((mark): mark is NonNullable<typeof mark> => mark !== null);
+  });
+}
+
+function buildDiffEventMarks(events: MacdDivergence[], categories: string[]) {
+  return events.flatMap((event) => {
+    const directionName = event.direction === "bottom" ? "底背离" : "顶背离";
+    const anchorLabel = event.direction === "bottom"
+      ? { one: "前低", two: "新低" }
+      : { one: "前高", two: "新高" };
+    const confirmationTime = event.confirmed_at
+      ? chartTimeFor(event.confirmed_at, categories)
+      : null;
+
+    return [
+      namedMarkPoint({
+        name: `${directionName}DIFF${anchorLabel.one}`,
+        time: chartTimeFor(event.anchor_one_time, categories),
+        value: event.anchor_one_diff,
+        label: anchorLabel.one,
+        direction: event.direction,
+        weak: true,
+        symbolSize: 12,
+      }),
+      namedMarkPoint({
+        name: `${directionName}DIFF${anchorLabel.two}`,
+        time: chartTimeFor(event.anchor_two_time, categories),
+        value: event.anchor_two_diff,
+        label: anchorLabel.two,
+        direction: event.direction,
+      }),
+      confirmationTime
+        ? namedMarkPoint({
+            name: `${directionName}DIFF确认`,
+            time: confirmationTime,
+            value: event.pivot_diff,
+            label: "确认",
+            direction: event.direction,
+          })
+        : null,
+    ].filter((mark): mark is NonNullable<typeof mark> => mark !== null);
+  });
+}
+
+function buildMacdCrossMarks(macd: MacdIndicator | null | undefined, categories: string[]) {
+  return (macd?.items ?? []).flatMap((item) => {
+    if (item.signal_type !== "golden_cross" && item.signal_type !== "death_cross") return [];
+    const direction = item.signal_type === "golden_cross" ? "bottom" : "top";
+    return namedMarkPoint({
+      name: item.signal_type === "golden_cross" ? "MACD 金叉" : "MACD 死叉",
+      time: chartTimeFor(item.bar_time, categories),
+      value: item.diff,
+      label: item.signal_type === "golden_cross" ? "金叉" : "死叉",
+      direction,
+      symbolSize: 13,
+    }) ?? [];
+  });
+}
+
 export function buildKlineOption(
   series: BarSeries,
   zoom: ZoomWindow = defaultZoomForSeries(series),
   macd?: MacdIndicator | null,
 ): EChartsOption {
-  const hasMacd = Boolean(macd?.items.length);
+  const activeMacd = macd?.period === series.period ? macd : null;
+  const hasMacd = Boolean(activeMacd?.items.length);
   const categories = series.items.map((bar) => bar.bar_time);
   const candles = series.items.map((bar) => [
     bar.open_price,
@@ -137,7 +292,7 @@ export function buildKlineOption(
     value: bar.volume,
     itemStyle: { color: bar.close_price >= bar.open_price ? "#e5484d" : "#16a36f" },
   }));
-  const macdByTime = new Map(macd?.items.map((item) => [item.bar_time, item]) ?? []);
+  const macdByTime = new Map(activeMacd?.items.map((item) => [item.bar_time, item]) ?? []);
   const diff = categories.map((time) => macdByTime.get(time)?.diff ?? null);
   const dea = categories.map((time) => macdByTime.get(time)?.dea ?? null);
   const histogram = categories.map((time) => {
@@ -147,13 +302,12 @@ export function buildKlineOption(
       itemStyle: { color: value !== null && value >= 0 ? "#e5484d" : "#16a36f" },
     };
   });
-  const divergences = series.period === "1d" ? macd?.divergences ?? [] : [];
-  const priceDivergenceMarks = divergences.map((event) => (
-    divergenceMarkPoint(event, event.pivot_price, chartTimeFor(event.pivot_time, categories))
-  ));
-  const diffDivergenceMarks = divergences.map((event) => (
-    divergenceMarkPoint(event, event.pivot_diff, chartTimeFor(event.pivot_time, categories))
-  ));
+  const divergences = series.period === "1d" ? activeMacd?.divergences ?? [] : [];
+  const priceDivergenceMarks = buildPriceDivergenceMarks(divergences, categories, series);
+  const diffDivergenceMarks = [
+    ...buildDiffEventMarks(divergences, categories),
+    ...buildMacdCrossMarks(activeMacd, categories),
+  ];
   const axisLabelFormatter = (value: string) =>
     formatShanghaiAxisLabel(value, series.period, series.range);
   const linkedAxes = hasMacd ? [0, 1, 2] : [0, 1];
@@ -192,7 +346,7 @@ export function buildKlineOption(
       formatter: (params: unknown) => {
         const items = Array.isArray(params) ? params : [params];
         const first = items[0] as { dataIndex?: number } | undefined;
-        return tooltipContent(series, first?.dataIndex ?? -1, macd);
+        return tooltipContent(series, first?.dataIndex ?? -1, activeMacd);
       },
     },
     grid: hasMacd

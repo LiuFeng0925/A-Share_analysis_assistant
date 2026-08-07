@@ -619,3 +619,17 @@ def test_股票列表背离交叉和最近时间可作用于任意有效背离(r
 
     assert page.total == 1
     assert [item.code for item in page.items] == ["600519"]
+
+    wider_page = repository.list_stocks(
+        None,
+        None,
+        "code",
+        "asc",
+        1,
+        50,
+        macd_divergence_cross="present",
+        macd_divergence_recent_window="20d",
+    )
+
+    assert wider_page.total == 2
+    assert [item.code for item in wider_page.items] == ["600036", "600519"]

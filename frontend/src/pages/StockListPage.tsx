@@ -3,6 +3,7 @@ import { useLocation, useSearchParams } from "react-router-dom";
 import { isAbortError, marketApi } from "../api/client";
 import type {
   MacdDivergenceFilter,
+  MacdDivergenceRecentWindow,
   MacdRecentWindow,
   MacdSignalFilter,
   MacdZeroAxisFilter,
@@ -35,6 +36,14 @@ const MACD_SIGNAL_OPTIONS: Array<{ value: MacdSignalSelection; label: string }> 
   { value: "death_cross:today", label: "今日死叉" },
   { value: "death_cross:3d", label: "近 3 日死叉" },
   { value: "death_cross:5d", label: "近 5 日死叉" },
+];
+const DIVERGENCE_TIME_OPTIONS: Array<{ value: MacdDivergenceRecentWindow | ""; label: string }> = [
+  { value: "", label: "时间不限" },
+  { value: "today", label: "今日" },
+  { value: "3d", label: "近 3 日" },
+  { value: "5d", label: "近 5 日" },
+  { value: "10d", label: "近 10 日" },
+  { value: "20d", label: "近 20 日" },
 ];
 
 function parseMacdSignalSelection(value: MacdSignalSelection): {
@@ -69,6 +78,10 @@ function isMacdSignal(value: string | null): value is MacdSignalFilter {
 
 function isMacdRecentWindow(value: string | null): value is MacdRecentWindow {
   return value === "today" || value === "3d" || value === "5d";
+}
+
+function isMacdDivergenceRecentWindow(value: string | null): value is MacdDivergenceRecentWindow {
+  return value === "today" || value === "3d" || value === "5d" || value === "10d" || value === "20d";
 }
 
 function isMacdZeroAxis(value: string | null): value is MacdZeroAxisFilter {
@@ -108,6 +121,7 @@ function stockListParamsFromState({
   macdSignalSelection,
   macdZeroAxis,
   macdDivergences,
+  macdDivergenceRecentWindow,
 }: {
   query: string;
   market: Market | "";
@@ -117,6 +131,7 @@ function stockListParamsFromState({
   macdSignalSelection: MacdSignalSelection;
   macdZeroAxis: MacdZeroAxisFilter | "";
   macdDivergences: MacdDivergenceFilter[];
+  macdDivergenceRecentWindow: MacdDivergenceRecentWindow | "";
 }) {
   const params = new URLSearchParams();
   if (query) params.set("query", query);
@@ -129,6 +144,9 @@ function stockListParamsFromState({
   if (macdSignal.recentWindow) params.set("macd_recent_window", macdSignal.recentWindow);
   if (macdZeroAxis) params.set("macd_zero_axis", macdZeroAxis);
   macdDivergences.forEach((value) => params.append("macd_divergences", value));
+  if (macdDivergenceRecentWindow) {
+    params.set("macd_divergence_recent_window", macdDivergenceRecentWindow);
+  }
   return params;
 }
 
@@ -159,6 +177,7 @@ export function StockListPage() {
   const initialSortBy = searchParams.get("sort_by");
   const initialSortOrder = searchParams.get("sort_order");
   const initialMacdZeroAxis = searchParams.get("macd_zero_axis");
+  const initialMacdDivergenceRecentWindow = searchParams.get("macd_divergence_recent_window");
   const [searchInput, setSearchInput] = useState(initialQuery);
   const [query, setQuery] = useState(initialQuery);
   const [market, setMarket] = useState<Market | "">(isMarket(initialMarket) ? initialMarket : "");
@@ -175,6 +194,9 @@ export function StockListPage() {
   );
   const [macdDivergences, setMacdDivergences] = useState<MacdDivergenceFilter[]>(
     () => macdDivergencesFromParams(searchParams),
+  );
+  const [macdDivergenceRecentWindow, setMacdDivergenceRecentWindow] = useState<MacdDivergenceRecentWindow | "">(
+    isMacdDivergenceRecentWindow(initialMacdDivergenceRecentWindow) ? initialMacdDivergenceRecentWindow : "",
   );
   const [divergenceMenuOpen, setDivergenceMenuOpen] = useState(false);
   const [summary, setSummary] = useState<MarketSummaryData | null>(null);
@@ -212,12 +234,14 @@ export function StockListPage() {
       macdSignalSelection,
       macdZeroAxis,
       macdDivergences,
+      macdDivergenceRecentWindow,
     });
     if (nextParams.toString() !== searchParams.toString()) {
       setSearchParams(nextParams, { replace: true });
     }
   }, [
     macdDivergences,
+    macdDivergenceRecentWindow,
     macdSignalSelection,
     macdZeroAxis,
     market,
@@ -254,6 +278,7 @@ export function StockListPage() {
           macdZeroAxis: macdZeroAxis || undefined,
           macdRecentWindow: selectedMacdSignal.recentWindow,
           macdDivergences: macdDivergences.length > 0 ? macdDivergences : undefined,
+          macdDivergenceRecentWindow: macdDivergenceRecentWindow || undefined,
         }, { signal }),
       ]);
       if (!mounted.current || sequence !== requestSequence.current) return;
@@ -268,6 +293,7 @@ export function StockListPage() {
     }
   }, [
     macdDivergences,
+    macdDivergenceRecentWindow,
     macdSignalSelection,
     macdZeroAxis,
     market,
@@ -311,7 +337,8 @@ export function StockListPage() {
   const hasData = stockPage !== null;
   const hasIndicatorFilters = macdSignalSelection !== ""
     || macdZeroAxis !== ""
-    || macdDivergences.length > 0;
+    || macdDivergences.length > 0
+    || macdDivergenceRecentWindow !== "";
   const divergenceButtonText = macdDivergences.length > 0
     ? `MACD 背离：已选 ${macdDivergences.length} 项`
     : "MACD 背离：不限";
@@ -440,6 +467,21 @@ export function StockListPage() {
               </div>
             )}
           </div>
+          <label className="indicator-filter">
+            <span>背离时间</span>
+            <select
+              aria-label="背离时间"
+              value={macdDivergenceRecentWindow}
+              onChange={(event) => {
+                setMacdDivergenceRecentWindow(event.target.value as MacdDivergenceRecentWindow | "");
+                setPage(1);
+              }}
+            >
+              {DIVERGENCE_TIME_OPTIONS.map((option) => (
+                <option key={option.value || "all"} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
           <button
             type="button"
             className="indicator-filter-clear"
@@ -448,6 +490,7 @@ export function StockListPage() {
               setMacdSignalSelection("");
               setMacdZeroAxis("");
               setMacdDivergences([]);
+              setMacdDivergenceRecentWindow("");
               setDivergenceMenuOpen(false);
               setPage(1);
             }}

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { marketApi } from "../api/client";
@@ -104,6 +104,34 @@ test("详情页展示 MACD 结果并把日线指标传给 K 线副图", async ()
     "1d",
     expect.objectContaining({ signal: expect.any(AbortSignal) }),
   );
+});
+
+test("详情顶部用最新日K补齐今日开盘最高最低", async () => {
+  vi.mocked(marketApi.getStock).mockResolvedValue({
+    ...stockDetailFixture,
+    open_price: null,
+    high_price: null,
+    low_price: null,
+  });
+  vi.mocked(marketApi.getBars).mockResolvedValue({
+    ...dailyBarsFixture,
+    items: [
+      {
+        ...dailyBarsFixture.items[0],
+        open_price: 41.02,
+        high_price: 42.09,
+        low_price: 40.2,
+        close_price: 42.09,
+      },
+    ],
+  });
+
+  renderDetail();
+
+  const quoteGrid = await screen.findByLabelText("核心行情");
+  expect(within(quoteGrid).getByText("今日开盘").parentElement).toHaveTextContent("41.02");
+  expect(within(quoteGrid).getByText("今日最高").parentElement).toHaveTextContent("42.09");
+  expect(within(quoteGrid).getByText("今日最低").parentElement).toHaveTextContent("40.20");
 });
 
 test("普通金叉与多个背离状态分区展示", async () => {

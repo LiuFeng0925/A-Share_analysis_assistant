@@ -36,6 +36,7 @@ Adjustment = Literal["none", "qfq", "hfq"]
 MacdSignalQuery = Literal["golden_cross", "death_cross"]
 MacdZeroAxisQuery = Literal["above", "below"]
 MacdRecentWindowQuery = Literal["today", "3d", "5d"]
+MacdDivergenceRecentWindowQuery = Literal["today", "3d", "5d", "10d", "20d"]
 MacdDivergenceQuery = Literal[
     "bottom_forming",
     "bottom_confirmed",
@@ -78,7 +79,7 @@ def stock_list(
     macd_recent_window: MacdRecentWindowQuery | None = None,
     macd_divergences: Annotated[list[MacdDivergenceQuery] | None, Query()] = None,
     macd_divergence_cross: MacdDivergenceCrossQuery | None = None,
-    macd_divergence_recent_window: MacdRecentWindowQuery | None = None,
+    macd_divergence_recent_window: MacdDivergenceRecentWindowQuery | None = None,
 ):
     return request.app.state.repository.list_stocks(
         query,
