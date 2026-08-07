@@ -197,6 +197,7 @@ function divergenceTooltipContent(event: MacdDivergence) {
   const status = event.status === "forming" ? "形成中" : "已确认";
   return [
     `${direction}${status}`,
+    `发现时间 ${formatShanghaiDateTime(event.detected_at)}`,
     `锚点一 ${formatShanghaiDateTime(event.anchor_one_time)}　价格 ${formatMarketNumber(event.anchor_one_price)}　DIFF ${formatMarketNumber(event.anchor_one_diff)}`,
     `锚点二 ${formatShanghaiDateTime(event.anchor_two_time)}　价格 ${formatMarketNumber(event.anchor_two_price)}　DIFF ${formatMarketNumber(event.anchor_two_diff)}`,
     `节点价格 ${formatMarketNumber(event.pivot_price)}　节点 DIFF ${formatMarketNumber(event.pivot_diff)}`,
@@ -209,6 +210,7 @@ function divergenceTooltipContent(event: MacdDivergence) {
 
 function relatedDivergenceTime(event: MacdDivergence, barTime: string) {
   return [
+    event.detected_at,
     event.anchor_one_time,
     event.anchor_two_time,
     event.pivot_time,
@@ -297,6 +299,12 @@ function buildPriceDivergenceLines(events: MacdDivergence[], categories: string[
 
     return [
       {
+        name: `${directionName}出现`,
+        time: chartTimeFor(event.detected_at, categories),
+        label: "出现",
+        direction: event.direction,
+      },
+      {
         name: `${directionName}${anchorLabel.one}`,
         time: chartTimeFor(event.anchor_one_time, categories),
         label: anchorLabel.one,
@@ -332,6 +340,12 @@ function buildDiffEventLines(events: MacdDivergence[], categories: string[]): Ve
       : null;
 
     return [
+      {
+        name: `${directionName}DIFF出现`,
+        time: chartTimeFor(event.detected_at, categories),
+        label: "出现",
+        direction: event.direction,
+      },
       {
         name: `${directionName}DIFF${anchorLabel.one}`,
         time: chartTimeFor(event.anchor_one_time, categories),

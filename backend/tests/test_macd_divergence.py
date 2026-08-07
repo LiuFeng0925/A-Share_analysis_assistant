@@ -224,6 +224,18 @@ def test_价格和diff同步创新低会使形成中背离失效():
     assert event.invalidated_at == invalidated_bottom_bars()[-1].bar_time
 
 
+def test_同步创新低后较高低点不能再作为底背离新低():
+    bars = _bars([12, 11, 10, 9, 10, 11, 10, 9, 8.5, 9, 10, 9, 7, 7.5, 8, 8.2])
+    points = _points(
+        bars,
+        [-1, -2, -3, -4, -3, -2, -2.5, -2.8, -3, -2, -1, -1.5, -5, -2, -1.8, -1.6],
+    )
+
+    events = calculate_macd_divergences(bars, points, trading_days())
+
+    assert events == ()
+
+
 def test_形成中右侧三根DIFF缺失仍会确认():
     bars = _bars([12, 11, 10, 9, 10, 11, 10, 9, 8.5, 9, 10, 9, 8, 8.5, 9, 10])
     points = _points(

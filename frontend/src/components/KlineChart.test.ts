@@ -137,14 +137,14 @@ describe("KlineChart", () => {
     expect(priceMarks?.every((mark) => mark.symbol === "circle" && mark.symbolSize <= 7)).toBe(true);
     expect(priceLines?.map((line) => line.label.formatter)).toEqual(expect.arrayContaining([
       "前低/前高\n08-01",
-      "新低/确认/新高\n08-04",
+      "出现/新低/确认/新高\n08-04",
     ]));
     expect(priceLines?.every((line) => line.label.position === "end")).toBe(true);
     expect(priceLines?.every((line) => line.lineStyle.type === "dashed" && line.lineStyle.opacity < 0.6)).toBe(true);
     expect(diffMarks).toBeUndefined();
     expect(diffLines?.map((line) => line.label.formatter)).toEqual(expect.arrayContaining([
       "前低/前高\n08-01",
-      "新低/确认/新高/金叉\n08-04",
+      "出现/新低/确认/新高/金叉\n08-04",
     ]));
     expect(priceMarks).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -188,6 +188,7 @@ describe("KlineChart", () => {
     const content = formatter([{ dataIndex: 0 }]);
 
     expect(content).toContain("底背离形成中");
+    expect(content).toContain("发现时间 2026-08-04 15:00:00");
     expect(content).toContain("后续创新低或创新高时可能更新或失效");
     expect(content).toContain("锚点一");
     expect(content).toContain("2026-08-01 15:00:00");

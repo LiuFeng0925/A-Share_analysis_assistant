@@ -110,14 +110,31 @@ def _scan_direction(
 ) -> tuple[MacdDivergenceEvent, ...]:
     events: list[MacdDivergenceEvent] = []
     candidate: _Candidate | None = None
+    active_anchor_pair: tuple[int, int] | None = None
+    current_extreme_index: int | None = None
     for index, point in enumerate(points):
         anchors = [pivot for pivot in pivots if pivot + PIVOT_SIDE_BARS <= index]
         if candidate is None:
-            if len(anchors) < 2 or not _is_divergent(bars, points, anchors[-2], anchors[-1], index, direction):
+            if len(anchors) < 2:
+                continue
+            anchor_pair = (anchors[-2], anchors[-1])
+            if anchor_pair != active_anchor_pair:
+                active_anchor_pair = anchor_pair
+                current_extreme_index = None
+            if not _is_price_beyond_anchors(bars, anchor_pair[0], anchor_pair[1], index, direction):
+                continue
+            if current_extreme_index is not None and not _is_more_extreme(
+                _price(bars[index], direction),
+                _price(bars[current_extreme_index], direction),
+                direction,
+            ):
+                continue
+            if not _is_divergent(bars, points, anchor_pair[0], anchor_pair[1], index, direction):
+                current_extreme_index = index
                 continue
             candidate = _Candidate(
-                anchors[-2],
-                anchors[-1],
+                anchor_pair[0],
+                anchor_pair[1],
                 index,
                 detected_at=point.bar_time,
                 updated_at=point.bar_time,
@@ -159,6 +176,7 @@ def _scan_direction(
                 )
             )
             candidate = None
+            current_extreme_index = index
             continue
 
         _record_signal(candidate, point, direction)
@@ -181,6 +199,7 @@ def _scan_direction(
                     confirmed_at=point.bar_time,
                 )
             )
+            current_extreme_index = candidate.pivot_index
             candidate = None
 
     if candidate is not None:
@@ -240,6 +259,20 @@ def _is_more_extreme(
     if direction is MacdDivergenceDirection.BOTTOM:
         return current_price < pivot_price
     return current_price > pivot_price
+
+
+def _is_price_beyond_anchors(
+    bars: Sequence[Bar],
+    anchor_one_index: int,
+    anchor_two_index: int,
+    candidate_index: int,
+    direction: MacdDivergenceDirection,
+) -> bool:
+    candidate_price = _price(bars[candidate_index], direction)
+    return (
+        _is_more_extreme(candidate_price, _price(bars[anchor_one_index], direction), direction)
+        and _is_more_extreme(candidate_price, _price(bars[anchor_two_index], direction), direction)
+    )
 
 
 def _record_signal(
