@@ -73,7 +73,7 @@ describe("KlineChart", () => {
     expect(series[4]).toEqual(expect.objectContaining({ type: "bar" }));
   });
 
-  test("日K背离用小点标真实位置并用顶部虚线标清日期", () => {
+  test("MACD 背离只在副图标记，K 线主图只保留普通价格高低点", () => {
     const dailyBarsWithBothPivots = {
       ...dailyBarsFixture,
       items: [
@@ -133,45 +133,19 @@ describe("KlineChart", () => {
     const diffMarks = diffSeries?.markPoint?.data;
     const diffLines = diffSeries?.markLine?.data;
 
-    expect(priceMarks?.every((mark) => mark.label.show === false)).toBe(true);
-    expect(priceMarks?.every((mark) => mark.symbol === "circle" && mark.symbolSize <= 7)).toBe(true);
-    expect(priceLines?.map((line) => line.label.formatter)).toEqual(expect.arrayContaining([
-      "前低1/前高1\n08-01",
-      "前低2/背离低点/确认/前高2/背离高点\n08-04",
-    ]));
-    expect(priceLines?.every((line) => line.label.position === "end")).toBe(true);
-    expect(priceLines?.every((line) => line.lineStyle.type === "dashed" && line.lineStyle.opacity < 0.6)).toBe(true);
+    expect(priceLines).toBeUndefined();
     expect(diffMarks).toBeUndefined();
     expect(diffLines?.map((line) => line.label.formatter)).toEqual(expect.arrayContaining([
       "前低1/前高1\n08-01",
       "前低2/背离低点/确认/前高2/背离高点/金叉\n08-04",
     ]));
-    expect(priceMarks).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        coord: [dailyBarsWithBothPivots.items[0].bar_time, bottomDivergence.anchor_one_price],
-        name: "底背离前低1",
-      }),
-      expect.objectContaining({
-        coord: [dailyBarsWithBothPivots.items[1].bar_time, bottomDivergence.anchor_two_price],
-        name: "底背离前低2",
-      }),
-      expect.objectContaining({
-        coord: [dailyBarsWithBothPivots.items[1].bar_time, bottomDivergence.pivot_price],
-        name: "底背离低点",
-      }),
-      expect.objectContaining({
-        coord: [dailyBarsWithBothPivots.items[1].bar_time, bottomDivergence.pivot_price],
-        name: "底背离确认",
-      }),
+    const priceMarkNames = priceMarks?.map((mark) => mark.name) ?? [];
+    expect(priceMarkNames).not.toEqual(expect.arrayContaining([
+      "底背离前低1",
+      "底背离前低2",
+      "底背离低点",
+      "底背离确认",
     ]));
-    expect(priceMarks).toEqual(expect.arrayContaining([expect.objectContaining({
-      symbolSize: 7,
-      itemStyle: expect.objectContaining({ color: "#e5484d" }),
-    })]));
-    expect(priceMarks).toEqual(expect.arrayContaining([expect.objectContaining({
-      symbolSize: 7,
-      itemStyle: expect.objectContaining({ color: "#16a36f" }),
-    })]));
   });
 
   test("提示框解释背离状态、锚点和对应交叉", () => {

@@ -241,105 +241,6 @@ function tooltipContent(series: BarSeries, dataIndex: number, macd?: MacdIndicat
   ].filter(Boolean).join("<br />");
 }
 
-function buildPriceDivergenceMarks(events: MacdDivergence[], categories: string[], series: BarSeries) {
-  return events.flatMap((event) => {
-    const directionName = event.direction === "bottom" ? "底背离" : "顶背离";
-    const anchorLabel = event.direction === "bottom"
-      ? { one: "前低1", two: "前低2", pivot: "背离低点", markName: "低点" }
-      : { one: "前高1", two: "前高2", pivot: "背离高点", markName: "高点" };
-    const confirmationTime = event.confirmed_at
-      ? chartTimeFor(event.confirmed_at, categories)
-      : null;
-    const confirmationBar = confirmationTime
-      ? series.items.find((bar) => sameBarTime(bar.bar_time, confirmationTime))
-      : null;
-    const confirmationPrice = event.direction === "bottom"
-      ? confirmationBar?.low_price ?? event.pivot_price
-      : confirmationBar?.high_price ?? event.pivot_price;
-
-    return [
-      namedMarkPoint({
-        name: `${directionName}${anchorLabel.one}`,
-        time: chartTimeFor(event.anchor_one_time, categories),
-        value: event.anchor_one_price,
-        label: anchorLabel.one,
-        direction: event.direction,
-        weak: true,
-        symbolSize: 5,
-      }),
-      namedMarkPoint({
-        name: `${directionName}${anchorLabel.two}`,
-        time: chartTimeFor(event.anchor_two_time, categories),
-        value: event.anchor_two_price,
-        label: anchorLabel.two,
-        direction: event.direction,
-        weak: true,
-        symbolSize: 5,
-      }),
-      namedMarkPoint({
-        name: `${directionName}${anchorLabel.markName}`,
-        time: chartTimeFor(event.pivot_time, categories),
-        value: event.pivot_price,
-        label: anchorLabel.pivot,
-        direction: event.direction,
-      }),
-      confirmationTime
-        ? namedMarkPoint({
-            name: `${directionName}确认`,
-            time: confirmationTime,
-            value: confirmationPrice,
-            label: "确认",
-            direction: event.direction,
-            symbolSize: 6,
-          })
-        : null,
-    ].filter((mark): mark is NonNullable<typeof mark> => mark !== null);
-  });
-}
-
-function buildPriceDivergenceLines(events: MacdDivergence[], categories: string[]) {
-  return mergeVerticalLines(events.flatMap((event) => {
-    const directionName = event.direction === "bottom" ? "底背离" : "顶背离";
-    const anchorLabel = event.direction === "bottom"
-      ? { one: "前低1", two: "前低2", pivot: "背离低点" }
-      : { one: "前高1", two: "前高2", pivot: "背离高点" };
-    const confirmationTime = event.confirmed_at
-      ? chartTimeFor(event.confirmed_at, categories)
-      : null;
-
-    return [
-      {
-        name: `${directionName}${anchorLabel.one}`,
-        time: chartTimeFor(event.anchor_one_time, categories),
-        label: anchorLabel.one,
-        direction: event.direction,
-        weak: true,
-      },
-      {
-        name: `${directionName}${anchorLabel.two}`,
-        time: chartTimeFor(event.anchor_two_time, categories),
-        label: anchorLabel.two,
-        direction: event.direction,
-        weak: true,
-      },
-      {
-        name: `${directionName}${anchorLabel.pivot}`,
-        time: chartTimeFor(event.pivot_time, categories),
-        label: anchorLabel.pivot,
-        direction: event.direction,
-      },
-      ...(confirmationTime
-        ? [{
-            name: `${directionName}确认`,
-            time: confirmationTime,
-            label: "确认",
-            direction: event.direction,
-          }]
-        : []),
-    ];
-  }));
-}
-
 function buildDiffEventLines(events: MacdDivergence[], categories: string[]): VerticalLineDraft[] {
   return events.flatMap((event) => {
     const directionName = event.direction === "bottom" ? "底背离" : "顶背离";
@@ -471,10 +372,7 @@ export function buildKlineOption(
     };
   });
   const divergences = series.period === "1d" ? activeMacd?.divergences ?? [] : [];
-  const priceDivergenceMarks = divergences.length
-    ? buildPriceDivergenceMarks(divergences, categories, series)
-    : buildPlainPivotMarks(series);
-  const priceDivergenceLines = buildPriceDivergenceLines(divergences, categories);
+  const pricePivotMarks = buildPlainPivotMarks(series);
   const diffDivergenceLines = mergeVerticalLines([
     ...buildDiffEventLines(divergences, categories),
     ...buildMacdCrossLines(activeMacd, categories),
@@ -608,11 +506,8 @@ export function buildKlineOption(
           borderColor: "#e5484d",
           borderColor0: "#16a36f",
         },
-        ...(priceDivergenceMarks.length
-          ? { markPoint: { data: priceDivergenceMarks } }
-          : {}),
-        ...(priceDivergenceLines.length
-          ? { markLine: { symbol: "none" as const, data: priceDivergenceLines } }
+        ...(pricePivotMarks.length
+          ? { markPoint: { data: pricePivotMarks } }
           : {}),
       },
       {
