@@ -190,6 +190,8 @@ def test_日线macd计算同时返回背离事件():
     )
 
     assert any(event.direction.value == "bottom" for event in result.divergences)
+    assert all(event.calculated_at == result.summary.calculated_at for event in result.divergences)
+    assert all(event.quality is result.summary.quality for event in result.divergences)
 
 
 def test_分钟macd不计算日线背离():
@@ -205,3 +207,56 @@ def test_分钟macd不计算日线背离():
     )
 
     assert result.divergences == ()
+
+
+def test_日线背离评估日取当前日期之前的最近交易日():
+    bars = divergence_bars()
+    trading_days = [bar.bar_time.date() for bar in bars] + [
+        date(2026, 8, day) for day in range(3, 9)
+    ]
+
+    result = calculate_macd_series(
+        bars,
+        latest_quote=None,
+        trading_days=trading_days,
+        now=datetime(2026, 8, 7, 16, 0, tzinfo=TZ),
+        market_open=False,
+        period="1d",
+    )
+
+    event = next(event for event in result.divergences if event.is_valid)
+    assert event.recent_days == 5
+
+
+def test_交易日历为空时背离评估日安全回退到最后一根K线():
+    bars = divergence_bars()
+
+    result = calculate_macd_series(
+        bars,
+        latest_quote=None,
+        trading_days=[],
+        now=datetime(2026, 8, 7, 16, 0, tzinfo=TZ),
+        market_open=False,
+        period="1d",
+    )
+
+    event = next(event for event in result.divergences if event.is_valid)
+    assert event.recent_days == 0
+
+
+def test_陈旧交易日历早于最后K线时背离评估日至少钳制到最后K线():
+    bars = divergence_bars()
+
+    result = calculate_macd_series(
+        bars,
+        latest_quote=None,
+        trading_days=[bar.bar_time.date() for bar in bars[:-1]],
+        now=datetime(2026, 8, 7, 16, 0, tzinfo=TZ),
+        market_open=False,
+        period="1d",
+    )
+
+    event = next(event for event in result.divergences if event.is_valid)
+    assert event.pivot_time == bars[-1].bar_time
+    assert event.recent_days == 0
+    assert event.recent_days >= 0

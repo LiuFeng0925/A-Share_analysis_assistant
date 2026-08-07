@@ -86,6 +86,9 @@ class MacdDivergenceEvent:
     pivot_price: float
     pivot_diff: float
     detected_at: datetime
+    updated_at: datetime
+    calculated_at: datetime
+    quality: MacdQuality
     confirmed_at: datetime | None
     invalidated_at: datetime | None
     is_valid: bool

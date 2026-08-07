@@ -70,6 +70,13 @@ export const marketApi = {
     if (params.macdSignal) query.set("macd_signal", params.macdSignal);
     if (params.macdZeroAxis) query.set("macd_zero_axis", params.macdZeroAxis);
     if (params.macdRecentWindow) query.set("macd_recent_window", params.macdRecentWindow);
+    params.macdDivergences?.forEach((value) => query.append("macd_divergences", value));
+    if (params.macdDivergenceCross) {
+      query.set("macd_divergence_cross", params.macdDivergenceCross);
+    }
+    if (params.macdDivergenceRecentWindow) {
+      query.set("macd_divergence_recent_window", params.macdDivergenceRecentWindow);
+    }
     return request<StockPage>(`/api/market/stocks?${query}`, options);
   },
   getStock: (market: Market, code: string, options?: RequestOptions) =>

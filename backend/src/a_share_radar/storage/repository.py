@@ -1059,6 +1059,9 @@ class MarketRepository:
                 event.pivot_price,
                 event.pivot_diff,
                 event.detected_at,
+                event.updated_at,
+                event.calculated_at,
+                event.quality.value,
                 event.confirmed_at,
                 event.invalidated_at,
                 event.is_valid,
@@ -1132,9 +1135,10 @@ class MarketRepository:
                           anchor_one_time, anchor_one_price, anchor_one_diff,
                           anchor_two_time, anchor_two_price, anchor_two_diff,
                           pivot_time, pivot_price, pivot_diff, detected_at,
+                          updated_at, calculated_at, quality,
                           confirmed_at, invalidated_at, is_valid,
                           corresponding_signal, corresponding_signal_time, recent_days
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         divergence_rows,
                     )
@@ -1177,8 +1181,10 @@ class MarketRepository:
                        CAST(anchor_one_time AS VARCHAR), anchor_one_price, anchor_one_diff,
                        CAST(anchor_two_time AS VARCHAR), anchor_two_price, anchor_two_diff,
                        CAST(pivot_time AS VARCHAR), pivot_price, pivot_diff,
-                       CAST(detected_at AS VARCHAR), CAST(confirmed_at AS VARCHAR),
-                       CAST(invalidated_at AS VARCHAR), is_valid, corresponding_signal,
+                       CAST(detected_at AS VARCHAR), CAST(updated_at AS VARCHAR),
+                       CAST(calculated_at AS VARCHAR), quality,
+                       CAST(confirmed_at AS VARCHAR), CAST(invalidated_at AS VARCHAR),
+                       is_valid, corresponding_signal,
                        CAST(corresponding_signal_time AS VARCHAR), recent_days
                 FROM indicator_macd_divergence
                 WHERE market = ? AND code = ? AND period = ?
@@ -1237,14 +1243,17 @@ class MarketRepository:
                 pivot_price=row[12],
                 pivot_diff=row[13],
                 detected_at=datetime.fromisoformat(row[14]),
-                confirmed_at=None if row[15] is None else datetime.fromisoformat(row[15]),
-                invalidated_at=None if row[16] is None else datetime.fromisoformat(row[16]),
-                is_valid=row[17],
-                corresponding_signal=MacdSignal(row[18]),
+                updated_at=datetime.fromisoformat(row[15]),
+                calculated_at=datetime.fromisoformat(row[16]),
+                quality=MacdQuality(row[17]),
+                confirmed_at=None if row[18] is None else datetime.fromisoformat(row[18]),
+                invalidated_at=None if row[19] is None else datetime.fromisoformat(row[19]),
+                is_valid=row[20],
+                corresponding_signal=MacdSignal(row[21]),
                 corresponding_signal_time=(
-                    None if row[19] is None else datetime.fromisoformat(row[19])
+                    None if row[22] is None else datetime.fromisoformat(row[22])
                 ),
-                recent_days=row[20],
+                recent_days=row[23],
             )
             for row in divergence_rows
         )
@@ -1264,6 +1273,12 @@ class MarketRepository:
             for event in calculation.divergences
         ):
             raise ValueError("MACD 背离事件与摘要标识不一致")
+        if any(
+            (event.calculated_at, event.quality)
+            != (summary.calculated_at, summary.quality)
+            for event in calculation.divergences
+        ):
+            raise ValueError("MACD 背离事件与摘要计算元数据不一致")
 
     def get_bars(
         self,

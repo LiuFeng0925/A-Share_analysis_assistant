@@ -168,6 +168,9 @@ CREATE TABLE IF NOT EXISTS indicator_macd_divergence (
   pivot_price DOUBLE NOT NULL,
   pivot_diff DOUBLE NOT NULL,
   detected_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  calculated_at TIMESTAMPTZ NOT NULL,
+  quality VARCHAR NOT NULL,
   confirmed_at TIMESTAMPTZ,
   invalidated_at TIMESTAMPTZ,
   is_valid BOOLEAN NOT NULL,
@@ -177,9 +180,6 @@ CREATE TABLE IF NOT EXISTS indicator_macd_divergence (
   PRIMARY KEY (market, code, period, direction, detected_at)
 );
 
-CREATE INDEX IF NOT EXISTS indicator_macd_divergence_filter
-ON indicator_macd_divergence
-  (market, code, period, direction, status, is_valid, recent_days);
 """
 
 MIGRATION_SQL = (
@@ -202,6 +202,41 @@ MIGRATION_SQL = (
         "UPDATE bar_hot SET quality_status = "
         "CASE WHEN is_complete THEN 'ok' ELSE 'partial' END "
         "WHERE quality_status IS NULL"
+    ),
+    "DROP INDEX IF EXISTS indicator_macd_divergence_filter",
+    "ALTER TABLE indicator_macd_divergence ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ",
+    "ALTER TABLE indicator_macd_divergence ADD COLUMN IF NOT EXISTS calculated_at TIMESTAMPTZ",
+    "ALTER TABLE indicator_macd_divergence ADD COLUMN IF NOT EXISTS quality VARCHAR",
+    (
+        "UPDATE indicator_macd_divergence "
+        "SET updated_at = COALESCE(updated_at, pivot_time, detected_at) "
+        "WHERE updated_at IS NULL"
+    ),
+    (
+        "UPDATE indicator_macd_divergence AS d "
+        "SET calculated_at = COALESCE("
+        "calculated_at, "
+        "(SELECT m.calculated_at FROM indicator_macd_latest AS m "
+        "WHERE m.market = d.market AND m.code = d.code AND m.period = d.period), "
+        "updated_at, detected_at) "
+        "WHERE calculated_at IS NULL"
+    ),
+    (
+        "UPDATE indicator_macd_divergence AS d "
+        "SET quality = COALESCE("
+        "quality, "
+        "(SELECT m.quality FROM indicator_macd_latest AS m "
+        "WHERE m.market = d.market AND m.code = d.code AND m.period = d.period), "
+        "'ok') "
+        "WHERE quality IS NULL"
+    ),
+    "ALTER TABLE indicator_macd_divergence ALTER COLUMN updated_at SET NOT NULL",
+    "ALTER TABLE indicator_macd_divergence ALTER COLUMN calculated_at SET NOT NULL",
+    "ALTER TABLE indicator_macd_divergence ALTER COLUMN quality SET NOT NULL",
+    (
+        "CREATE INDEX IF NOT EXISTS indicator_macd_divergence_filter "
+        "ON indicator_macd_divergence "
+        "(market, code, period, direction, status, is_valid, recent_days)"
     ),
 )
 

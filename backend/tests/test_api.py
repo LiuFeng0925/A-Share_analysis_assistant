@@ -459,3 +459,15 @@ def test_response_models_validate_dataclass_enum_and_aware_datetime(fake_source)
                 "is_complete": True,
             }
         )
+
+
+def test_股票响应拒绝未知MACD背离摘要标签(fake_source):
+    from a_share_radar.api.schemas import StockQuoteResponse
+
+    payload = StockQuoteResponse.model_validate(
+        fake_source.snapshot_rows[0], from_attributes=True
+    ).model_dump()
+    payload["macd_divergence_labels"] = ["unknown"]
+
+    with pytest.raises(ValidationError):
+        StockQuoteResponse.model_validate(payload)

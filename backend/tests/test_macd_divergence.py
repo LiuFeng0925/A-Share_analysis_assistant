@@ -181,6 +181,40 @@ def test_候选低点移动后旧金叉不再作为对应交叉():
     assert event.corresponding_signal_time is None
 
 
+def test_候选低点移动保留首次发现时间并更新节点时间():
+    bars = moved_candidate_bars()
+
+    event = next(
+        event for event in calculate_macd_divergences(
+            bars,
+            moved_candidate_points(),
+            trading_days(),
+        )
+        if event.is_valid
+    )
+
+    assert event.detected_at == bars[-2].bar_time
+    assert event.updated_at == bars[-1].bar_time
+
+
+def test_背离事件记录本轮计算时间和MACD质量():
+    calculated_at = datetime(2026, 7, 20, 16, 0, tzinfo=TZ)
+
+    event = next(
+        event for event in calculate_macd_divergences(
+            bottom_forming_bars(),
+            bottom_forming_points(),
+            trading_days(),
+            calculated_at=calculated_at,
+            quality=MacdQuality.PARTIAL,
+        )
+        if event.is_valid
+    )
+
+    assert event.calculated_at == calculated_at
+    assert event.quality is MacdQuality.PARTIAL
+
+
 def test_价格和diff同步创新低会使形成中背离失效():
     event = calculate_macd_divergences(
         invalidated_bottom_bars(), invalidated_bottom_points(), trading_days()
@@ -276,6 +310,129 @@ def test_顶背离要求价格高于两个锚点且diff低于两个锚点():
 
     assert event.direction is MacdDivergenceDirection.TOP
     assert event.status is MacdDivergenceStatus.FORMING
+
+
+def test_并列低点不能作为底背离历史锚点():
+    bars = _bars([12, 11, 10, 9, 9, 11, 10, 9, 8.5, 9, 10, 9, 8])
+    points = _points(
+        bars,
+        [-1, -2, -3, -4, -3.8, -2, -2.5, -2.8, -3, -2, -1, -1.5, -2],
+    )
+
+    events = calculate_macd_divergences(bars, points, trading_days())
+
+    assert events == ()
+
+
+def test_并列高点不能作为顶背离历史锚点():
+    bars = _bars([8, 9, 10, 11, 11, 9, 10, 11, 11.5, 11, 10, 11, 12])
+    points = _points(
+        bars,
+        [1, 2, 3, 4, 3.8, 2, 2.5, 2.8, 3, 2, 1, 1.5, 2],
+    )
+
+    events = calculate_macd_divergences(bars, points, trading_days())
+
+    assert events == ()
+
+
+def test_底背离候选右侧出现同价后不能因满三根而确认():
+    bars = _bars([12, 11, 10, 9, 10, 11, 10, 9, 8.5, 9, 10, 9, 8, 8, 9, 10])
+    points = _points(
+        bars,
+        [-1, -2, -3, -4, -3, -2, -2.5, -2.8, -3, -2, -1, -1.5, -2, -1.9, -1.5, -1],
+    )
+
+    event = next(
+        event for event in calculate_macd_divergences(bars, points, trading_days())
+        if event.is_valid
+    )
+
+    assert event.status is MacdDivergenceStatus.FORMING
+    assert event.pivot_time == bars[12].bar_time
+
+
+def test_顶背离候选右侧出现同价后不能因满三根而确认():
+    bars = _bars([8, 9, 10, 11, 10, 9, 10, 11, 11.5, 11, 10, 11, 12, 12, 11, 10])
+    points = _points(
+        bars,
+        [1, 2, 3, 4, 3, 2, 2.5, 2.8, 3, 2, 1, 1.5, 2, 1.9, 1.5, 1],
+    )
+
+    event = next(
+        event for event in calculate_macd_divergences(bars, points, trading_days())
+        if event.is_valid
+    )
+
+    assert event.status is MacdDivergenceStatus.FORMING
+    assert event.pivot_time == bars[12].bar_time
+
+
+def test_停牌后形成中背离年龄随交易日历推进但确认K数不推进():
+    days = weekend_trading_days()
+    bars = _bars(
+        [12, 11, 10, 9, 10, 11, 10, 9, 8.5, 9, 10, 9, 8],
+        days=days,
+    )
+    points = _points(
+        bars,
+        [-1, -2, -3, -4, -3, -2, -2.5, -2.8, -3, -2, -1, -1.5, -2],
+    )
+
+    event = next(
+        event for event in calculate_macd_divergences(
+            bars,
+            points,
+            days,
+            evaluation_day=days[16],
+        )
+        if event.is_valid
+    )
+
+    assert event.status is MacdDivergenceStatus.FORMING
+    assert event.recent_days == 4
+
+
+def test_停牌后已确认背离年龄从确认日随交易日历推进():
+    days = weekend_trading_days()
+    bars = _bars(
+        [12, 11, 10, 9, 10, 11, 10, 9, 8.5, 9, 10, 9, 8, 8.5, 9, 10],
+        days=days,
+    )
+    points = _points(
+        bars,
+        [-1, -2, -3, -4, -3, -2, -2.5, -2.8, -3, -2, -1, -1.5, -2, -1.8, -1.5, -1],
+    )
+
+    event = next(
+        event for event in calculate_macd_divergences(
+            bars,
+            points,
+            days,
+            evaluation_day=days[17],
+        )
+        if event.is_valid
+    )
+
+    assert event.status is MacdDivergenceStatus.CONFIRMED
+    assert event.recent_days == 2
+
+
+def test_显式评估日早于形成节点时recent_days防御性钳制为零():
+    bars = bottom_forming_bars()
+
+    event = next(
+        event for event in calculate_macd_divergences(
+            bars,
+            bottom_forming_points(),
+            trading_days(),
+            evaluation_day=bars[-2].bar_time.date(),
+        )
+        if event.is_valid
+    )
+
+    assert event.status is MacdDivergenceStatus.FORMING
+    assert event.recent_days == 0
 
 
 def test_非日线不会计算背离():

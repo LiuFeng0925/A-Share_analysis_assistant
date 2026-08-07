@@ -81,16 +81,27 @@ function zeroAxisLabel(value: MacdIndicator["summary"]["zero_axis"] | undefined)
   return "零轴未知";
 }
 
-function macdSignalLabel(value: MacdIndicator["summary"]["signal_type"] | undefined) {
-  if (value === "golden_cross") return "金叉";
-  if (value === "death_cross") return "死叉";
-  return "暂无交叉";
-}
-
 function macdSignalTone(value: MacdIndicator["summary"]["signal_type"] | undefined) {
   if (value === "golden_cross") return "is-golden";
   if (value === "death_cross") return "is-death";
   return "is-muted";
+}
+
+function divergenceLabel(divergence: MacdIndicator["divergences"][number]) {
+  const direction = divergence.direction === "bottom" ? "底背离" : "顶背离";
+  const status = divergence.status === "forming" ? "形成中" : "已确认";
+  return `${direction}${status}`;
+}
+
+function divergenceTone(divergence: MacdIndicator["divergences"][number]) {
+  const direction = divergence.direction === "bottom" ? "bullish" : "bearish";
+  return `is-${direction}-${divergence.status}`;
+}
+
+function divergenceSignalLabel(divergence: MacdIndicator["divergences"][number]) {
+  if (divergence.corresponding_signal === "golden_cross") return "已出现金叉";
+  if (divergence.corresponding_signal === "death_cross") return "已出现死叉";
+  return "尚未出现对应交叉";
 }
 
 function macdQualityLabel(value: MacdIndicator["summary"]["quality"] | undefined) {
@@ -498,6 +509,11 @@ export function StockDetailPage() {
   const matchingMacd = macd?.period === selectedPeriod.period ? macd : null;
   const chartMacd = visibleBars && matchingMacd?.period === visibleBars.period ? matchingMacd : null;
   const macdSummary = matchingMacd?.summary;
+  const dailyDivergences = selectedPeriod.period === "1d"
+    ? [...(matchingMacd?.divergences ?? [])].sort((left, right) => (
+      right.pivot_time.localeCompare(left.pivot_time)
+    ))
+    : [];
   const quoteFields = [
     { label: "最新价", value: formatMarketNumber(stock?.latest_price), className: change.className },
     { label: "涨跌额", value: formatSigned(stock?.change_amount), className: changeAmount.className, direction: changeAmount.label },
@@ -637,19 +653,35 @@ export function StockDetailPage() {
             <div className="indicator-state is-error" role="alert">{macdError}</div>
           ) : macdSummary ? (
             <>
-              <strong className={`indicator-main-signal ${macdSignalTone(macdSummary.signal_type)}`}>
-                {macdSummary.recent_signal_label}
-              </strong>
-              <dl className="indicator-summary-tags">
-                <div>
-                  <dt>零轴</dt>
-                  <dd>{zeroAxisLabel(macdSummary.zero_axis)}</dd>
+              <section className="indicator-result-group" aria-label="MACD 交叉">
+                <span>MACD 交叉</span>
+                <div className="indicator-result-tags">
+                  <strong className={`indicator-tag ${macdSignalTone(macdSummary.signal_type)}`}>
+                    {macdSummary.recent_signal_label}
+                  </strong>
+                  <strong className="indicator-tag is-neutral">
+                    {zeroAxisLabel(macdSummary.zero_axis)}
+                  </strong>
                 </div>
-                <div>
-                  <dt>信号</dt>
-                  <dd>{macdSignalLabel(macdSummary.signal_type)}</dd>
-                </div>
-              </dl>
+              </section>
+              {dailyDivergences.length > 0 && (
+                <section className="indicator-result-group" aria-label="MACD 背离">
+                  <span>MACD 背离</span>
+                  <div className="indicator-divergences">
+                    {dailyDivergences.map((divergence) => (
+                      <div
+                        className="indicator-divergence-item"
+                        key={`${divergence.direction}-${divergence.pivot_time}-${divergence.detected_at}`}
+                      >
+                        <strong className={`indicator-tag ${divergenceTone(divergence)}`}>
+                          {divergenceLabel(divergence)}
+                        </strong>
+                        <span>{divergenceSignalLabel(divergence)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
             </>
           ) : (
             <div className="indicator-state">暂无 MACD 指标</div>

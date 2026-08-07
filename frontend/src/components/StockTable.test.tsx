@@ -91,3 +91,79 @@ test("非有限行情值不会泄漏到数字或价差标尺", () => {
   expect(container).not.toHaveTextContent(/NaN|Infinity/);
   expect(container.querySelector(".spread-scale")).toHaveStyle({ width: "0px" });
 });
+
+test("普通交叉与去重背离摘要在日K MACD单元格中独立展示", () => {
+  render(
+    <MemoryRouter>
+      <StockTable
+        stocks={[{
+          ...stock,
+          macd_divergence_labels: [
+            "bottom_forming",
+            "bottom_forming",
+            "top_confirmed",
+          ],
+        }]}
+        sortBy="code"
+        sortOrder="asc"
+        onSort={vi.fn()}
+      />
+    </MemoryRouter>,
+  );
+
+  expect(screen.getByText("近 3 日金叉")).toHaveClass("macd-signal", "is-golden");
+  expect(screen.getAllByText("底背离形成中")).toHaveLength(1);
+  expect(screen.getByText("底背离形成中")).toHaveClass(
+    "macd-divergence-summary",
+    "is-bullish-forming",
+  );
+  expect(screen.getByText("顶背离已确认")).toHaveClass(
+    "macd-divergence-summary",
+    "is-bearish-confirmed",
+  );
+});
+
+test("没有普通交叉时仍保留普通标签并展示背离摘要", () => {
+  render(
+    <MemoryRouter>
+      <StockTable
+        stocks={[{
+          ...stock,
+          macd_signal_type: "none",
+          macd_signal_label: null,
+          macd_divergence_labels: ["bottom_confirmed", "top_forming"],
+        }]}
+        sortBy="code"
+        sortOrder="asc"
+        onSort={vi.fn()}
+      />
+    </MemoryRouter>,
+  );
+
+  expect(screen.getByText("--")).toHaveClass("macd-signal", "is-empty");
+  expect(screen.getByText("底背离已确认")).toBeInTheDocument();
+  expect(screen.getByText("顶背离形成中")).toBeInTheDocument();
+});
+
+test("运行时收到未知背离摘要标签时跳过异常值且表格不崩溃", () => {
+  expect(() => render(
+    <MemoryRouter>
+      <StockTable
+        stocks={[{
+          ...stock,
+          macd_divergence_labels: [
+            "unknown" as never,
+            "bottom_forming",
+          ],
+        }]}
+        sortBy="code"
+        sortOrder="asc"
+        onSort={vi.fn()}
+      />
+    </MemoryRouter>,
+  )).not.toThrow();
+
+  expect(screen.getByText("近 3 日金叉")).toBeInTheDocument();
+  expect(screen.getByText("底背离形成中")).toBeInTheDocument();
+  expect(screen.queryByText("unknown")).not.toBeInTheDocument();
+});

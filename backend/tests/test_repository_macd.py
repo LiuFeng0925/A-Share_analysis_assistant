@@ -17,6 +17,7 @@ from a_share_radar.domain.indicators import (
     ZeroAxisPosition,
 )
 from a_share_radar.domain.models import Market, Stock
+from a_share_radar.storage.database import Database
 
 TZ = ZoneInfo("Asia/Shanghai")
 
@@ -95,6 +96,9 @@ def macd_divergence(
         pivot_price=95.0,
         pivot_diff=-0.8,
         detected_at=detected_at,
+        updated_at=detected_at,
+        calculated_at=datetime(2026, 8, 6, 15, 5, tzinfo=TZ),
+        quality=MacdQuality.OK,
         confirmed_at=datetime(2026, 8, 7, 15, 0, tzinfo=TZ),
         invalidated_at=None if is_valid else datetime(2026, 8, 7, 15, 0, tzinfo=TZ),
         is_valid=is_valid,
@@ -146,6 +150,92 @@ def test_仓储读取后逐字段保留macd背离事件(repository):
     stored = repository.get_macd(Market.SH, "600519")
     assert stored is not None
     assert stored.divergences == (event,)
+
+
+def test_旧版背离表启动时兼容迁移并回填生命周期字段(tmp_path):
+    database_path = tmp_path / "旧版背离.duckdb"
+    connection = duckdb.connect(str(database_path))
+    connection.execute(
+        """
+        CREATE TABLE indicator_macd_latest (
+          market VARCHAR, code VARCHAR, period VARCHAR,
+          calculated_at TIMESTAMPTZ, quality VARCHAR
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO indicator_macd_latest VALUES
+        ('SH', '600519', '1d', '2026-08-06 15:05:00+08:00', 'partial')
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE indicator_macd_divergence (
+          market VARCHAR NOT NULL,
+          code VARCHAR NOT NULL,
+          period VARCHAR NOT NULL,
+          direction VARCHAR NOT NULL,
+          status VARCHAR NOT NULL,
+          anchor_one_time TIMESTAMPTZ NOT NULL,
+          anchor_one_price DOUBLE NOT NULL,
+          anchor_one_diff DOUBLE NOT NULL,
+          anchor_two_time TIMESTAMPTZ NOT NULL,
+          anchor_two_price DOUBLE NOT NULL,
+          anchor_two_diff DOUBLE NOT NULL,
+          pivot_time TIMESTAMPTZ NOT NULL,
+          pivot_price DOUBLE NOT NULL,
+          pivot_diff DOUBLE NOT NULL,
+          detected_at TIMESTAMPTZ NOT NULL,
+          confirmed_at TIMESTAMPTZ,
+          invalidated_at TIMESTAMPTZ,
+          is_valid BOOLEAN NOT NULL,
+          corresponding_signal VARCHAR NOT NULL,
+          corresponding_signal_time TIMESTAMPTZ,
+          recent_days INTEGER NOT NULL,
+          PRIMARY KEY (market, code, period, direction, detected_at)
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO indicator_macd_divergence VALUES (
+          'SH', '600519', '1d', 'bottom', 'forming',
+          '2026-07-28 15:00:00+08:00', 100, -1.2,
+          '2026-08-01 15:00:00+08:00', 98, -1.0,
+          '2026-08-06 15:00:00+08:00', 95, -0.8,
+          '2026-08-06 15:00:00+08:00', NULL, NULL, TRUE,
+          'none', NULL, 0
+        )
+        """
+    )
+    connection.close()
+
+    migrated = Database(database_path)
+    try:
+        row = migrated.connection.execute(
+            """
+            SELECT CAST(updated_at AS VARCHAR), CAST(calculated_at AS VARCHAR), quality
+            FROM indicator_macd_divergence
+            """
+        ).fetchone()
+        columns = {
+            item[1]: item[3]
+            for item in migrated.connection.execute(
+                "PRAGMA table_info('indicator_macd_divergence')"
+            ).fetchall()
+        }
+    finally:
+        migrated.close()
+
+    assert row == (
+        "2026-08-06 15:00:00+08",
+        "2026-08-06 15:05:00+08",
+        "partial",
+    )
+    assert columns["updated_at"] is True
+    assert columns["calculated_at"] is True
+    assert columns["quality"] is True
 
 
 def test_同一股票周期再次保存会替换旧背离事件(repository):
@@ -276,6 +366,37 @@ def test_macd背离事件标识不一致会在事务前拒绝写入并保留旧�
     )
 
     with pytest.raises(ValueError, match="MACD 背离事件与摘要标识不一致"):
+        repository.upsert_macd(invalid)
+
+    assert repository.get_macd(Market.SH, "600519") == first
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("calculated_at", datetime(2026, 8, 6, 15, 6, tzinfo=TZ)),
+        ("quality", MacdQuality.PARTIAL),
+    ],
+    ids=["计算时间", "质量"],
+)
+def test_macd背离事件计算元数据不一致会在事务前拒绝写入并保留旧数据(
+    repository, field, value
+):
+    first = macd_calculation(
+        "600519",
+        signal=MacdSignal.GOLDEN_CROSS,
+        zero_axis=ZeroAxisPosition.ABOVE,
+        days=2,
+        label="近 3 日金叉",
+        divergences=(bottom_divergence("600519"),),
+    )
+    repository.upsert_macd(first)
+    invalid = replace(
+        first,
+        divergences=(replace(first.divergences[0], **{field: value}),),
+    )
+
+    with pytest.raises(ValueError, match="MACD 背离事件与摘要计算元数据不一致"):
         repository.upsert_macd(invalid)
 
     assert repository.get_macd(Market.SH, "600519") == first

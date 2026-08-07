@@ -91,7 +91,7 @@ test("详情页展示 MACD 结果并把日线指标传给 K 线副图", async ()
   expect(await screen.findByText("MACD 指标 · 日K")).toBeInTheDocument();
   expect(screen.getByText("近 3 日金叉")).toBeInTheDocument();
   expect(screen.getByText("零轴线上")).toBeInTheDocument();
-  expect(screen.getByText("金叉")).toBeInTheDocument();
+  expect(screen.getByText("MACD 交叉")).toBeInTheDocument();
   expect(screen.queryByText("DIFF 0.18")).not.toBeInTheDocument();
   expect(screen.queryByText("DEA 0.11")).not.toBeInTheDocument();
   expect(screen.queryByText("红绿柱")).not.toBeInTheDocument();
@@ -104,6 +104,33 @@ test("详情页展示 MACD 结果并把日线指标传给 K 线副图", async ()
     "1d",
     expect.objectContaining({ signal: expect.any(AbortSignal) }),
   );
+});
+
+test("普通金叉与多个背离状态分区展示", async () => {
+  renderDetail();
+
+  expect(await screen.findByText("MACD 交叉")).toBeInTheDocument();
+  expect(screen.getByText("近 3 日金叉")).toBeInTheDocument();
+  expect(screen.getByText("MACD 背离")).toBeInTheDocument();
+  expect(screen.getByText("底背离形成中")).toHaveClass("is-bullish-forming");
+  expect(screen.getByText("顶背离已确认")).toHaveClass("is-bearish-confirmed");
+  expect(screen.getByText("已出现金叉")).toBeInTheDocument();
+});
+
+test("非日K周期只展示普通交叉", async () => {
+  vi.mocked(marketApi.getMacdIndicator)
+    .mockResolvedValueOnce(macdIndicatorFixture)
+    .mockResolvedValueOnce({
+      ...macdIndicatorFixture,
+      period: "5m",
+      summary: { ...macdIndicatorFixture.summary, recent_signal_label: "5分金叉" },
+    });
+  renderDetail();
+  fireEvent.click(await screen.findByRole("button", { name: "5分" }));
+
+  expect(await screen.findByText("5分金叉")).toBeInTheDocument();
+  expect(screen.getByText("MACD 交叉")).toBeInTheDocument();
+  expect(screen.queryByText("MACD 背离")).not.toBeInTheDocument();
 });
 
 test("切换 K 线周期后请求并展示同周期 MACD", async () => {

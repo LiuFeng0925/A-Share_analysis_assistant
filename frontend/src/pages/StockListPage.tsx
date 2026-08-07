@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isAbortError, marketApi } from "../api/client";
 import type {
+  MacdDivergenceCrossFilter,
+  MacdDivergenceFilter,
   MacdRecentWindow,
   MacdSignalFilter,
   MacdZeroAxisFilter,
@@ -14,6 +16,12 @@ import { StockTable } from "../components/StockTable";
 import { usePolling } from "../hooks/usePolling";
 
 const PAGE_SIZE = 50;
+const DIVERGENCE_OPTIONS: Array<{ value: MacdDivergenceFilter; label: string; direction: "bottom" | "top"; confirmed: boolean }> = [
+  { value: "bottom_forming", label: "底背离形成中", direction: "bottom", confirmed: false },
+  { value: "bottom_confirmed", label: "底背离已确认", direction: "bottom", confirmed: true },
+  { value: "top_forming", label: "顶背离形成中", direction: "top", confirmed: false },
+  { value: "top_confirmed", label: "顶背离已确认", direction: "top", confirmed: true },
+];
 
 function formatUpdateTime(value: string | null) {
   if (!value) return "等待首次行情";
@@ -44,6 +52,9 @@ export function StockListPage() {
   const [macdSignal, setMacdSignal] = useState<MacdSignalFilter | "">("");
   const [macdZeroAxis, setMacdZeroAxis] = useState<MacdZeroAxisFilter | "">("");
   const [macdRecentWindow, setMacdRecentWindow] = useState<MacdRecentWindow | "">("");
+  const [macdDivergences, setMacdDivergences] = useState<MacdDivergenceFilter[]>([]);
+  const [macdDivergenceCross, setMacdDivergenceCross] = useState<MacdDivergenceCrossFilter | "">("");
+  const [macdDivergenceRecentWindow, setMacdDivergenceRecentWindow] = useState<MacdRecentWindow | "">("");
   const [summary, setSummary] = useState<MarketSummaryData | null>(null);
   const [stockPage, setStockPage] = useState<StockPage | null>(null);
   const [loading, setLoading] = useState(false);
@@ -84,6 +95,9 @@ export function StockListPage() {
           macdSignal: macdSignal || undefined,
           macdZeroAxis: macdZeroAxis || undefined,
           macdRecentWindow: macdRecentWindow || undefined,
+          macdDivergences: macdDivergences.length > 0 ? macdDivergences : undefined,
+          macdDivergenceCross: macdDivergenceCross || undefined,
+          macdDivergenceRecentWindow: macdDivergenceRecentWindow || undefined,
         }, { signal }),
       ]);
       if (!mounted.current || sequence !== requestSequence.current) return;
@@ -96,7 +110,19 @@ export function StockListPage() {
     } finally {
       if (mounted.current && sequence === requestSequence.current) setLoading(false);
     }
-  }, [macdRecentWindow, macdSignal, macdZeroAxis, market, page, query, sortBy, sortOrder]);
+  }, [
+    macdDivergenceCross,
+    macdDivergenceRecentWindow,
+    macdDivergences,
+    macdRecentWindow,
+    macdSignal,
+    macdZeroAxis,
+    market,
+    page,
+    query,
+    sortBy,
+    sortOrder,
+  ]);
 
   usePolling(load, 60_000);
 
@@ -110,9 +136,21 @@ export function StockListPage() {
     }
   };
 
+  const toggleDivergence = (value: MacdDivergenceFilter) => {
+    setMacdDivergences((current) => DIVERGENCE_OPTIONS
+      .map((option) => option.value)
+      .filter((item) => (item === value ? !current.includes(item) : current.includes(item))));
+    setPage(1);
+  };
+
   const totalPages = stockPage ? Math.max(1, Math.ceil(stockPage.total / PAGE_SIZE)) : 1;
   const hasData = stockPage !== null;
-  const hasIndicatorFilters = macdSignal !== "" || macdZeroAxis !== "" || macdRecentWindow !== "";
+  const hasIndicatorFilters = macdSignal !== ""
+    || macdZeroAxis !== ""
+    || macdRecentWindow !== ""
+    || macdDivergences.length > 0
+    || macdDivergenceCross !== ""
+    || macdDivergenceRecentWindow !== "";
   const marketStatus = summary?.market_status === "open"
     ? "交易中"
     : summary?.market_status === "closed"
@@ -230,6 +268,55 @@ export function StockListPage() {
               <option value="5d">近 5 日</option>
             </select>
           </label>
+          <fieldset className="divergence-filter">
+            <legend>MACD 背离</legend>
+            <div className="divergence-options">
+              {DIVERGENCE_OPTIONS.map((option) => (
+                <label
+                  key={option.value}
+                  className={`divergence-option is-${option.direction}${option.confirmed ? " is-confirmed" : ""}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={macdDivergences.includes(option.value)}
+                    onChange={() => toggleDivergence(option.value)}
+                  />
+                  <span>{option.label}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <label className="indicator-filter">
+            <span>背离对应交叉</span>
+            <select
+              aria-label="背离对应交叉"
+              value={macdDivergenceCross}
+              onChange={(event) => {
+                setMacdDivergenceCross(event.target.value as MacdDivergenceCrossFilter | "");
+                setPage(1);
+              }}
+            >
+              <option value="">不限</option>
+              <option value="present">已出现对应交叉</option>
+              <option value="absent">尚未出现对应交叉</option>
+            </select>
+          </label>
+          <label className="indicator-filter">
+            <span>背离出现时间</span>
+            <select
+              aria-label="背离出现时间"
+              value={macdDivergenceRecentWindow}
+              onChange={(event) => {
+                setMacdDivergenceRecentWindow(event.target.value as MacdRecentWindow | "");
+                setPage(1);
+              }}
+            >
+              <option value="">时间不限</option>
+              <option value="today">今日</option>
+              <option value="3d">近 3 日</option>
+              <option value="5d">近 5 日</option>
+            </select>
+          </label>
           <button
             type="button"
             className="indicator-filter-clear"
@@ -238,6 +325,9 @@ export function StockListPage() {
               setMacdSignal("");
               setMacdZeroAxis("");
               setMacdRecentWindow("");
+              setMacdDivergences([]);
+              setMacdDivergenceCross("");
+              setMacdDivergenceRecentWindow("");
               setPage(1);
             }}
           >

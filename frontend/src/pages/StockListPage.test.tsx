@@ -141,6 +141,51 @@ test("支持 MACD 信号、零轴位置和最近出现时间筛选", async () =>
   );
 });
 
+test("支持组合 MACD 背离筛选", async () => {
+  render(
+    <MemoryRouter>
+      <StockListPage />
+    </MemoryRouter>,
+  );
+
+  await screen.findByRole("row", { name: /贵州茅台/ });
+  fireEvent.click(screen.getByRole("checkbox", { name: "底背离形成中" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "顶背离已确认" }));
+  fireEvent.change(screen.getByLabelText("背离对应交叉"), {
+    target: { value: "present" },
+  });
+  fireEvent.change(screen.getByLabelText("背离出现时间"), {
+    target: { value: "5d" },
+  });
+
+  await waitFor(() => expect(marketApi.getStocks).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      macdDivergences: ["bottom_forming", "top_confirmed"],
+      macdDivergenceCross: "present",
+      macdDivergenceRecentWindow: "5d",
+    }),
+    expect.any(Object),
+  ));
+});
+
+test("清空指标会清空 MACD 背离筛选", async () => {
+  render(
+    <MemoryRouter>
+      <StockListPage />
+    </MemoryRouter>,
+  );
+
+  await screen.findByRole("row", { name: /贵州茅台/ });
+  fireEvent.click(screen.getByRole("checkbox", { name: "底背离已确认" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "清空指标" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "清空指标" }));
+
+  await waitFor(() => expect(marketApi.getStocks).toHaveBeenLastCalledWith(
+    expect.objectContaining({ macdDivergences: undefined }),
+    expect.any(Object),
+  ));
+});
+
 test("股票行可使用 Enter 键进入详情", async () => {
   render(
     <MemoryRouter initialEntries={["/"]}>

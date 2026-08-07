@@ -99,6 +99,30 @@ test("股票列表请求会携带 MACD 筛选参数", async () => {
   );
 });
 
+test("股票列表请求会重复携带 MACD 背离筛选参数", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ items: [], total: 0, page: 1, page_size: 50 })),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+
+  await marketApi.getStocks({
+    page: 1,
+    pageSize: 50,
+    sortBy: "code",
+    sortOrder: "asc",
+    macdDivergences: ["bottom_forming", "top_confirmed"],
+    macdDivergenceCross: "present",
+    macdDivergenceRecentWindow: "5d",
+  });
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    expect.stringContaining(
+      "macd_divergences=bottom_forming&macd_divergences=top_confirmed",
+    ),
+    expect.any(Object),
+  );
+});
+
 test("MACD 指标接口携带指定 K 线周期", async () => {
   const fetchMock = vi.fn().mockResolvedValue(
     new Response(JSON.stringify({ market: "SH", code: "600519", period: "1d", items: [] })),

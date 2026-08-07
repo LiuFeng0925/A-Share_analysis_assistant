@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as echarts from "echarts";
 import type { ECharts, EChartsOption } from "echarts";
-import type { BarSeries, MacdIndicator } from "../api/types";
+import type { BarSeries, MacdDivergence, MacdIndicator } from "../api/types";
 import {
   formatMarketNumber,
   formatShanghaiAxisLabel,
@@ -51,10 +51,61 @@ function defaultZoomForSeries(series: BarSeries): ZoomWindow {
   };
 }
 
+function sameBarTime(left: string, right: string) {
+  const leftTime = Date.parse(left);
+  const rightTime = Date.parse(right);
+  if (!Number.isNaN(leftTime) && !Number.isNaN(rightTime)) return leftTime === rightTime;
+  return left === right;
+}
+
+function chartTimeFor(eventTime: string, categories: string[]) {
+  return categories.find((time) => sameBarTime(time, eventTime)) ?? eventTime;
+}
+
+function divergenceMarkPoint(event: MacdDivergence, value: number, coordinateTime: string) {
+  const bullish = event.direction === "bottom";
+  const confirmed = event.status === "confirmed";
+  return {
+    name: bullish ? "底背离" : "顶背离",
+    coord: [coordinateTime, value],
+    value: bullish ? "底" : "顶",
+    symbol: "triangle",
+    symbolRotate: bullish ? 0 : 180,
+    symbolSize: confirmed ? 15 : 12,
+    itemStyle: {
+      color: bullish
+        ? confirmed ? "#e5484d" : "rgba(229, 72, 77, 0.5)"
+        : confirmed ? "#16a36f" : "rgba(22, 163, 111, 0.5)",
+    },
+  };
+}
+
+function divergenceSignalLabel(event: MacdDivergence) {
+  if (event.corresponding_signal === "golden_cross") return "已出现金叉";
+  if (event.corresponding_signal === "death_cross") return "已出现死叉";
+  return "尚未出现对应交叉";
+}
+
+function divergenceTooltipContent(event: MacdDivergence) {
+  const direction = event.direction === "bottom" ? "底背离" : "顶背离";
+  const status = event.status === "forming" ? "形成中" : "已确认";
+  return [
+    `${direction}${status}`,
+    `锚点一 ${formatShanghaiDateTime(event.anchor_one_time)}　价格 ${formatMarketNumber(event.anchor_one_price)}　DIFF ${formatMarketNumber(event.anchor_one_diff)}`,
+    `锚点二 ${formatShanghaiDateTime(event.anchor_two_time)}　价格 ${formatMarketNumber(event.anchor_two_price)}　DIFF ${formatMarketNumber(event.anchor_two_diff)}`,
+    `节点价格 ${formatMarketNumber(event.pivot_price)}　节点 DIFF ${formatMarketNumber(event.pivot_diff)}`,
+    `对应交叉：${divergenceSignalLabel(event)}`,
+    event.status === "forming" ? "该背离仍在形成，后续创新低或创新高时可能更新或失效" : null,
+  ];
+}
+
 function tooltipContent(series: BarSeries, dataIndex: number, macd?: MacdIndicator | null) {
   const bar = series.items[dataIndex];
   if (!bar) return "暂无 K 线数据";
-  const macdPoint = macd?.items.find((item) => item.bar_time === bar.bar_time);
+  const macdPoint = macd?.items.find((item) => sameBarTime(item.bar_time, bar.bar_time));
+  const divergences = series.period === "1d"
+    ? macd?.divergences.filter((event) => sameBarTime(event.pivot_time, bar.bar_time)) ?? []
+    : [];
   return [
     `<strong>${formatShanghaiDateTime(bar.bar_time)}</strong>`,
     `开 ${formatMarketNumber(bar.open_price)}　高 ${formatMarketNumber(bar.high_price)}`,
@@ -64,6 +115,7 @@ function tooltipContent(series: BarSeries, dataIndex: number, macd?: MacdIndicat
     macdPoint
       ? `DIFF ${formatMarketNumber(macdPoint.diff)}　DEA ${formatMarketNumber(macdPoint.dea)}`
       : null,
+    ...divergences.flatMap((event) => divergenceTooltipContent(event)),
     bar.is_complete ? "已完成" : "动态柱",
   ].filter(Boolean).join("<br />");
 }
@@ -95,6 +147,13 @@ export function buildKlineOption(
       itemStyle: { color: value !== null && value >= 0 ? "#e5484d" : "#16a36f" },
     };
   });
+  const divergences = series.period === "1d" ? macd?.divergences ?? [] : [];
+  const priceDivergenceMarks = divergences.map((event) => (
+    divergenceMarkPoint(event, event.pivot_price, chartTimeFor(event.pivot_time, categories))
+  ));
+  const diffDivergenceMarks = divergences.map((event) => (
+    divergenceMarkPoint(event, event.pivot_diff, chartTimeFor(event.pivot_time, categories))
+  ));
   const axisLabelFormatter = (value: string) =>
     formatShanghaiAxisLabel(value, series.period, series.range);
   const linkedAxes = hasMacd ? [0, 1, 2] : [0, 1];
@@ -224,6 +283,9 @@ export function buildKlineOption(
           borderColor: "#e5484d",
           borderColor0: "#16a36f",
         },
+        ...(priceDivergenceMarks.length
+          ? { markPoint: { data: priceDivergenceMarks } }
+          : {}),
       },
       {
         name: "成交量",
@@ -243,6 +305,9 @@ export function buildKlineOption(
               smooth: true,
               lineStyle: { width: 1.4, color: "#3157d5" },
               data: diff,
+              ...(diffDivergenceMarks.length
+                ? { markPoint: { data: diffDivergenceMarks } }
+                : {}),
             },
             {
               name: "DEA",
