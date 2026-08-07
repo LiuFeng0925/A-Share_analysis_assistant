@@ -73,7 +73,7 @@ describe("KlineChart", () => {
     expect(series[4]).toEqual(expect.objectContaining({ type: "bar" }));
   });
 
-  test("日K背离清楚标记锚点、确认点、交叉点和日期", () => {
+  test("日K背离用小点标真实位置并用顶部虚线标清日期", () => {
     const dailyBarsWithBothPivots = {
       ...dailyBarsFixture,
       items: [
@@ -110,28 +110,41 @@ describe("KlineChart", () => {
           coord: [string, number];
           name: string;
           value: string;
+          symbol: string;
           symbolSize: number;
           symbolRotate: number;
+          label: { show: boolean };
           itemStyle: { color: string };
+        }>;
+      };
+      markLine?: {
+        data: Array<{
+          xAxis: string;
+          name: string;
+          label: { formatter: string; position: string };
+          lineStyle: { type: string; opacity: number };
         }>;
       };
     }>;
 
     const priceMarks = series.find((item) => item.name === "K 线")?.markPoint?.data;
-    const diffMarks = series.find((item) => item.name === "DIFF")?.markPoint?.data;
+    const priceLines = series.find((item) => item.name === "K 线")?.markLine?.data;
+    const diffSeries = series.find((item) => item.name === "DIFF");
+    const diffMarks = diffSeries?.markPoint?.data;
+    const diffLines = diffSeries?.markLine?.data;
 
-    expect(priceMarks?.map((mark) => mark.value)).toEqual(expect.arrayContaining([
-      "前低\n08-01",
-      "新低\n08-04",
-      "确认\n08-04",
-      "前高\n08-01",
-      "新高\n08-04",
+    expect(priceMarks?.every((mark) => mark.label.show === false)).toBe(true);
+    expect(priceMarks?.every((mark) => mark.symbol === "circle" && mark.symbolSize <= 7)).toBe(true);
+    expect(priceLines?.map((line) => line.label.formatter)).toEqual(expect.arrayContaining([
+      "前低/前高\n08-01",
+      "新低/确认/新高\n08-04",
     ]));
-    expect(diffMarks?.map((mark) => mark.value)).toEqual(expect.arrayContaining([
-      "前低\n08-01",
-      "新低\n08-04",
-      "确认\n08-04",
-      "金叉\n08-04",
+    expect(priceLines?.every((line) => line.label.position === "end")).toBe(true);
+    expect(priceLines?.every((line) => line.lineStyle.type === "dashed" && line.lineStyle.opacity < 0.6)).toBe(true);
+    expect(diffMarks).toBeUndefined();
+    expect(diffLines?.map((line) => line.label.formatter)).toEqual(expect.arrayContaining([
+      "前低/前高\n08-01",
+      "新低/确认/新高/金叉\n08-04",
     ]));
     expect(priceMarks).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -147,20 +160,12 @@ describe("KlineChart", () => {
         name: "底背离确认",
       }),
     ]));
-    expect(diffMarks).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        coord: [dailyBarsWithBothPivots.items[1].bar_time, 0.18],
-        name: "MACD 金叉",
-      }),
-    ]));
     expect(priceMarks).toEqual(expect.arrayContaining([expect.objectContaining({
-      symbolSize: 14,
-      symbolRotate: 0,
+      symbolSize: 7,
       itemStyle: expect.objectContaining({ color: "#e5484d" }),
     })]));
     expect(priceMarks).toEqual(expect.arrayContaining([expect.objectContaining({
-      symbolSize: 14,
-      symbolRotate: 180,
+      symbolSize: 7,
       itemStyle: expect.objectContaining({ color: "#16a36f" }),
     })]));
   });

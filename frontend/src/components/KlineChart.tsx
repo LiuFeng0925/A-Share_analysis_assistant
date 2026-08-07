@@ -85,7 +85,7 @@ function namedMarkPoint({
   label,
   direction,
   weak = false,
-  symbolSize = 14,
+  symbolSize = 7,
 }: {
   name: string;
   time: string;
@@ -100,24 +100,90 @@ function namedMarkPoint({
   return {
     name,
     coord: [time, value],
-    value: `${label}\n${shortShanghaiDate(time)}`,
-    symbol: "triangle",
-    symbolRotate: tone.rotate,
+    value: label,
+    symbol: "circle",
     symbolSize,
     itemStyle: {
       color: weak ? tone.weakColor : tone.color,
+      borderColor: "#fff",
+      borderWidth: 1,
     },
     label: {
-      show: true,
-      formatter: "{c}",
-      color: tone.color,
-      fontSize: 10,
-      fontWeight: 700,
+      show: false,
     },
     tooltip: {
       formatter: `${name}<br />${formatShanghaiDateTime(time)}<br />数值 ${formatMarketNumber(value)}`,
     },
   };
+}
+
+interface VerticalLineDraft {
+  name: string;
+  time: string;
+  label: string;
+  direction: "bottom" | "top";
+  weak?: boolean;
+}
+
+function namedVerticalLine({
+  name,
+  time,
+  label,
+  direction,
+  weak = false,
+}: VerticalLineDraft) {
+  const tone = macdEventTone(direction);
+  return {
+    name,
+    xAxis: time,
+    label: {
+      show: true,
+      formatter: `${label}\n${shortShanghaiDate(time)}`,
+      position: "end" as const,
+      color: tone.color,
+      fontSize: 10,
+      fontWeight: 800,
+      backgroundColor: direction === "bottom"
+        ? "rgba(229, 72, 77, 0.08)"
+        : "rgba(22, 163, 111, 0.08)",
+      borderRadius: 4,
+      padding: [2, 4],
+    },
+    lineStyle: {
+      color: weak ? tone.weakColor : tone.color,
+      type: "dashed" as const,
+      width: 1,
+      opacity: weak ? 0.28 : 0.45,
+    },
+    tooltip: {
+      formatter: `${name}<br />${formatShanghaiDateTime(time)}`,
+    },
+  };
+}
+
+function mergeVerticalLines(lines: VerticalLineDraft[]) {
+  const byTime = new Map<string, VerticalLineDraft & { labels: string[]; names: string[] }>();
+  lines.forEach((line) => {
+    const current = byTime.get(line.time);
+    if (!current) {
+      byTime.set(line.time, {
+        ...line,
+        labels: [line.label],
+        names: [line.name],
+      });
+      return;
+    }
+    if (!current.labels.includes(line.label)) current.labels.push(line.label);
+    current.names.push(line.name);
+    current.weak = current.weak && line.weak;
+  });
+  return Array.from(byTime.values()).map((line) => namedVerticalLine({
+    name: line.names.join(" / "),
+    time: line.time,
+    label: line.labels.join("/"),
+    direction: line.direction,
+    weak: line.weak,
+  }));
 }
 
 function divergenceSignalLabel(event: MacdDivergence) {
@@ -196,7 +262,7 @@ function buildPriceDivergenceMarks(events: MacdDivergence[], categories: string[
         label: anchorLabel.one,
         direction: event.direction,
         weak: true,
-        symbolSize: 12,
+        symbolSize: 5,
       }),
       namedMarkPoint({
         name: `${directionName}${anchorLabel.two}`,
@@ -212,14 +278,50 @@ function buildPriceDivergenceMarks(events: MacdDivergence[], categories: string[
             value: confirmationPrice,
             label: "确认",
             direction: event.direction,
-            symbolSize: 14,
+            symbolSize: 6,
           })
         : null,
     ].filter((mark): mark is NonNullable<typeof mark> => mark !== null);
   });
 }
 
-function buildDiffEventMarks(events: MacdDivergence[], categories: string[]) {
+function buildPriceDivergenceLines(events: MacdDivergence[], categories: string[]) {
+  return mergeVerticalLines(events.flatMap((event) => {
+    const directionName = event.direction === "bottom" ? "底背离" : "顶背离";
+    const anchorLabel = event.direction === "bottom"
+      ? { one: "前低", two: "新低" }
+      : { one: "前高", two: "新高" };
+    const confirmationTime = event.confirmed_at
+      ? chartTimeFor(event.confirmed_at, categories)
+      : null;
+
+    return [
+      {
+        name: `${directionName}${anchorLabel.one}`,
+        time: chartTimeFor(event.anchor_one_time, categories),
+        label: anchorLabel.one,
+        direction: event.direction,
+        weak: true,
+      },
+      {
+        name: `${directionName}${anchorLabel.two}`,
+        time: chartTimeFor(event.anchor_two_time, categories),
+        label: anchorLabel.two,
+        direction: event.direction,
+      },
+      ...(confirmationTime
+        ? [{
+            name: `${directionName}确认`,
+            time: confirmationTime,
+            label: "确认",
+            direction: event.direction,
+          }]
+        : []),
+    ];
+  }));
+}
+
+function buildDiffEventLines(events: MacdDivergence[], categories: string[]): VerticalLineDraft[] {
   return events.flatMap((event) => {
     const directionName = event.direction === "bottom" ? "底背离" : "顶背离";
     const anchorLabel = event.direction === "bottom"
@@ -230,47 +332,41 @@ function buildDiffEventMarks(events: MacdDivergence[], categories: string[]) {
       : null;
 
     return [
-      namedMarkPoint({
+      {
         name: `${directionName}DIFF${anchorLabel.one}`,
         time: chartTimeFor(event.anchor_one_time, categories),
-        value: event.anchor_one_diff,
         label: anchorLabel.one,
         direction: event.direction,
         weak: true,
-        symbolSize: 12,
-      }),
-      namedMarkPoint({
+      },
+      {
         name: `${directionName}DIFF${anchorLabel.two}`,
         time: chartTimeFor(event.anchor_two_time, categories),
-        value: event.anchor_two_diff,
         label: anchorLabel.two,
         direction: event.direction,
-      }),
-      confirmationTime
-        ? namedMarkPoint({
+      },
+      ...(confirmationTime
+        ? [{
             name: `${directionName}DIFF确认`,
             time: confirmationTime,
-            value: event.pivot_diff,
             label: "确认",
             direction: event.direction,
-          })
-        : null,
-    ].filter((mark): mark is NonNullable<typeof mark> => mark !== null);
+          }]
+        : []),
+    ];
   });
 }
 
-function buildMacdCrossMarks(macd: MacdIndicator | null | undefined, categories: string[]) {
+function buildMacdCrossLines(macd: MacdIndicator | null | undefined, categories: string[]): VerticalLineDraft[] {
   return (macd?.items ?? []).flatMap((item) => {
     if (item.signal_type !== "golden_cross" && item.signal_type !== "death_cross") return [];
     const direction = item.signal_type === "golden_cross" ? "bottom" : "top";
-    return namedMarkPoint({
+    return {
       name: item.signal_type === "golden_cross" ? "MACD 金叉" : "MACD 死叉",
       time: chartTimeFor(item.bar_time, categories),
-      value: item.diff,
       label: item.signal_type === "golden_cross" ? "金叉" : "死叉",
       direction,
-      symbolSize: 13,
-    }) ?? [];
+    };
   });
 }
 
@@ -304,10 +400,11 @@ export function buildKlineOption(
   });
   const divergences = series.period === "1d" ? activeMacd?.divergences ?? [] : [];
   const priceDivergenceMarks = buildPriceDivergenceMarks(divergences, categories, series);
-  const diffDivergenceMarks = [
-    ...buildDiffEventMarks(divergences, categories),
-    ...buildMacdCrossMarks(activeMacd, categories),
-  ];
+  const priceDivergenceLines = buildPriceDivergenceLines(divergences, categories);
+  const diffDivergenceLines = mergeVerticalLines([
+    ...buildDiffEventLines(divergences, categories),
+    ...buildMacdCrossLines(activeMacd, categories),
+  ]);
   const axisLabelFormatter = (value: string) =>
     formatShanghaiAxisLabel(value, series.period, series.range);
   const linkedAxes = hasMacd ? [0, 1, 2] : [0, 1];
@@ -440,6 +537,9 @@ export function buildKlineOption(
         ...(priceDivergenceMarks.length
           ? { markPoint: { data: priceDivergenceMarks } }
           : {}),
+        ...(priceDivergenceLines.length
+          ? { markLine: { symbol: "none" as const, data: priceDivergenceLines } }
+          : {}),
       },
       {
         name: "成交量",
@@ -459,8 +559,8 @@ export function buildKlineOption(
               smooth: true,
               lineStyle: { width: 1.4, color: "#3157d5" },
               data: diff,
-              ...(diffDivergenceMarks.length
-                ? { markPoint: { data: diffDivergenceMarks } }
+              ...(diffDivergenceLines.length
+                ? { markLine: { symbol: "none" as const, data: diffDivergenceLines } }
                 : {}),
             },
             {
