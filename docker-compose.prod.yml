@@ -33,6 +33,8 @@ services:
     build:
       context: .
       dockerfile: deploy/frontend.Dockerfile
+      args:
+        FRONTEND_BASE_IMAGE: ${FRONTEND_BASE_IMAGE:-nginx:1.29-alpine}
     image: a-share-analysis-assistant-frontend:latest
     container_name: astock_frontend
     depends_on:

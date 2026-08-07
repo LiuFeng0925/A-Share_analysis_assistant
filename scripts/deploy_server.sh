@@ -27,7 +27,10 @@ rsync -az --delete \
   --exclude 'test-results' \
   "$PROJECT_DIR/" "$DEPLOY_HOST:$DEPLOY_DIR/"
 
-ssh "$DEPLOY_HOST" "cd '$DEPLOY_DIR' && docker compose -f docker-compose.prod.yml up -d --build"
+ssh "$DEPLOY_HOST" "\
+  cd '$DEPLOY_DIR' && \
+  docker compose -f docker-compose.prod.yml up -d --build || \
+  FRONTEND_BASE_IMAGE=a-share-analysis-assistant-frontend:latest docker compose -f docker-compose.prod.yml up -d --build"
 
 ssh "$DEPLOY_HOST" "\
   cp '$DEPLOY_DIR/deploy/astock.nginx.conf' '$REMOTE_NGINX_SITE' && \
