@@ -67,12 +67,14 @@ def macd_calculation(
     return MacdCalculation(summary=summary, points=(point,), divergences=divergences)
 
 
-def bottom_divergence(code: str, *, detected_at: datetime | None = None) -> MacdDivergenceEvent:
+def bottom_divergence(
+    code: str, *, period: str = "1d", detected_at: datetime | None = None
+) -> MacdDivergenceEvent:
     detected_at = detected_at or datetime(2026, 8, 6, 15, 0, tzinfo=TZ)
     return MacdDivergenceEvent(
         market=Market.SH,
         code=code,
-        period="1d",
+        period=period,
         direction=MacdDivergenceDirection.BOTTOM,
         status=MacdDivergenceStatus.CONFIRMED,
         anchor_one_time=datetime(2026, 7, 28, 15, 0, tzinfo=TZ),
@@ -203,6 +205,7 @@ def test_保存背离事件失败会回滚摘要序列和旧事件(repository):
     invalid = replace(
         first,
         summary=replace(first.summary, diff=9.99),
+        points=(replace(first.points[0], diff=9.99),),
         divergences=(bottom_divergence("600519"), bottom_divergence("600519")),
     )
 
@@ -211,6 +214,86 @@ def test_保存背离事件失败会回滚摘要序列和旧事件(repository):
 
     stored = repository.get_macd(Market.SH, "600519")
     assert stored == first
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("market", Market.SZ), ("code", "000001"), ("period", "5m")],
+    ids=["市场", "代码", "周期"],
+)
+def test_macd点标识不一致会在事务前拒绝写入并保留旧数据(repository, field, value):
+    first = macd_calculation(
+        "600519",
+        signal=MacdSignal.GOLDEN_CROSS,
+        zero_axis=ZeroAxisPosition.ABOVE,
+        days=2,
+        label="近 3 日金叉",
+        divergences=(bottom_divergence("600519"),),
+    )
+    repository.upsert_macd(first)
+    invalid = replace(first, points=(replace(first.points[0], **{field: value}),))
+
+    with pytest.raises(ValueError, match="MACD 点与摘要标识不一致"):
+        repository.upsert_macd(invalid)
+
+    assert repository.get_macd(Market.SH, "600519") == first
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("market", Market.SZ), ("code", "000001"), ("period", "5m")],
+    ids=["市场", "代码", "周期"],
+)
+def test_macd背离事件标识不一致会在事务前拒绝写入并保留旧数据(
+    repository, field, value
+):
+    first = macd_calculation(
+        "600519",
+        signal=MacdSignal.GOLDEN_CROSS,
+        zero_axis=ZeroAxisPosition.ABOVE,
+        days=2,
+        label="近 3 日金叉",
+        divergences=(bottom_divergence("600519"),),
+    )
+    repository.upsert_macd(first)
+    invalid = replace(
+        first,
+        divergences=(replace(first.divergences[0], **{field: value}),),
+    )
+
+    with pytest.raises(ValueError, match="MACD 背离事件与摘要标识不一致"):
+        repository.upsert_macd(invalid)
+
+    assert repository.get_macd(Market.SH, "600519") == first
+
+
+def test_替换同一股票日线背离不影响分钟周期(repository):
+    daily = macd_calculation(
+        "600519",
+        signal=MacdSignal.GOLDEN_CROSS,
+        zero_axis=ZeroAxisPosition.ABOVE,
+        days=2,
+        label="近 3 日金叉",
+        divergences=(bottom_divergence("600519"),),
+    )
+    minute_event = bottom_divergence("600519", period="5m")
+    minute = macd_calculation(
+        "600519",
+        signal=MacdSignal.GOLDEN_CROSS,
+        zero_axis=ZeroAxisPosition.ABOVE,
+        days=0,
+        label="今日金叉",
+        period="5m",
+        divergences=(minute_event,),
+    )
+    repository.upsert_macd(daily)
+    repository.upsert_macd(minute)
+
+    repository.upsert_macd(replace(daily, divergences=()))
+
+    stored = repository.get_macd(Market.SH, "600519", period="5m")
+    assert stored is not None
+    assert stored.divergences == (minute_event,)
 
 
 def test_list_stocks_filters_and_returns_recent_macd_signal(repository):

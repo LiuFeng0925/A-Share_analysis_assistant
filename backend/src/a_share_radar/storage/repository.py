@@ -948,6 +948,7 @@ class MarketRepository:
         )
 
     def upsert_macd(self, calculation: MacdCalculation) -> None:
+        self._validate_macd_identity(calculation)
         summary = calculation.summary
         point_rows = [
             (
@@ -1172,6 +1173,21 @@ class MarketRepository:
             for row in divergence_rows
         )
         return MacdCalculation(summary=summary, points=points, divergences=divergences)
+
+    @staticmethod
+    def _validate_macd_identity(calculation: MacdCalculation) -> None:
+        summary = calculation.summary
+        identity = (summary.market, summary.code, summary.period)
+        if any(
+            (point.market, point.code, point.period) != identity
+            for point in calculation.points
+        ):
+            raise ValueError("MACD 点与摘要标识不一致")
+        if any(
+            (event.market, event.code, event.period) != identity
+            for event in calculation.divergences
+        ):
+            raise ValueError("MACD 背离事件与摘要标识不一致")
 
     def get_bars(
         self,
