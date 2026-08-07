@@ -4,7 +4,10 @@ from zoneinfo import ZoneInfo
 
 from a_share_radar.domain.indicators import MacdQuality
 from a_share_radar.domain.models import Bar, Market, QualityStatus, QuoteSnapshot, Stock
-from a_share_radar.services.indicator_service import IndicatorService
+from a_share_radar.services.indicator_service import (
+    MACD_DIVERGENCE_ALGORITHM_VERSION,
+    IndicatorService,
+)
 
 TZ = ZoneInfo("Asia/Shanghai")
 
@@ -248,6 +251,35 @@ async def test_indicator_service_get_stock_macd_refreshes_daily_when_intraday_qu
         stock,
         second_now,
         market_open=True,
+        period="1d",
+    )
+
+    assert calculation is not None
+    assert calculation.summary.calculated_at == second_now
+
+
+async def test_indicator_service_get_stock_macd_refreshes_daily_when_divergence_algorithm_updates(
+    repository,
+):
+    first_now = MACD_DIVERGENCE_ALGORITHM_VERSION - timedelta(minutes=1)
+    second_now = MACD_DIVERGENCE_ALGORITHM_VERSION + timedelta(minutes=1)
+    repository.upsert_stocks([Stock("600519", Market.SH, "贵州茅台")])
+    bars = [daily_bar(index, 10.0 + index * 0.01) for index in range(80)]
+    repository.replace_trading_days({bar.bar_time.date() for bar in bars})
+    repository.upsert_bars(bars)
+    stock = repository.get_stock(Market.SH, "600519")
+    assert stock is not None
+    service = IndicatorService(repository)
+
+    await service.refresh_stock_macd(stock, first_now, market_open=False, period="1d")
+    cached = repository.get_macd(Market.SH, "600519", "1d")
+    assert cached is not None
+    assert cached.summary.calculated_at == first_now
+
+    calculation = await service.get_stock_macd(
+        stock,
+        second_now,
+        market_open=False,
         period="1d",
     )
 
