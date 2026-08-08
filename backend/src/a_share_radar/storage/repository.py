@@ -10,6 +10,13 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from a_share_radar.domain.indicators import (
+    KdjCalculation,
+    KdjPoint,
+    KdjQuality,
+    KdjSignal,
+    KdjSignalZone,
+    KdjSummary,
+    KdjZone,
     MacdCalculation,
     MacdPoint,
     MacdQuality,
@@ -48,6 +55,13 @@ class StockQuoteRow:
     macd_signal_label: str | None = None
     macd_zero_axis: ZeroAxisPosition | None = None
     macd_quality: MacdQuality | None = None
+    kdj_signal_type: KdjSignal | None = None
+    kdj_signal_time: datetime | None = None
+    kdj_recent_signal_days: int | None = None
+    kdj_signal_label: str | None = None
+    kdj_signal_zone: KdjSignalZone | None = None
+    kdj_current_zone: KdjZone | None = None
+    kdj_quality: KdjQuality | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,11 +133,17 @@ _QUOTE_COLUMNS = """
     q.volume, q.amount, q.turnover_rate, q.total_market_cap,
     q.source, q.quality_status,
     m.signal_type, CAST(m.signal_date AS VARCHAR), m.recent_signal_days,
-    m.recent_signal_label, m.zero_axis, m.quality
+    m.recent_signal_label, m.zero_axis, m.quality,
+    kdj.signal_type, CAST(kdj.signal_time AS VARCHAR), kdj.recent_signal_days,
+    kdj.recent_signal_label, kdj.signal_zone, kdj.current_zone, kdj.quality
 """
 _MACD_JOIN = """
     LEFT JOIN indicator_macd_latest m
       ON m.market = s.market AND m.code = s.code AND m.period = '1d'
+"""
+_KDJ_JOIN = """
+    LEFT JOIN indicator_kdj_latest kdj
+      ON kdj.market = s.market AND kdj.code = s.code AND kdj.period = '1d'
 """
 _MACD_RECENT_WINDOWS = {"today": 0, "3d": 2, "5d": 4}
 
@@ -803,6 +823,7 @@ class MarketRepository:
                 SELECT COUNT(*)
                 FROM stock_master s
                 {_MACD_JOIN}
+                {_KDJ_JOIN}
                 {where_clause}
                 """,
                 parameters,
@@ -814,6 +835,7 @@ class MarketRepository:
                 LEFT JOIN latest_quote q
                   ON q.market = s.market AND q.code = s.code
                 {_MACD_JOIN}
+                {_KDJ_JOIN}
                 {where_clause}
                 ORDER BY {SORT_COLUMNS[sort_by]} {normalized_order.upper()} NULLS LAST,
                          s.market ASC, s.code ASC
@@ -837,6 +859,7 @@ class MarketRepository:
                 LEFT JOIN latest_quote q
                   ON q.market = s.market AND q.code = s.code
                 {_MACD_JOIN}
+                {_KDJ_JOIN}
                 WHERE s.market = ? AND s.code = ?
                 """,
                 (market.value, code),
@@ -1080,6 +1103,151 @@ class MarketRepository:
         )
         return MacdCalculation(summary=summary, points=points)
 
+    def upsert_kdj(self, calculation: KdjCalculation) -> None:
+        summary = calculation.summary
+        point_rows = [
+            (
+                point.market.value,
+                point.code,
+                point.period,
+                point.bar_time,
+                point.k_value,
+                point.d_value,
+                point.j_value,
+                point.signal_type.value,
+                point.signal_zone.value,
+                point.current_zone.value,
+                point.is_intraday,
+                point.quality.value,
+            )
+            for point in calculation.points
+        ]
+        with self.database.lock:
+            connection = self.database.connection
+            connection.execute("BEGIN TRANSACTION")
+            try:
+                connection.execute(
+                    """
+                    INSERT OR REPLACE INTO indicator_kdj_latest (
+                      market, code, period, calculated_at, market_time,
+                      k_value, d_value, j_value, current_zone, signal_type,
+                      signal_time, signal_zone, recent_signal_days,
+                      recent_signal_label, status, is_intraday, quality
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        summary.market.value,
+                        summary.code,
+                        summary.period,
+                        summary.calculated_at,
+                        summary.market_time,
+                        summary.k_value,
+                        summary.d_value,
+                        summary.j_value,
+                        summary.current_zone.value,
+                        summary.signal_type.value,
+                        summary.signal_time,
+                        summary.signal_zone.value,
+                        summary.recent_signal_days,
+                        summary.recent_signal_label,
+                        summary.status,
+                        summary.is_intraday,
+                        summary.quality.value,
+                    ),
+                )
+                connection.execute(
+                    """
+                    DELETE FROM indicator_kdj_series
+                    WHERE market = ? AND code = ? AND period = ?
+                    """,
+                    (summary.market.value, summary.code, summary.period),
+                )
+                if point_rows:
+                    connection.executemany(
+                        """
+                        INSERT INTO indicator_kdj_series (
+                          market, code, period, bar_time, k_value, d_value,
+                          j_value, signal_type, signal_zone, current_zone,
+                          is_intraday, quality
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        point_rows,
+                    )
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+
+    def get_kdj(self, market: Market, code: str, period: str = "1d") -> KdjCalculation | None:
+        with self.database.lock:
+            connection = self.database.connection
+            summary_row = connection.execute(
+                """
+                SELECT market, code, period, CAST(calculated_at AS VARCHAR),
+                       CAST(market_time AS VARCHAR), k_value, d_value, j_value,
+                       current_zone, signal_type, CAST(signal_time AS VARCHAR),
+                       signal_zone, recent_signal_days, recent_signal_label,
+                       status, is_intraday, quality
+                FROM indicator_kdj_latest
+                WHERE market = ? AND code = ? AND period = ?
+                """,
+                (market.value, code, period),
+            ).fetchone()
+            if summary_row is None:
+                return None
+            point_rows = connection.execute(
+                """
+                SELECT market, code, period, CAST(bar_time AS VARCHAR),
+                       k_value, d_value, j_value, signal_type, signal_zone,
+                       current_zone, is_intraday, quality
+                FROM indicator_kdj_series
+                WHERE market = ? AND code = ? AND period = ?
+                ORDER BY bar_time ASC
+                """,
+                (market.value, code, period),
+            ).fetchall()
+        summary = KdjSummary(
+            market=Market(summary_row[0]),
+            code=summary_row[1],
+            period=summary_row[2],
+            calculated_at=datetime.fromisoformat(summary_row[3]),
+            market_time=(
+                None if summary_row[4] is None else datetime.fromisoformat(summary_row[4])
+            ),
+            k_value=summary_row[5],
+            d_value=summary_row[6],
+            j_value=summary_row[7],
+            current_zone=KdjZone(summary_row[8]),
+            signal_type=KdjSignal(summary_row[9]),
+            signal_time=(
+                None if summary_row[10] is None else datetime.fromisoformat(summary_row[10])
+            ),
+            signal_zone=KdjSignalZone(summary_row[11]),
+            recent_signal_days=summary_row[12],
+            recent_signal_label=summary_row[13],
+            status=summary_row[14],
+            is_intraday=summary_row[15],
+            quality=KdjQuality(summary_row[16]),
+        )
+        points = tuple(
+            KdjPoint(
+                market=Market(row[0]),
+                code=row[1],
+                period=row[2],
+                bar_time=datetime.fromisoformat(row[3]),
+                k_value=row[4],
+                d_value=row[5],
+                j_value=row[6],
+                signal_type=KdjSignal(row[7]),
+                signal_zone=KdjSignalZone(row[8]),
+                current_zone=KdjZone(row[9]),
+                is_intraday=row[10],
+                quality=KdjQuality(row[11]),
+            )
+            for row in point_rows
+        )
+        return KdjCalculation(summary=summary, points=points)
+
     def get_bars(
         self,
         market: Market,
@@ -1272,6 +1440,13 @@ class MarketRepository:
             macd_signal_label=row[22],
             macd_zero_axis=None if row[23] is None else ZeroAxisPosition(row[23]),
             macd_quality=None if row[24] is None else MacdQuality(row[24]),
+            kdj_signal_type=None if row[25] is None else KdjSignal(row[25]),
+            kdj_signal_time=None if row[26] is None else datetime.fromisoformat(row[26]),
+            kdj_recent_signal_days=row[27],
+            kdj_signal_label=row[28],
+            kdj_signal_zone=None if row[29] is None else KdjSignalZone(row[29]),
+            kdj_current_zone=None if row[30] is None else KdjZone(row[30]),
+            kdj_quality=None if row[31] is None else KdjQuality(row[31]),
         )
 
     @staticmethod

@@ -151,6 +151,43 @@ CREATE TABLE IF NOT EXISTS indicator_macd_series (
   quality VARCHAR NOT NULL,
   PRIMARY KEY (market, code, period, bar_time)
 );
+
+CREATE TABLE IF NOT EXISTS indicator_kdj_latest (
+  market VARCHAR NOT NULL,
+  code VARCHAR NOT NULL,
+  period VARCHAR NOT NULL,
+  calculated_at TIMESTAMPTZ NOT NULL,
+  market_time TIMESTAMPTZ,
+  k_value DOUBLE,
+  d_value DOUBLE,
+  j_value DOUBLE,
+  current_zone VARCHAR NOT NULL,
+  signal_type VARCHAR NOT NULL,
+  signal_time TIMESTAMPTZ,
+  signal_zone VARCHAR NOT NULL,
+  recent_signal_days INTEGER,
+  recent_signal_label VARCHAR NOT NULL,
+  status VARCHAR NOT NULL,
+  is_intraday BOOLEAN NOT NULL,
+  quality VARCHAR NOT NULL,
+  PRIMARY KEY (market, code, period)
+);
+
+CREATE TABLE IF NOT EXISTS indicator_kdj_series (
+  market VARCHAR NOT NULL,
+  code VARCHAR NOT NULL,
+  period VARCHAR NOT NULL,
+  bar_time TIMESTAMPTZ NOT NULL,
+  k_value DOUBLE,
+  d_value DOUBLE,
+  j_value DOUBLE,
+  signal_type VARCHAR NOT NULL,
+  signal_zone VARCHAR NOT NULL,
+  current_zone VARCHAR NOT NULL,
+  is_intraday BOOLEAN NOT NULL,
+  quality VARCHAR NOT NULL,
+  PRIMARY KEY (market, code, period, bar_time)
+);
 """
 
 MIGRATION_SQL = (
