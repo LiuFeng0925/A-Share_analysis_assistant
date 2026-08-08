@@ -35,9 +35,7 @@ ssh "$DEPLOY_HOST" "\
   nginx -t && \
   systemctl reload nginx"
 
-ssh "$DEPLOY_HOST" "\
-  if [ '$DEPLOY_ENABLE_HTTPS' = 'true' ] || { [ '$DEPLOY_ENABLE_HTTPS' = 'auto' ] && [ -f '/etc/letsencrypt/live/$DEPLOY_DOMAIN/fullchain.pem' ]; }; then \
-    certbot --nginx -d '$DEPLOY_DOMAIN' --redirect --non-interactive; \
-  fi"
+ssh "$DEPLOY_HOST" \
+  "'$DEPLOY_DIR/deploy/configure_https.sh' '$DEPLOY_DOMAIN' '$DEPLOY_ENABLE_HTTPS'"
 
 echo "部署完成：http://$DEPLOY_DOMAIN"
