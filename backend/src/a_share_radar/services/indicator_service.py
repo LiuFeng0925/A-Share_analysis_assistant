@@ -26,10 +26,10 @@ MACD_LOOKBACK_DAYS_BY_PERIOD = {
 }
 MACD_BAR_RANGE_BY_PERIOD = {
     "1m": "today",
-    "5m": "6mo",
-    "15m": "6mo",
-    "30m": "6mo",
-    "60m": "6mo",
+    "5m": "60d",
+    "15m": "60d",
+    "30m": "60d",
+    "60m": "60d",
     "1d": "1y",
     "1w": "5y",
     "1mo": "all",

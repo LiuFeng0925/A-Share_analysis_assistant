@@ -176,7 +176,7 @@ async def test_indicator_service_get_stock_macd_fetches_period_bars_before_calcu
         period="5m",
     )
 
-    assert bar_service.calls == [(Market.SH, "600519", "5m", "6mo", "qfq")]
+    assert bar_service.calls == [(Market.SH, "600519", "5m", "60d", "qfq")]
     assert calculation is not None
     assert calculation.summary.period == "5m"
     assert calculation.summary.quality is not MacdQuality.INSUFFICIENT

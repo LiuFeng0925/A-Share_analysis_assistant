@@ -118,6 +118,10 @@ function periodKey(market: Market, code: string, option: PeriodOption) {
   return `${market}/${code}/${option.period}/${option.range}/${option.adjustment}`;
 }
 
+function macdKey(market: Market, code: string, period: BarPeriod) {
+  return `${market}/${code}/${period}`;
+}
+
 function indicatorPeriodLabel(option: PeriodOption) {
   if (option.label === "今日") return "今日 1分";
   return option.label;
@@ -303,6 +307,8 @@ export function StockDetailPage() {
   const summaryRequestSequence = useRef(0);
   const barsRef = useRef<BarSeries | null>(null);
   const loadedBarsKeyRef = useRef<string | null>(null);
+  const barsCacheRef = useRef(new Map<string, BarSeries>());
+  const macdCacheRef = useRef(new Map<string, MacdIndicator>());
   const activeBarsRequestKeyRef = useRef<string | null>(null);
   const selectedBarsKeyRef = useRef<string | null>(null);
   const mounted = useRef(true);
@@ -355,10 +361,12 @@ export function StockDetailPage() {
 
   const loadMacd = useCallback(async (signal?: AbortSignal) => {
     if (!market || !code) return;
+    const key = macdKey(market, code, selectedPeriod.period);
+    const cachedMacd = macdCacheRef.current.get(key);
     const sequence = ++macdRequestSequence.current;
     setMacdLoading(true);
     setMacdError(null);
-    setMacd(null);
+    setMacd(cachedMacd ?? null);
     try {
       const nextMacd = await marketApi.getMacdIndicator(
         market,
@@ -367,6 +375,7 @@ export function StockDetailPage() {
         { signal },
       );
       if (mounted.current && sequence === macdRequestSequence.current) {
+        macdCacheRef.current.set(key, nextMacd);
         setMacd(nextMacd);
       }
     } catch (error) {
@@ -385,6 +394,13 @@ export function StockDetailPage() {
   const loadBars = useCallback(async (signal?: AbortSignal) => {
     if (!market || !code) return;
     const key = periodKey(market, code, selectedPeriod);
+    const cachedBars = barsCacheRef.current.get(key);
+    if (cachedBars) {
+      barsRef.current = cachedBars;
+      loadedBarsKeyRef.current = key;
+      setBars(cachedBars);
+      setLoadedBarsKey(key);
+    }
     const keepsCurrentChart = loadedBarsKeyRef.current === key && barsRef.current !== null;
     const sequence = ++barsRequestSequence.current;
     activeBarsRequestKeyRef.current = key;
@@ -404,6 +420,7 @@ export function StockDetailPage() {
         adjustment: selectedPeriod.adjustment,
       }, { signal });
       if (mounted.current && sequence === barsRequestSequence.current) {
+        barsCacheRef.current.set(key, nextBars);
         barsRef.current = nextBars;
         loadedBarsKeyRef.current = key;
         setBars(nextBars);

@@ -257,6 +257,40 @@ test("换周期时不把旧图表误标为新周期", async () => {
   expect(await screen.findByTestId("kline-chart")).toHaveTextContent("1m:1");
 });
 
+test("切回已加载周期时立即展示缓存并后台刷新", async () => {
+  let resolveDailyRefresh: ((value: typeof dailyBarsFixture) => void) | undefined;
+  const fiveMinuteBars = { ...dailyBarsFixture, period: "5m" as const };
+  const fiveMinuteMacd = {
+    ...macdIndicatorFixture,
+    period: "5m" as const,
+    summary: { ...macdIndicatorFixture.summary, recent_signal_label: "5分金叉" },
+  };
+  vi.mocked(marketApi.getBars)
+    .mockResolvedValueOnce(dailyBarsFixture)
+    .mockResolvedValueOnce(fiveMinuteBars)
+    .mockReturnValueOnce(new Promise((resolve) => { resolveDailyRefresh = resolve; }));
+  vi.mocked(marketApi.getMacdIndicator)
+    .mockResolvedValueOnce(macdIndicatorFixture)
+    .mockResolvedValueOnce(fiveMinuteMacd)
+    .mockResolvedValueOnce(macdIndicatorFixture);
+  renderDetail();
+  expect(await screen.findByTestId("kline-chart")).toHaveTextContent("1d:1:近 3 日金叉");
+
+  fireEvent.click(screen.getByRole("button", { name: "5分" }));
+  expect(await screen.findByTestId("kline-chart")).toHaveTextContent("5m:1:5分金叉");
+
+  fireEvent.click(screen.getByRole("button", { name: "日K" }));
+
+  await waitFor(() => expect(marketApi.getBars).toHaveBeenCalledTimes(3));
+  expect(screen.getByTestId("kline-chart")).toHaveTextContent("1d:1:近 3 日金叉");
+  expect(screen.getByText("正在刷新 K 线…")).toBeInTheDocument();
+  await act(async () => resolveDailyRefresh?.({
+    ...dailyBarsFixture,
+    last_updated_at: "2026-08-04T15:20:00+08:00",
+  }));
+  expect(screen.getByTestId("kline-chart")).toHaveTextContent("1d:1:近 3 日金叉");
+});
+
 test("非法市场参数显示中文错误且不发送行情请求", async () => {
   renderDetail("/stocks/XX/600519");
 
