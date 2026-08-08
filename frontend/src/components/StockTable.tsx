@@ -73,6 +73,27 @@ function formatMacdSignal(stock: StockQuote) {
   return "--";
 }
 
+function kdjSignalClass(signal: StockQuote["kdj_signal_type"]) {
+  if (signal === "golden_cross") return "is-golden";
+  if (signal === "death_cross") return "is-death";
+  return "is-empty";
+}
+
+function formatKdjSignal(stock: StockQuote) {
+  if (stock.kdj_quality === "insufficient") return "数据不足";
+  if (stock.kdj_quality === "error") return "暂不可用";
+  if (!stock.kdj_signal_label || stock.kdj_signal_type === "none") return "--";
+
+  const zone = stock.kdj_signal_zone === "low"
+    ? "低位"
+    : stock.kdj_signal_zone === "middle"
+      ? "中位"
+      : stock.kdj_signal_zone === "high"
+        ? "高位"
+        : "";
+  return stock.kdj_signal_label.replace(/(金叉|死叉)$/, `${zone}$1`);
+}
+
 function SortButton({
   field,
   label,
@@ -117,6 +138,7 @@ export function StockTable({ stocks, sortBy, sortOrder, onSort }: StockTableProp
               <SortButton field="code" label="股票" {...{ sortBy, sortOrder, onSort }} />
             </th>
             <th scope="col">日 K MACD</th>
+            <th scope="col">日 K KDJ</th>
             <th scope="col" aria-sort={ariaSort("latest_price")}>
               <SortButton field="latest_price" label="最新价" {...{ sortBy, sortOrder, onSort }} />
             </th>
@@ -175,6 +197,11 @@ export function StockTable({ stocks, sortBy, sortOrder, onSort }: StockTableProp
                 <td>
                   <span className={`macd-signal ${macdSignalClass(stock.macd_signal_type)}`}>
                     {formatMacdSignal(stock)}
+                  </span>
+                </td>
+                <td>
+                  <span className={`kdj-signal ${kdjSignalClass(stock.kdj_signal_type)}`}>
+                    {formatKdjSignal(stock)}
                   </span>
                 </td>
                 <td className={`data-value price-cell ${changeTone}`}>

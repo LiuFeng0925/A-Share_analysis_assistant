@@ -567,7 +567,8 @@ tr:focus-visible {
   font-weight: 800;
 }
 
-.macd-signal {
+.macd-signal,
+.kdj-signal {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -581,12 +582,14 @@ tr:focus-visible {
   font-weight: 750;
 }
 
-.macd-signal.is-golden {
+.macd-signal.is-golden,
+.kdj-signal.is-golden {
   color: #b4232a;
   background: #fff0f1;
 }
 
-.macd-signal.is-death {
+.macd-signal.is-death,
+.kdj-signal.is-death {
   color: #08764d;
   background: #eaf8f1;
 }

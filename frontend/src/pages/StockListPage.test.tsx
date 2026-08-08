@@ -124,7 +124,7 @@ test("支持 MACD 信号、零轴位置和最近出现时间筛选", async () =>
   fireEvent.change(screen.getByLabelText("零轴位置"), {
     target: { value: "above" },
   });
-  fireEvent.change(screen.getByLabelText("出现时间"), {
+  fireEvent.change(screen.getByLabelText("MACD 出现时间"), {
     target: { value: "3d" },
   });
 
@@ -139,6 +139,47 @@ test("支持 MACD 信号、零轴位置和最近出现时间筛选", async () =>
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     ),
   );
+});
+
+test("支持日 K KDJ 信号、交叉区域和最近出现时间组合筛选", async () => {
+  render(
+    <MemoryRouter>
+      <StockListPage />
+    </MemoryRouter>,
+  );
+
+  await screen.findByRole("row", { name: /贵州茅台/ });
+  expect(screen.getByText("日 K KDJ 雷达")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("日 K KDJ 信号"), {
+    target: { value: "golden_cross" },
+  });
+  fireEvent.change(screen.getByLabelText("KDJ 交叉区域"), {
+    target: { value: "low" },
+  });
+  fireEvent.change(screen.getByLabelText("KDJ 出现时间"), {
+    target: { value: "3d" },
+  });
+
+  await waitFor(() => expect(marketApi.getStocks).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      kdjSignal: "golden_cross",
+      kdjSignalZone: "low",
+      kdjRecentWindow: "3d",
+      page: 1,
+    }),
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  ));
+
+  fireEvent.click(screen.getByRole("button", { name: "清空指标" }));
+  await waitFor(() => expect(marketApi.getStocks).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      macdSignal: undefined,
+      kdjSignal: undefined,
+      kdjSignalZone: undefined,
+      kdjRecentWindow: undefined,
+    }),
+    expect.anything(),
+  ));
 });
 
 test("股票行可使用 Enter 键进入详情", async () => {

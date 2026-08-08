@@ -26,6 +26,7 @@ test("一行展示今日区间、更新时间，并按亿元和万亿元格式�
     .toEqual([
       "股票",
       "日 K MACD",
+      "日 K KDJ",
       "最新价",
       "涨跌幅",
       "涨跌额",
@@ -39,11 +40,31 @@ test("一行展示今日区间、更新时间，并按亿元和万亿元格式�
     ]);
   expect(screen.getByRole("columnheader", { name: "成交量（股）" })).toBeInTheDocument();
   expect(screen.getByText("近 3 日金叉")).toBeInTheDocument();
+  expect(screen.getByText("今日低位金叉")).toBeInTheDocument();
   expect(screen.getByText("1,551.01 — 1,599.90")).toBeInTheDocument();
   expect(screen.getByText("08-04 10:26:00")).toBeInTheDocument();
   expect(screen.getByText("1 亿")).toBeInTheDocument();
   expect(screen.getByText("1,000 亿")).toBeInTheDocument();
   expect(screen.getByText("1 万亿")).toBeInTheDocument();
+});
+
+test("KDJ 数据不足和错误使用中性结果文案", () => {
+  render(
+    <MemoryRouter>
+      <StockTable
+        stocks={[
+          { ...stock, code: "600001", kdj_signal_label: null, kdj_quality: "insufficient" },
+          { ...stock, code: "600002", kdj_signal_label: null, kdj_quality: "error" },
+        ]}
+        sortBy="code"
+        sortOrder="asc"
+        onSort={vi.fn()}
+      />
+    </MemoryRouter>,
+  );
+
+  expect(screen.getByText("数据不足")).toBeInTheDocument();
+  expect(screen.getByText("暂不可用")).toBeInTheDocument();
 });
 
 test("列头暴露排序语义且股票名称是真实详情链接", () => {

@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isAbortError, marketApi } from "../api/client";
 import type {
+  KdjRecentWindow,
+  KdjSignalFilter,
+  KdjSignalZoneFilter,
   MacdRecentWindow,
   MacdSignalFilter,
   MacdZeroAxisFilter,
@@ -44,6 +47,9 @@ export function StockListPage() {
   const [macdSignal, setMacdSignal] = useState<MacdSignalFilter | "">("");
   const [macdZeroAxis, setMacdZeroAxis] = useState<MacdZeroAxisFilter | "">("");
   const [macdRecentWindow, setMacdRecentWindow] = useState<MacdRecentWindow | "">("");
+  const [kdjSignal, setKdjSignal] = useState<KdjSignalFilter | "">("");
+  const [kdjSignalZone, setKdjSignalZone] = useState<KdjSignalZoneFilter | "">("");
+  const [kdjRecentWindow, setKdjRecentWindow] = useState<KdjRecentWindow | "">("");
   const [summary, setSummary] = useState<MarketSummaryData | null>(null);
   const [stockPage, setStockPage] = useState<StockPage | null>(null);
   const [loading, setLoading] = useState(false);
@@ -84,6 +90,9 @@ export function StockListPage() {
           macdSignal: macdSignal || undefined,
           macdZeroAxis: macdZeroAxis || undefined,
           macdRecentWindow: macdRecentWindow || undefined,
+          kdjSignal: kdjSignal || undefined,
+          kdjSignalZone: kdjSignalZone || undefined,
+          kdjRecentWindow: kdjRecentWindow || undefined,
         }, { signal }),
       ]);
       if (!mounted.current || sequence !== requestSequence.current) return;
@@ -96,7 +105,19 @@ export function StockListPage() {
     } finally {
       if (mounted.current && sequence === requestSequence.current) setLoading(false);
     }
-  }, [macdRecentWindow, macdSignal, macdZeroAxis, market, page, query, sortBy, sortOrder]);
+  }, [
+    kdjRecentWindow,
+    kdjSignal,
+    kdjSignalZone,
+    macdRecentWindow,
+    macdSignal,
+    macdZeroAxis,
+    market,
+    page,
+    query,
+    sortBy,
+    sortOrder,
+  ]);
 
   usePolling(load, 60_000);
 
@@ -112,7 +133,12 @@ export function StockListPage() {
 
   const totalPages = stockPage ? Math.max(1, Math.ceil(stockPage.total / PAGE_SIZE)) : 1;
   const hasData = stockPage !== null;
-  const hasIndicatorFilters = macdSignal !== "" || macdZeroAxis !== "" || macdRecentWindow !== "";
+  const hasIndicatorFilters = macdSignal !== ""
+    || macdZeroAxis !== ""
+    || macdRecentWindow !== ""
+    || kdjSignal !== ""
+    || kdjSignalZone !== ""
+    || kdjRecentWindow !== "";
   const marketStatus = summary?.market_status === "open"
     ? "交易中"
     : summary?.market_status === "closed"
@@ -176,7 +202,7 @@ export function StockListPage() {
           {loading && hasData && <span className="refreshing" role="status">正在刷新…</span>}
         </div>
 
-        <div className="indicator-filter-bar" aria-label="技术指标筛选">
+        <div className="indicator-filter-bar" aria-label="MACD 指标筛选">
           <span className="indicator-filter-title">
             <small>指标筛选</small>
             日 K MACD 雷达
@@ -217,10 +243,67 @@ export function StockListPage() {
           <label className="indicator-filter">
             <span>出现时间</span>
             <select
-              aria-label="出现时间"
+              aria-label="MACD 出现时间"
               value={macdRecentWindow}
               onChange={(event) => {
                 setMacdRecentWindow(event.target.value as MacdRecentWindow | "");
+                setPage(1);
+              }}
+            >
+              <option value="">时间不限</option>
+              <option value="today">今日</option>
+              <option value="3d">近 3 日</option>
+              <option value="5d">近 5 日</option>
+            </select>
+          </label>
+        </div>
+
+        <div className="indicator-filter-bar is-kdj" aria-label="KDJ 指标筛选">
+          <span className="indicator-filter-title">
+            <small>指标筛选</small>
+            日 K KDJ 雷达
+          </span>
+          <span className="indicator-filter-note">
+            按日 K 的 K、D 实际交叉筛选，可组合低位、中位或高位区域。
+          </span>
+          <label className="indicator-filter">
+            <span>日 K KDJ 信号</span>
+            <select
+              aria-label="日 K KDJ 信号"
+              value={kdjSignal}
+              onChange={(event) => {
+                setKdjSignal(event.target.value as KdjSignalFilter | "");
+                setPage(1);
+              }}
+            >
+              <option value="">全部信号</option>
+              <option value="golden_cross">金叉</option>
+              <option value="death_cross">死叉</option>
+            </select>
+          </label>
+          <label className="indicator-filter">
+            <span>交叉区域</span>
+            <select
+              aria-label="KDJ 交叉区域"
+              value={kdjSignalZone}
+              onChange={(event) => {
+                setKdjSignalZone(event.target.value as KdjSignalZoneFilter | "");
+                setPage(1);
+              }}
+            >
+              <option value="">区域不限</option>
+              <option value="low">低位</option>
+              <option value="middle">中位</option>
+              <option value="high">高位</option>
+            </select>
+          </label>
+          <label className="indicator-filter">
+            <span>出现时间</span>
+            <select
+              aria-label="KDJ 出现时间"
+              value={kdjRecentWindow}
+              onChange={(event) => {
+                setKdjRecentWindow(event.target.value as KdjRecentWindow | "");
                 setPage(1);
               }}
             >
@@ -238,6 +321,9 @@ export function StockListPage() {
               setMacdSignal("");
               setMacdZeroAxis("");
               setMacdRecentWindow("");
+              setKdjSignal("");
+              setKdjSignalZone("");
+              setKdjRecentWindow("");
               setPage(1);
             }}
           >
