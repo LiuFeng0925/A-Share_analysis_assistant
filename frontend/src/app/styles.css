@@ -1153,6 +1153,14 @@ tr:focus-visible {
   gap: 12px;
 }
 
+.indicator-disclaimer {
+  margin: -2px 2px 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+  text-align: center;
+}
+
 .indicator-card {
   overflow: hidden;
   background: var(--surface);

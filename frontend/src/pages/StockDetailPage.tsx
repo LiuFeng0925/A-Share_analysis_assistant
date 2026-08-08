@@ -798,6 +798,9 @@ export function StockDetailPage() {
             <div className="indicator-state">暂无 KDJ 指标</div>
           )}
         </article>
+        <p className="indicator-disclaimer">
+          技术指标仅用于辅助分析，不构成投资建议。
+        </p>
       </aside>
       </div>
     </section>

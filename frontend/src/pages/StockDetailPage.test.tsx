@@ -123,6 +123,7 @@ test("详情页展示 KDJ 数值、区域、信号时间并传给副图", async 
   expect(screen.getAllByText("盘中动态").length).toBeGreaterThanOrEqual(1);
   expect(screen.getAllByText("2026-08-04 10:26:00").length).toBeGreaterThanOrEqual(1);
   expect(screen.getByTestId("kline-chart")).toHaveTextContent("盘中金叉");
+  expect(screen.getByText("技术指标仅用于辅助分析，不构成投资建议。")).toBeInTheDocument();
   expect(marketApi.getKdjIndicator).toHaveBeenCalledWith(
     "SH",
     "600519",
