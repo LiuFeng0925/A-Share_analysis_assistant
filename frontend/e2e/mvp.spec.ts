@@ -7,6 +7,7 @@ test("从全部股票搜索进入详情并查看今日一分钟 K", async ({ pag
   let kdjRequestCount = 0;
   let thirtyMinuteKdjRequestCount = 0;
   let thirtyMinuteMacdRequestCount = 0;
+  let failNextThirtyMinuteKdj = false;
   await page.route("**/api/market/summary", async (route) => {
     const response = await route.fetch();
     const summary = await response.json();
@@ -57,11 +58,22 @@ test("从全部股票搜索进入详情并查看今日一分钟 K", async ({ pag
   });
   await page.route("**/api/stocks/*/*/indicators/kdj?*", async (route) => {
     kdjRequestCount += 1;
-    const response = await route.fetch();
-    const body = await response.json();
     const url = new URL(route.request().url());
     if (url.searchParams.get("period") === "30m") {
       thirtyMinuteKdjRequestCount += 1;
+      if (failNextThirtyMinuteKdj) {
+        failNextThirtyMinuteKdj = false;
+        await route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "模拟 KDJ 短时失败" }),
+        });
+        return;
+      }
+    }
+    const response = await route.fetch();
+    const body = await response.json();
+    if (url.searchParams.get("period") === "30m") {
       if (thirtyMinuteKdjRequestCount > 1 && body.items.length > 0) {
         const last = body.items.at(-1);
         const nextTime = new Date(new Date(last.bar_time).getTime() + 30 * 60_000).toISOString();
@@ -246,6 +258,15 @@ test("从全部股票搜索进入详情并查看今日一分钟 K", async ({ pag
   await expect(page.locator(".kdj-card")).toContainText("2026-08-04 11:00:00");
   expect(thirtyMinuteKdjRequestCount).toBeGreaterThan(kdjRequestsBeforeThirtyMinuteRefresh);
   expect(thirtyMinuteMacdRequestCount).toBeGreaterThan(macdRequestsBeforeThirtyMinuteRefresh);
+
+  failNextThirtyMinuteKdj = true;
+  await page.clock.fastForward(60_000);
+  await expect(page.locator(".kdj-card")).toContainText("KDJ 刷新失败");
+  await expect(page.locator(".kdj-card")).toContainText("2026-08-04 11:00:00");
+
+  await page.clock.fastForward(60_000);
+  await expect(page.locator(".kdj-card")).not.toContainText("KDJ 刷新失败");
+  await expect(page.locator(".kdj-card")).toContainText("2026-08-04 11:00:00");
 
   await page.screenshot({
     path: testInfo.outputPath("a-share-radar-mvp.png"),
