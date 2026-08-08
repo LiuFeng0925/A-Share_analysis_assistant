@@ -2,7 +2,12 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import * as echarts from "echarts";
 import { createElement } from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { dailyBarsFixture, macdIndicatorFixture, todayBarsFixture } from "../test/fixtures";
+import {
+  dailyBarsFixture,
+  kdjIndicatorFixture,
+  macdIndicatorFixture,
+  todayBarsFixture,
+} from "../test/fixtures";
 import { buildKlineOption, KlineChart } from "./KlineChart";
 
 vi.mock("echarts", () => ({ init: vi.fn() }));
@@ -82,6 +87,79 @@ describe("KlineChart", () => {
     const title = option.title as { text: string };
 
     expect(title.text).toBe("MACD（5分）");
+  });
+
+  test("MACD 下方绘制 KDJ 并让四个横轴共享缩放", () => {
+    const option = buildKlineOption(
+      dailyBarsFixture,
+      undefined,
+      macdIndicatorFixture,
+      kdjIndicatorFixture,
+    );
+    const grids = option.grid as unknown[];
+    const axes = option.xAxis as unknown[];
+    const zoom = option.dataZoom as Array<{ xAxisIndex?: number[] }>;
+    const chartSeries = option.series as Array<{
+      name: string;
+      markLine?: { data: Array<{ yAxis: number }> };
+      markArea?: { data: Array<Array<{ name?: string; yAxis: number }>> };
+      markPoint?: { data: Array<{ name: string; coord: [string, number] }> };
+    }>;
+    const kLine = chartSeries.find((item) => item.name === "K");
+
+    expect(grids).toHaveLength(4);
+    expect(axes).toHaveLength(4);
+    expect(zoom[0].xAxisIndex).toEqual([0, 1, 2, 3]);
+    expect(chartSeries.map((item) => item.name)).toEqual([
+      "K 线",
+      "成交量",
+      "DIFF",
+      "DEA",
+      "MACD 柱",
+      "K",
+      "D",
+      "J",
+    ]);
+    expect(kLine?.markLine?.data).toEqual([
+      expect.objectContaining({ yAxis: 20 }),
+      expect.objectContaining({ yAxis: 80 }),
+    ]);
+    expect(kLine?.markArea?.data).toEqual([
+      [expect.objectContaining({ name: "超卖区", yAxis: 0 }), { yAxis: 20 }],
+      [expect.objectContaining({ name: "普通区", yAxis: 20 }), { yAxis: 80 }],
+      [expect.objectContaining({ name: "超买区", yAxis: 80 }), { yAxis: 100 }],
+    ]);
+    expect(kLine?.markPoint?.data).toEqual([
+      expect.objectContaining({ name: "金叉", coord: ["2026-08-04T15:00:00+08:00", 18.2] }),
+    ]);
+  });
+
+  test("KDJ 纵轴允许 J 超出 0 到 100 且提示框显示信号区域", () => {
+    const extremeKdj = {
+      ...kdjIndicatorFixture,
+      items: kdjIndicatorFixture.items.map((item, index) => ({
+        ...item,
+        j_value: index === 0 ? -12 : 118,
+      })),
+    };
+    const option = buildKlineOption(
+      dailyBarsFixture,
+      undefined,
+      macdIndicatorFixture,
+      extremeKdj,
+    );
+    const yAxes = option.yAxis as Array<{
+      min?: (extent: { min: number; max: number }) => number;
+      max?: (extent: { min: number; max: number }) => number;
+    }>;
+    const tooltip = option.tooltip as {
+      formatter: (params: Array<{ dataIndex: number }>) => string;
+    };
+
+    expect(yAxes[3].min?.({ min: -12, max: 118 })).toBeLessThanOrEqual(-12);
+    expect(yAxes[3].max?.({ min: -12, max: 118 })).toBeGreaterThanOrEqual(118);
+    expect(tooltip.formatter([{ dataIndex: 0 }])).toContain("J -12.00");
+    expect(tooltip.formatter([{ dataIndex: 0 }])).toContain("超卖区");
   });
 
   test("默认显示最近 60 根 K 线，数据不足 60 根时显示全部", () => {

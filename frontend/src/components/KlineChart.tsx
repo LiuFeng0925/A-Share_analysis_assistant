@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as echarts from "echarts";
 import type { ECharts, EChartsOption } from "echarts";
-import type { BarSeries, MacdIndicator } from "../api/types";
+import type { BarSeries, KdjIndicator, MacdIndicator } from "../api/types";
 import {
   formatMarketNumber,
   formatShanghaiAxisLabel,
@@ -51,10 +51,36 @@ function defaultZoomForSeries(series: BarSeries): ZoomWindow {
   };
 }
 
-function tooltipContent(series: BarSeries, dataIndex: number, macd?: MacdIndicator | null) {
+function kdjZoneLabel(value: KdjIndicator["items"][number]["current_zone"]) {
+  if (value === "oversold") return "超卖区";
+  if (value === "overbought") return "超买区";
+  if (value === "neutral") return "普通区";
+  return "区域未知";
+}
+
+function kdjSignalLabel(value: KdjIndicator["items"][number]["signal_type"]) {
+  if (value === "golden_cross") return "金叉";
+  if (value === "death_cross") return "死叉";
+  return "无交叉";
+}
+
+function kdjSignalZoneLabel(value: KdjIndicator["items"][number]["signal_zone"]) {
+  if (value === "low") return "低位";
+  if (value === "middle") return "中位";
+  if (value === "high") return "高位";
+  return "";
+}
+
+function tooltipContent(
+  series: BarSeries,
+  dataIndex: number,
+  macd?: MacdIndicator | null,
+  kdj?: KdjIndicator | null,
+) {
   const bar = series.items[dataIndex];
   if (!bar) return "暂无 K 线数据";
   const macdPoint = macd?.items.find((item) => item.bar_time === bar.bar_time);
+  const kdjPoint = kdj?.items.find((item) => item.bar_time === bar.bar_time);
   return [
     `<strong>${formatShanghaiDateTime(bar.bar_time)}</strong>`,
     `开 ${formatMarketNumber(bar.open_price)}　高 ${formatMarketNumber(bar.high_price)}`,
@@ -64,6 +90,12 @@ function tooltipContent(series: BarSeries, dataIndex: number, macd?: MacdIndicat
     macdPoint
       ? `DIFF ${formatMarketNumber(macdPoint.diff)}　DEA ${formatMarketNumber(macdPoint.dea)}`
       : null,
+    kdjPoint
+      ? `K ${formatMarketNumber(kdjPoint.k_value)}　D ${formatMarketNumber(kdjPoint.d_value)}　J ${formatMarketNumber(kdjPoint.j_value)}`
+      : null,
+    kdjPoint
+      ? `${kdjZoneLabel(kdjPoint.current_zone)}　${kdjSignalZoneLabel(kdjPoint.signal_zone)}${kdjSignalLabel(kdjPoint.signal_type)}　${kdjPoint.is_intraday ? "盘中动态" : "已确认"}`
+      : null,
     bar.is_complete ? "已完成" : "动态柱",
   ].filter(Boolean).join("<br />");
 }
@@ -72,8 +104,11 @@ export function buildKlineOption(
   series: BarSeries,
   zoom: ZoomWindow = defaultZoomForSeries(series),
   macd?: MacdIndicator | null,
+  kdj?: KdjIndicator | null,
 ): EChartsOption {
   const hasMacd = Boolean(macd?.items.length);
+  const hasKdj = Boolean(kdj?.items.length);
+  const hasIndicators = hasMacd || hasKdj;
   const categories = series.items.map((bar) => bar.bar_time);
   const candles = series.items.map((bar) => [
     bar.open_price,
@@ -95,48 +130,92 @@ export function buildKlineOption(
       itemStyle: { color: value !== null && value >= 0 ? "#e5484d" : "#16a36f" },
     };
   });
+  const kdjByTime = new Map(kdj?.items.map((item) => [item.bar_time, item]) ?? []);
+  const kValues = categories.map((time) => kdjByTime.get(time)?.k_value ?? null);
+  const dValues = categories.map((time) => kdjByTime.get(time)?.d_value ?? null);
+  const jValues = categories.map((time) => kdjByTime.get(time)?.j_value ?? null);
+  const kdjAxisIndex = hasMacd ? 3 : 2;
+  const kdjSignals = (kdj?.items ?? [])
+    .filter((item) => item.signal_type !== "none" && item.k_value !== null)
+    .map((item) => ({
+      name: item.signal_type === "golden_cross" ? "金叉" : "死叉",
+      coord: [item.bar_time, item.k_value] as [string, number],
+      value: item.signal_type === "golden_cross" ? "金" : "死",
+      symbol: "triangle",
+      symbolRotate: item.signal_type === "golden_cross" ? 0 : 180,
+      symbolSize: 12,
+      itemStyle: {
+        color: item.signal_type === "golden_cross" ? "#e5484d" : "#16a36f",
+      },
+      label: { show: false },
+    }));
   const axisLabelFormatter = (value: string) =>
     formatShanghaiAxisLabel(value, series.period, series.range);
-  const linkedAxes = hasMacd ? [0, 1, 2] : [0, 1];
+  const linkedAxes = Array.from({ length: 2 + Number(hasMacd) + Number(hasKdj) }, (_, i) => i);
+
+  const titles = [
+    ...(hasMacd
+      ? [{
+          text: `MACD（${PERIOD_LABELS[series.period] ?? series.period}）`,
+          left: 56,
+          top: hasKdj ? "55.5%" : "70.5%",
+          textStyle: { color: "#172033", fontSize: 12, fontWeight: 700 },
+        }]
+      : []),
+    ...(hasKdj
+      ? [{
+          text: `KDJ（${PERIOD_LABELS[series.period] ?? series.period}）`,
+          left: 56,
+          top: "72%",
+          textStyle: { color: "#172033", fontSize: 12, fontWeight: 700 },
+        }]
+      : []),
+  ];
+  const legends = [
+    ...(hasMacd
+      ? [{
+          data: ["DIFF", "DEA", "MACD 柱"],
+          formatter: (name: string) => MACD_LEGEND_LABELS[name] ?? name,
+          left: 148,
+          top: hasKdj ? "55.2%" : "70.2%",
+          itemWidth: 18,
+          itemHeight: 8,
+          textStyle: { color: "#687386", fontSize: 11 },
+        }]
+      : []),
+    ...(hasKdj
+      ? [{
+          data: ["K", "D", "J"],
+          left: 138,
+          top: "71.7%",
+          itemWidth: 18,
+          itemHeight: 8,
+          textStyle: { color: "#687386", fontSize: 11 },
+        }]
+      : []),
+  ];
 
   return {
     animation: false,
     axisPointer: { link: [{ xAxisIndex: "all" }] },
-    title: hasMacd
-      ? {
-          text: `MACD（${PERIOD_LABELS[series.period] ?? series.period}）`,
-          left: 56,
-          top: "70.5%",
-          textStyle: {
-            color: "#172033",
-            fontSize: 12,
-            fontWeight: 700,
-          },
-        }
-      : undefined,
-    legend: hasMacd
-      ? {
-          data: ["DIFF", "DEA", "MACD 柱"],
-          formatter: (name: string) => MACD_LEGEND_LABELS[name] ?? name,
-          left: 148,
-          top: "70.2%",
-          itemWidth: 18,
-          itemHeight: 8,
-          textStyle: {
-            color: "#687386",
-            fontSize: 11,
-          },
-        }
-      : undefined,
+    title: titles.length === 1 ? titles[0] : titles.length > 1 ? titles : undefined,
+    legend: legends.length === 1 ? legends[0] : legends.length > 1 ? legends : undefined,
     tooltip: {
       trigger: "axis",
       formatter: (params: unknown) => {
         const items = Array.isArray(params) ? params : [params];
         const first = items[0] as { dataIndex?: number } | undefined;
-        return tooltipContent(series, first?.dataIndex ?? -1, macd);
+        return tooltipContent(series, first?.dataIndex ?? -1, macd, kdj);
       },
     },
-    grid: hasMacd
+    grid: hasMacd && hasKdj
+      ? [
+          { left: 56, right: 78, top: 24, height: "35%" },
+          { left: 56, right: 78, top: "42%", height: "8%" },
+          { left: 56, right: 78, top: "59%", height: "9%" },
+          { left: 56, right: 78, top: "75.5%", height: "13%" },
+        ]
+      : hasIndicators
       ? [
           { left: 56, right: 64, top: 24, height: "48%" },
           { left: 56, right: 64, top: "58%", height: "11%" },
@@ -153,7 +232,12 @@ export function buildKlineOption(
         boundaryGap: false,
         gridIndex: 0,
         axisLine: { lineStyle: { color: "#dce2ec" } },
-        axisLabel: { color: "#687386", hideOverlap: true, formatter: axisLabelFormatter },
+        axisLabel: {
+          show: !hasIndicators,
+          color: "#687386",
+          hideOverlap: true,
+          formatter: axisLabelFormatter,
+        },
       },
       {
         type: "category",
@@ -170,7 +254,28 @@ export function buildKlineOption(
               data: categories,
               boundaryGap: false,
               gridIndex: 2,
-              axisLabel: { color: "#687386", hideOverlap: true, formatter: axisLabelFormatter },
+              axisLabel: {
+                show: !hasKdj,
+                color: "#687386",
+                hideOverlap: true,
+                formatter: axisLabelFormatter,
+              },
+              axisLine: { lineStyle: { color: "#dce2ec" } },
+            },
+          ]
+        : []),
+      ...(hasKdj
+        ? [
+            {
+              type: "category" as const,
+              data: categories,
+              boundaryGap: false,
+              gridIndex: kdjAxisIndex,
+              axisLabel: {
+                color: "#687386",
+                hideOverlap: true,
+                formatter: axisLabelFormatter,
+              },
               axisLine: { lineStyle: { color: "#dce2ec" } },
             },
           ]
@@ -196,6 +301,26 @@ export function buildKlineOption(
               gridIndex: 2,
               splitLine: { lineStyle: { color: "#edf0f5" } },
               axisLabel: { color: "#687386" },
+            },
+          ]
+        : []),
+      ...(hasKdj
+        ? [
+            {
+              scale: true,
+              gridIndex: kdjAxisIndex,
+              position: "right" as const,
+              min: (extent: { min: number }) => Math.min(0, Math.floor(extent.min - 5)),
+              max: (extent: { max: number }) => Math.max(100, Math.ceil(extent.max + 5)),
+              splitLine: { show: false },
+              axisLabel: {
+                color: "#687386",
+                formatter: (value: number) => {
+                  if (value === 20) return "20 超卖线";
+                  if (value === 80) return "80 超买线";
+                  return String(value);
+                },
+              },
             },
           ]
         : []),
@@ -263,6 +388,81 @@ export function buildKlineOption(
             },
           ]
         : []),
+      ...(hasKdj
+        ? [
+            {
+              name: "K",
+              type: "line" as const,
+              xAxisIndex: kdjAxisIndex,
+              yAxisIndex: kdjAxisIndex,
+              showSymbol: false,
+              smooth: true,
+              lineStyle: { width: 1.5, color: "#3157d5" },
+              data: kValues,
+              markLine: {
+                silent: true,
+                symbol: "none",
+                lineStyle: { type: "dashed" as const, width: 1.4, color: "#8a94a6" },
+                label: {
+                  show: true,
+                  position: "end" as const,
+                  color: "#596579",
+                  formatter: (params: { value?: unknown }) =>
+                    params.value === 20 ? "20 超卖线" : "80 超买线",
+                },
+                data: [{ yAxis: 20 }, { yAxis: 80 }],
+              },
+              markArea: {
+                silent: true,
+                label: { show: true, position: "insideLeft" as const, color: "#7b8494" },
+                data: [
+                  [
+                    { name: "超卖区", yAxis: 0, itemStyle: { color: "rgba(22, 163, 111, 0.08)" } },
+                    { yAxis: 20 },
+                  ] as [
+                    { name: string; yAxis: number; itemStyle: { color: string } },
+                    { yAxis: number },
+                  ],
+                  [
+                    { name: "普通区", yAxis: 20, itemStyle: { color: "rgba(49, 87, 213, 0.018)" } },
+                    { yAxis: 80 },
+                  ] as [
+                    { name: string; yAxis: number; itemStyle: { color: string } },
+                    { yAxis: number },
+                  ],
+                  [
+                    { name: "超买区", yAxis: 80, itemStyle: { color: "rgba(229, 72, 77, 0.08)" } },
+                    { yAxis: 100 },
+                  ] as [
+                    { name: string; yAxis: number; itemStyle: { color: string } },
+                    { yAxis: number },
+                  ],
+                ],
+              },
+              markPoint: { data: kdjSignals },
+            },
+            {
+              name: "D",
+              type: "line" as const,
+              xAxisIndex: kdjAxisIndex,
+              yAxisIndex: kdjAxisIndex,
+              showSymbol: false,
+              smooth: true,
+              lineStyle: { width: 1.5, color: "#f59f00" },
+              data: dValues,
+            },
+            {
+              name: "J",
+              type: "line" as const,
+              xAxisIndex: kdjAxisIndex,
+              yAxisIndex: kdjAxisIndex,
+              showSymbol: false,
+              smooth: true,
+              lineStyle: { width: 1.25, color: "#8b5cf6" },
+              data: jValues,
+            },
+          ]
+        : []),
     ],
   };
 }
@@ -270,9 +470,10 @@ export function buildKlineOption(
 interface KlineChartProps {
   series: BarSeries;
   macd?: MacdIndicator | null;
+  kdj?: KdjIndicator | null;
 }
 
-export function KlineChart({ series, macd = null }: KlineChartProps) {
+export function KlineChart({ series, macd = null, kdj = null }: KlineChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<ECharts | null>(null);
   const initialZoom = defaultZoomForSeries(series);
@@ -324,8 +525,8 @@ export function KlineChart({ series, macd = null }: KlineChartProps) {
     } else if (!manualZoomRef.current) {
       commitZoomWindow(defaultZoom);
     }
-    chartRef.current?.setOption(buildKlineOption(series, zoomRef.current, macd), true);
-  }, [commitZoomWindow, macd, series]);
+    chartRef.current?.setOption(buildKlineOption(series, zoomRef.current, macd, kdj), true);
+  }, [commitZoomWindow, kdj, macd, series]);
 
   const updateZoom = useCallback((nextStart: number, nextEnd: number) => {
     const boundedStart = Math.min(95, Math.max(0, nextStart));
@@ -366,7 +567,7 @@ export function KlineChart({ series, macd = null }: KlineChartProps) {
       </div>
       <div
         ref={containerRef}
-        className={macd ? "kline-chart has-macd" : "kline-chart"}
+        className={kdj ? "kline-chart has-kdj" : macd ? "kline-chart has-macd" : "kline-chart"}
         role="img"
         aria-label={`${series.code} ${series.period} K 线图，共 ${series.items.length} 根`}
       />

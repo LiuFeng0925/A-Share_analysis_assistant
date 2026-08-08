@@ -1141,6 +1141,10 @@ tr:focus-visible {
   height: 620px;
 }
 
+.kline-chart.has-kdj {
+  height: 760px;
+}
+
 .indicator-panel {
   display: grid;
   gap: 12px;
@@ -1467,6 +1471,10 @@ tr:focus-visible {
 
   .kline-chart.has-macd {
     height: 520px;
+  }
+
+  .kline-chart.has-kdj {
+    height: 660px;
   }
 
   .page-header {
