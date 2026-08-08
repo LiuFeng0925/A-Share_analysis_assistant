@@ -44,6 +44,13 @@ class StockQuoteResponse(AttributeModel):
     macd_signal_label: str | None = None
     macd_zero_axis: str | None = None
     macd_quality: str | None = None
+    kdj_signal_type: str | None = None
+    kdj_signal_time: AwareDatetime | None = None
+    kdj_recent_signal_days: int | None = None
+    kdj_signal_label: str | None = None
+    kdj_signal_zone: str | None = None
+    kdj_current_zone: str | None = None
+    kdj_quality: str | None = None
 
 
 class StockPageResponse(AttributeModel):
@@ -115,6 +122,43 @@ class MacdIndicatorResponse(AttributeModel):
     period: str
     summary: MacdSummaryResponse
     items: list[MacdPointResponse]
+
+
+class KdjPointResponse(AttributeModel):
+    bar_time: AwareDatetime
+    k_value: float | None
+    d_value: float | None
+    j_value: float | None
+    signal_type: str
+    signal_zone: str
+    current_zone: str
+    is_intraday: bool
+    quality: str
+
+
+class KdjSummaryResponse(AttributeModel):
+    calculated_at: AwareDatetime
+    market_time: AwareDatetime | None
+    k_value: float | None
+    d_value: float | None
+    j_value: float | None
+    current_zone: str
+    signal_type: str
+    signal_time: AwareDatetime | None
+    signal_zone: str
+    recent_signal_days: int | None
+    recent_signal_label: str
+    status: str
+    is_intraday: bool
+    quality: str
+
+
+class KdjIndicatorResponse(AttributeModel):
+    market: Market
+    code: str
+    period: str
+    summary: KdjSummaryResponse
+    items: list[KdjPointResponse]
 
 
 class DataStatusResponse(AttributeModel):

@@ -219,14 +219,14 @@ def create_app(
             app.state.clock = clock
             app.state.collector = collector
 
-            async def refresh_macd_later(at: datetime) -> None:
+            async def refresh_indicators_later(at: datetime) -> None:
                 try:
-                    await indicator_service.refresh_market_macd(
+                    await indicator_service.refresh_market_indicators(
                         at,
                         market_open=clock.is_open(at),
                     )
                 except Exception:
-                    logger.exception("MACD 指标刷新失败，继续保留上一批有效指标")
+                    logger.exception("技术指标刷新失败，继续保留上一批有效指标")
 
             now = resolved_now_provider()
             data_status = await _run_blocking_safely(repository.data_status)
@@ -237,7 +237,7 @@ def create_app(
             async def collect_initial_snapshot_later(snapshot_at: datetime) -> None:
                 try:
                     await collector.collect_once(snapshot_at)
-                    await refresh_macd_later(snapshot_at)
+                    await refresh_indicators_later(snapshot_at)
                 except Exception:
                     logger.exception("首次全市场行情采集失败，继续使用本地已有数据")
 
@@ -250,12 +250,12 @@ def create_app(
                 )
                 app.state.initial_snapshot_task = initial_snapshot_task
             else:
-                indicator_task = asyncio.create_task(refresh_macd_later(now))
+                indicator_task = asyncio.create_task(refresh_indicators_later(now))
                 app.state.indicator_task = indicator_task
 
             async def bootstrap_history_later() -> None:
                 await bootstrapper.run()
-                await refresh_macd_later(resolved_now_provider())
+                await refresh_indicators_later(resolved_now_provider())
 
             history_task = asyncio.create_task(bootstrap_history_later())
             app.state.history_task = history_task
@@ -308,7 +308,7 @@ def create_app(
 
             async def daily_history_later() -> None:
                 await bootstrapper.run()
-                await refresh_macd_later(resolved_now_provider())
+                await refresh_indicators_later(resolved_now_provider())
 
             scheduler = create_scheduler(
                 clock,
@@ -316,7 +316,7 @@ def create_app(
                 archive_later,
                 maintenance_later,
                 daily_history_later,
-                refresh_macd_later,
+                refresh_indicators_later,
             )
             app.state.scheduler = scheduler
             scheduler.start()
@@ -340,7 +340,7 @@ def create_app(
                         except asyncio.CancelledError:
                             pass
                         except Exception:
-                            logger.exception("MACD 预热任务异常退出")
+                            logger.exception("技术指标预热任务异常退出")
                 finally:
                     try:
                         if history_task is not None:

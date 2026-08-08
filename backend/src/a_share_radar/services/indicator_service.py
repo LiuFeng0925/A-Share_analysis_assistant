@@ -4,8 +4,9 @@ from collections.abc import Callable
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from a_share_radar.domain.indicators import MacdCalculation
+from a_share_radar.domain.indicators import KdjCalculation, MacdCalculation
 from a_share_radar.domain.models import Stock
+from a_share_radar.services.kdj import calculate_kdj_series
 from a_share_radar.services.macd import calculate_macd_series
 from a_share_radar.storage.repository import MarketRepository, StockQuoteRow
 
@@ -33,6 +34,9 @@ MACD_BAR_RANGE_BY_PERIOD = {
     "1w": "5y",
     "1mo": "all",
 }
+SUPPORTED_INDICATOR_PERIODS = SUPPORTED_MACD_PERIODS
+INDICATOR_LOOKBACK_DAYS_BY_PERIOD = MACD_LOOKBACK_DAYS_BY_PERIOD
+INDICATOR_BAR_RANGE_BY_PERIOD = MACD_BAR_RANGE_BY_PERIOD
 
 
 async def _run_repository_call[Result](
@@ -81,6 +85,34 @@ class IndicatorService:
             )
         return calculation
 
+    async def get_stock_kdj(
+        self,
+        stock: Stock | StockQuoteRow,
+        now: datetime,
+        *,
+        market_open: bool,
+        period: str = "1d",
+    ) -> KdjCalculation | None:
+        if period not in SUPPORTED_INDICATOR_PERIODS:
+            raise ValueError(f"不支持的 KDJ 周期：{period}")
+        await self._ensure_period_bars(stock, now, period)
+        calculation = await _run_repository_call(
+            self.repository.get_kdj, stock.market, stock.code, period
+        )
+        if calculation is None or await self._indicator_is_stale(
+            calculation, stock, now, market_open=market_open
+        ):
+            await self.refresh_stock_kdj(
+                stock,
+                now,
+                market_open=market_open,
+                period=period,
+            )
+            calculation = await _run_repository_call(
+                self.repository.get_kdj, stock.market, stock.code, period
+            )
+        return calculation
+
     async def refresh_stock_macd(
         self,
         stock: Stock | StockQuoteRow,
@@ -122,6 +154,45 @@ class IndicatorService:
         )
         await _run_repository_call(self.repository.upsert_macd, calculation)
 
+    async def refresh_stock_kdj(
+        self,
+        stock: Stock | StockQuoteRow,
+        now: datetime,
+        *,
+        market_open: bool,
+        period: str = "1d",
+    ) -> None:
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise ValueError("KDJ 刷新时间必须包含时区")
+        if period not in SUPPORTED_INDICATOR_PERIODS:
+            raise ValueError(f"不支持的 KDJ 周期：{period}")
+        lookback_days = INDICATOR_LOOKBACK_DAYS_BY_PERIOD[period]
+        adjustment = "none" if period == "1m" else "qfq"
+        latest_quote = await self._latest_quote(stock)
+        bars = await _run_repository_call(
+            self.repository.get_bars,
+            stock.market,
+            stock.code,
+            period,
+            datetime.combine(
+                now.date() - timedelta(days=lookback_days),
+                time.min,
+                tzinfo=SHANGHAI,
+            ),
+            datetime.combine(now.date(), time(23, 59, 59), tzinfo=SHANGHAI),
+            adjustment,
+        )
+        trading_days = await _run_repository_call(self.repository.list_trading_days)
+        calculation = calculate_kdj_series(
+            bars,
+            latest_quote=latest_quote,
+            trading_days=sorted(trading_days),
+            now=now,
+            market_open=market_open,
+            period=period,
+        )
+        await _run_repository_call(self.repository.upsert_kdj, calculation)
+
     async def refresh_market_macd(self, now: datetime, *, market_open: bool) -> None:
         stocks = await _run_repository_call(self.repository.list_all_stocks)
         for stock in stocks:
@@ -131,6 +202,23 @@ class IndicatorService:
                 )
             except Exception:
                 logger.exception("刷新 MACD 指标失败：%s.%s", stock.market.value, stock.code)
+
+    async def refresh_market_indicators(self, now: datetime, *, market_open: bool) -> None:
+        stocks = await _run_repository_call(self.repository.list_all_stocks)
+        for stock in stocks:
+            for indicator_name, refresh in (
+                ("MACD", self.refresh_stock_macd),
+                ("KDJ", self.refresh_stock_kdj),
+            ):
+                try:
+                    await refresh(stock, now, market_open=market_open, period="1d")
+                except Exception:
+                    logger.exception(
+                        "刷新 %s 指标失败：%s.%s",
+                        indicator_name,
+                        stock.market.value,
+                        stock.code,
+                    )
 
     async def _latest_quote(self, stock: Stock | StockQuoteRow) -> StockQuoteRow | None:
         latest = await _run_repository_call(
@@ -155,7 +243,7 @@ class IndicatorService:
             stock.market,
             stock.code,
             period,
-            MACD_BAR_RANGE_BY_PERIOD[period],
+            INDICATOR_BAR_RANGE_BY_PERIOD[period],
             adjustment,
             now,
         )
@@ -199,6 +287,51 @@ class IndicatorService:
             ):
                 return True
 
+        latest_quote = await self._latest_quote(stock)
+        return bool(
+            period == "1d"
+            and market_open
+            and latest_quote is not None
+            and latest_quote.captured_at > calculation.summary.calculated_at
+        )
+
+    async def _indicator_is_stale(
+        self,
+        calculation: KdjCalculation,
+        stock: Stock | StockQuoteRow,
+        now: datetime,
+        *,
+        market_open: bool,
+    ) -> bool:
+        if calculation.summary.market_time is None:
+            return True
+        if calculation.summary.quality.value == "insufficient":
+            return True
+        period = calculation.summary.period
+        lookback_days = INDICATOR_LOOKBACK_DAYS_BY_PERIOD[period]
+        adjustment = "none" if period == "1m" else "qfq"
+        bars = await _run_repository_call(
+            self.repository.get_bars,
+            stock.market,
+            stock.code,
+            period,
+            datetime.combine(
+                now.date() - timedelta(days=lookback_days),
+                time.min,
+                tzinfo=SHANGHAI,
+            ),
+            datetime.combine(now.date(), time(23, 59, 59), tzinfo=SHANGHAI),
+            adjustment,
+        )
+        if bars:
+            latest_bar = bars[-1]
+            if latest_bar.bar_time > calculation.summary.market_time:
+                return True
+            if (
+                latest_bar.bar_time == calculation.summary.market_time
+                and latest_bar.acquired_at > calculation.summary.calculated_at
+            ):
+                return True
         latest_quote = await self._latest_quote(stock)
         return bool(
             period == "1d"

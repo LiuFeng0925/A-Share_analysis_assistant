@@ -146,6 +146,7 @@ _KDJ_JOIN = """
       ON kdj.market = s.market AND kdj.code = s.code AND kdj.period = '1d'
 """
 _MACD_RECENT_WINDOWS = {"today": 0, "3d": 2, "5d": 4}
+_KDJ_RECENT_WINDOWS = {"today": 0, "3d": 2, "5d": 4}
 
 _SNAPSHOT_BATCH_RELATION = "snapshot_batch_input"
 _ARCHIVE_EXISTING_RELATION = "archive_existing_input"
@@ -772,6 +773,9 @@ class MarketRepository:
         macd_signal: str | None = None,
         macd_zero_axis: str | None = None,
         macd_recent_window: str | None = None,
+        kdj_signal: str | None = None,
+        kdj_signal_zone: str | None = None,
+        kdj_recent_window: str | None = None,
     ) -> StockPage:
         if sort_by not in SORT_COLUMNS:
             raise ValueError(f"不支持的排序字段：{sort_by}")
@@ -792,6 +796,19 @@ class MarketRepository:
             raise ValueError(f"不支持的 MACD 零轴位置：{macd_zero_axis}")
         if macd_recent_window is not None and macd_recent_window not in _MACD_RECENT_WINDOWS:
             raise ValueError(f"不支持的 MACD 最近时间：{macd_recent_window}")
+        if kdj_signal is not None and kdj_signal not in {
+            KdjSignal.GOLDEN_CROSS.value,
+            KdjSignal.DEATH_CROSS.value,
+        }:
+            raise ValueError(f"不支持的 KDJ 信号：{kdj_signal}")
+        if kdj_signal_zone is not None and kdj_signal_zone not in {
+            KdjSignalZone.LOW.value,
+            KdjSignalZone.MIDDLE.value,
+            KdjSignalZone.HIGH.value,
+        }:
+            raise ValueError(f"不支持的 KDJ 信号区域：{kdj_signal_zone}")
+        if kdj_recent_window is not None and kdj_recent_window not in _KDJ_RECENT_WINDOWS:
+            raise ValueError(f"不支持的 KDJ 最近时间：{kdj_recent_window}")
 
         conditions: list[str] = []
         parameters: list[Any] = []
@@ -813,6 +830,20 @@ class MarketRepository:
             conditions.append("m.recent_signal_days IS NOT NULL")
             conditions.append("m.recent_signal_days <= ?")
             parameters.append(_MACD_RECENT_WINDOWS[macd_recent_window])
+        if any(value is not None for value in (kdj_signal, kdj_signal_zone, kdj_recent_window)):
+            conditions.append("kdj.quality NOT IN ('error', 'insufficient')")
+        if kdj_signal is not None:
+            conditions.append("kdj.signal_type = ?")
+            parameters.append(kdj_signal)
+        elif kdj_signal_zone is not None or kdj_recent_window is not None:
+            conditions.append("kdj.signal_type IN ('golden_cross', 'death_cross')")
+        if kdj_signal_zone is not None:
+            conditions.append("kdj.signal_zone = ?")
+            parameters.append(kdj_signal_zone)
+        if kdj_recent_window is not None:
+            conditions.append("kdj.recent_signal_days IS NOT NULL")
+            conditions.append("kdj.recent_signal_days <= ?")
+            parameters.append(_KDJ_RECENT_WINDOWS[kdj_recent_window])
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         offset = (page - 1) * page_size
 

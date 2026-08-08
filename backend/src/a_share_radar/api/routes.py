@@ -9,6 +9,7 @@ from a_share_radar.api.schemas import (
     BarResponse,
     BarSeriesResponse,
     DataStatusResponse,
+    KdjIndicatorResponse,
     MacdIndicatorResponse,
     MarketSummaryResponse,
     StockPageResponse,
@@ -36,6 +37,9 @@ Adjustment = Literal["none", "qfq", "hfq"]
 MacdSignalQuery = Literal["golden_cross", "death_cross"]
 MacdZeroAxisQuery = Literal["above", "below"]
 MacdRecentWindowQuery = Literal["today", "3d", "5d"]
+KdjSignalQuery = Literal["golden_cross", "death_cross"]
+KdjSignalZoneQuery = Literal["low", "middle", "high"]
+KdjRecentWindowQuery = Literal["today", "3d", "5d"]
 IndicatorPeriod = Literal["1m", "5m", "15m", "30m", "60m", "1d", "1w", "1mo"]
 
 
@@ -69,6 +73,9 @@ def stock_list(
     macd_signal: MacdSignalQuery | None = None,
     macd_zero_axis: MacdZeroAxisQuery | None = None,
     macd_recent_window: MacdRecentWindowQuery | None = None,
+    kdj_signal: KdjSignalQuery | None = None,
+    kdj_signal_zone: KdjSignalZoneQuery | None = None,
+    kdj_recent_window: KdjRecentWindowQuery | None = None,
 ):
     return request.app.state.repository.list_stocks(
         query,
@@ -80,6 +87,9 @@ def stock_list(
         macd_signal=macd_signal,
         macd_zero_axis=macd_zero_axis,
         macd_recent_window=macd_recent_window,
+        kdj_signal=kdj_signal,
+        kdj_signal_zone=kdj_signal_zone,
+        kdj_recent_window=kdj_recent_window,
     )
 
 
@@ -134,6 +144,57 @@ async def stock_macd_indicator(
     if calculation is None:
         raise HTTPException(status_code=404, detail="MACD 指标暂不可用")
     return MacdIndicatorResponse(
+        market=market,
+        code=code,
+        period=period,
+        summary=calculation.summary,
+        items=list(calculation.points),
+    )
+
+
+@router.get(
+    "/stocks/{market}/{code}/indicators/kdj",
+    response_model=KdjIndicatorResponse,
+)
+async def stock_kdj_indicator(
+    request: Request,
+    market: Market,
+    code: str,
+    period: IndicatorPeriod = "1d",
+):
+    stock = await asyncio.to_thread(
+        request.app.state.repository.get_stock, market, code
+    )
+    if stock is None:
+        raise HTTPException(status_code=404, detail="未找到该股票")
+    indicator_service = getattr(request.app.state, "indicator_service", None)
+    at = request_now(request)
+    clock = getattr(request.app.state, "clock", None)
+    market_open = bool(clock is not None and clock.is_open(at))
+    if indicator_service is not None and hasattr(indicator_service, "get_stock_kdj"):
+        calculation = await indicator_service.get_stock_kdj(
+            stock,
+            at,
+            market_open=market_open,
+            period=period,
+        )
+    else:
+        calculation = await asyncio.to_thread(
+            request.app.state.repository.get_kdj, market, code, period
+        )
+        if calculation is None and indicator_service is not None:
+            await indicator_service.refresh_stock_kdj(
+                stock,
+                at,
+                market_open=market_open,
+                period=period,
+            )
+            calculation = await asyncio.to_thread(
+                request.app.state.repository.get_kdj, market, code, period
+            )
+    if calculation is None:
+        raise HTTPException(status_code=404, detail="KDJ 指标暂不可用")
+    return KdjIndicatorResponse(
         market=market,
         code=code,
         period=period,

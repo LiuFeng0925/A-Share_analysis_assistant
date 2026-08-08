@@ -104,3 +104,54 @@ def test_stock_row_returns_daily_kdj_but_ignores_minute_kdj(repository):
     assert page.items[0].kdj_current_zone is KdjZone.OVERSOLD
     assert page.items[0].kdj_quality is KdjQuality.OK
     assert page.items[1].kdj_signal_type is None
+
+
+def test_list_stocks_filters_daily_kdj_and_combines_conditions(repository):
+    repository.upsert_stocks(
+        [Stock("600519", Market.SH, "贵州茅台"), Stock("601318", Market.SH, "中国平安")]
+    )
+    repository.upsert_kdj(kdj_calculation("600519", days=2))
+    repository.upsert_kdj(
+        kdj_calculation(
+            "601318",
+            signal=KdjSignal.DEATH_CROSS,
+            signal_zone=KdjSignalZone.HIGH,
+            days=4,
+        )
+    )
+
+    page = repository.list_stocks(
+        None,
+        None,
+        "code",
+        "asc",
+        1,
+        50,
+        kdj_signal="death_cross",
+        kdj_signal_zone="high",
+        kdj_recent_window="5d",
+    )
+
+    assert page.total == 1
+    assert page.items[0].code == "601318"
+
+
+def test_kdj_zone_without_signal_filter_still_requires_actual_recent_cross(repository):
+    repository.upsert_stocks(
+        [Stock("600519", Market.SH, "贵州茅台"), Stock("601318", Market.SH, "中国平安")]
+    )
+    repository.upsert_kdj(kdj_calculation("600519", days=0))
+    no_signal = kdj_calculation("601318", signal=KdjSignal.NONE, days=None)
+    repository.upsert_kdj(no_signal)
+
+    page = repository.list_stocks(
+        None,
+        None,
+        "code",
+        "asc",
+        1,
+        50,
+        kdj_signal_zone="low",
+    )
+
+    assert [item.code for item in page.items] == ["600519"]

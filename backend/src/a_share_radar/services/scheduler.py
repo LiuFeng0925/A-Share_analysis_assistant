@@ -67,7 +67,7 @@ def create_scheduler(
                     try:
                         await indicator_callback(now)
                     except Exception:
-                        logger.exception("MACD 指标刷新失败，继续保留上一批有效指标")
+                        logger.exception("技术指标刷新失败，继续保留上一批有效指标")
             except Exception:
                 logger.exception("全市场行情采集失败，继续保留上一批有效数据")
 

@@ -2,7 +2,7 @@ from dataclasses import replace
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from a_share_radar.domain.indicators import MacdQuality
+from a_share_radar.domain.indicators import KdjQuality, KdjSignal, MacdQuality
 from a_share_radar.domain.models import Bar, Market, QualityStatus, QuoteSnapshot, Stock
 from a_share_radar.services.indicator_service import IndicatorService
 
@@ -253,3 +253,83 @@ async def test_indicator_service_get_stock_macd_refreshes_daily_when_intraday_qu
 
     assert calculation is not None
     assert calculation.summary.calculated_at == second_now
+
+
+async def test_indicator_service_refreshes_requested_period_kdj(repository):
+    now = datetime(2026, 7, 11, 11, 30, tzinfo=TZ)
+    repository.upsert_stocks([Stock("600519", Market.SH, "贵州茅台")])
+    repository.replace_trading_days({now.date()})
+    bars = [five_minute_bar(index, 10.0 + index * 0.02) for index in range(12)]
+    bars[-1] = replace(
+        bars[-1],
+        close_price=12.0,
+        high_price=12.0,
+        is_complete=False,
+        quality_status=QualityStatus.PARTIAL,
+    )
+    stock = repository.get_stock(Market.SH, "600519")
+    assert stock is not None
+    bar_service = RecordingBarService(repository, bars)
+
+    calculation = await IndicatorService(repository, bar_service).get_stock_kdj(
+        stock,
+        now,
+        market_open=True,
+        period="5m",
+    )
+
+    assert bar_service.calls == [(Market.SH, "600519", "5m", "6mo", "qfq")]
+    assert calculation is not None
+    assert calculation.summary.period == "5m"
+    assert calculation.summary.quality is KdjQuality.PARTIAL
+    assert calculation.summary.market_time == bars[-1].bar_time
+
+
+async def test_indicator_service_refreshes_daily_kdj_from_latest_quote(repository):
+    now = datetime(2026, 7, 11, 10, 30, tzinfo=TZ)
+    repository.upsert_stocks([Stock("600519", Market.SH, "贵州茅台")])
+    bars = [daily_bar(index, 10.0) for index in range(12)]
+    repository.replace_trading_days({*[item.bar_time.date() for item in bars], now.date()})
+    repository.upsert_bars(bars)
+    repository.commit_snapshot_success(
+        [quote_snapshot(now, 12.0)],
+        started_at=now,
+        source="fixture",
+        market_time=now,
+        expected_row_count=1,
+        quality_status="partial",
+    )
+    stock = repository.get_stock(Market.SH, "600519")
+    assert stock is not None
+
+    await IndicatorService(repository).refresh_stock_kdj(
+        stock, now, market_open=True
+    )
+
+    calculation = repository.get_kdj(Market.SH, "600519")
+    assert calculation is not None
+    assert calculation.summary.signal_type is KdjSignal.GOLDEN_CROSS
+    assert calculation.summary.recent_signal_label == "盘中金叉"
+
+
+async def test_market_indicator_refresh_isolates_macd_and_kdj_failures(
+    repository, monkeypatch
+):
+    now = datetime(2026, 7, 11, 15, 30, tzinfo=TZ)
+    repository.upsert_stocks([Stock("600519", Market.SH, "贵州茅台")])
+    service = IndicatorService(repository)
+    calls: list[str] = []
+
+    async def fail_macd(*args, **kwargs):
+        calls.append("macd")
+        raise RuntimeError("MACD 失败")
+
+    async def succeed_kdj(*args, **kwargs):
+        calls.append("kdj")
+
+    monkeypatch.setattr(service, "refresh_stock_macd", fail_macd)
+    monkeypatch.setattr(service, "refresh_stock_kdj", succeed_kdj)
+
+    await service.refresh_market_indicators(now, market_open=False)
+
+    assert calls == ["macd", "kdj"]

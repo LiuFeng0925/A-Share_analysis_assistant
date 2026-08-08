@@ -224,6 +224,9 @@ async def test_data_status_returns_storage_counts(app_with_fixture_data):
         {"page": 0},
         {"page_size": 9},
         {"page_size": 201},
+        {"kdj_signal": "cross"},
+        {"kdj_signal_zone": "extreme"},
+        {"kdj_recent_window": "10d"},
     ],
 )
 async def test_stock_list_rejects_invalid_query_values_with_422(
