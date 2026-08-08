@@ -40,6 +40,14 @@ MacdRecentWindowQuery = Literal["today", "3d", "5d"]
 KdjSignalQuery = Literal["golden_cross", "death_cross"]
 KdjSignalZoneQuery = Literal["low", "middle", "high"]
 KdjRecentWindowQuery = Literal["today", "3d", "5d"]
+MacdDivergenceRecentWindowQuery = Literal["today", "3d", "5d", "10d", "20d"]
+MacdDivergenceQuery = Literal[
+    "bottom_forming",
+    "bottom_confirmed",
+    "top_forming",
+    "top_confirmed",
+]
+MacdDivergenceCrossQuery = Literal["present", "absent"]
 IndicatorPeriod = Literal["1m", "5m", "15m", "30m", "60m", "1d", "1w", "1mo"]
 
 
@@ -76,6 +84,9 @@ def stock_list(
     kdj_signal: KdjSignalQuery | None = None,
     kdj_signal_zone: KdjSignalZoneQuery | None = None,
     kdj_recent_window: KdjRecentWindowQuery | None = None,
+    macd_divergences: Annotated[list[MacdDivergenceQuery] | None, Query()] = None,
+    macd_divergence_cross: MacdDivergenceCrossQuery | None = None,
+    macd_divergence_recent_window: MacdDivergenceRecentWindowQuery | None = None,
 ):
     return request.app.state.repository.list_stocks(
         query,
@@ -90,6 +101,9 @@ def stock_list(
         kdj_signal=kdj_signal,
         kdj_signal_zone=kdj_signal_zone,
         kdj_recent_window=kdj_recent_window,
+        macd_divergences=macd_divergences,
+        macd_divergence_cross=macd_divergence_cross,
+        macd_divergence_recent_window=macd_divergence_recent_window,
     )
 
 
@@ -149,6 +163,11 @@ async def stock_macd_indicator(
         period=period,
         summary=calculation.summary,
         items=list(calculation.points),
+        divergences=(
+            [event for event in calculation.divergences if event.is_valid]
+            if period == "1d"
+            else []
+        ),
     )
 
 

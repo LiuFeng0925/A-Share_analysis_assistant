@@ -13,6 +13,7 @@ from a_share_radar.storage.repository import MarketRepository, StockQuoteRow
 
 logger = logging.getLogger(__name__)
 SHANGHAI = ZoneInfo("Asia/Shanghai")
+MACD_DIVERGENCE_ALGORITHM_VERSION = datetime(2026, 8, 7, 23, 55, tzinfo=SHANGHAI)
 MACD_LOOKBACK_DAYS = 220
 SUPPORTED_MACD_PERIODS = {"1m", "5m", "15m", "30m", "60m", "1d", "1w", "1mo"}
 MACD_LOOKBACK_DAYS_BY_PERIOD = {
@@ -27,10 +28,10 @@ MACD_LOOKBACK_DAYS_BY_PERIOD = {
 }
 MACD_BAR_RANGE_BY_PERIOD = {
     "1m": "today",
-    "5m": "6mo",
-    "15m": "6mo",
-    "30m": "6mo",
-    "60m": "6mo",
+    "5m": "60d",
+    "15m": "60d",
+    "30m": "60d",
+    "60m": "60d",
     "1d": "1y",
     "1w": "5y",
     "1mo": "all",
@@ -283,6 +284,12 @@ class IndicatorService:
             return True
 
         period = calculation.summary.period
+        if (
+            period == "1d"
+            and now >= MACD_DIVERGENCE_ALGORITHM_VERSION
+            and calculation.summary.calculated_at < MACD_DIVERGENCE_ALGORITHM_VERSION
+        ):
+            return True
         lookback_days = MACD_LOOKBACK_DAYS_BY_PERIOD[period]
         adjustment = "none" if period == "1m" else "qfq"
         bars = await _run_repository_call(

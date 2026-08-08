@@ -78,59 +78,168 @@ describe("KlineChart", () => {
     expect(series[4]).toEqual(expect.objectContaining({ type: "bar" }));
   });
 
-  test("日 K 同时保留普通高低点、MACD 背离和金叉死叉事件线", () => {
+  test("MACD 背离只在副图标记，K 线主图只保留普通价格高低点", () => {
+    const dailyBarsWithBothPivots = {
+      ...dailyBarsFixture,
+      items: [
+        ...dailyBarsFixture.items,
+        {
+          ...dailyBarsFixture.items[0],
+          bar_time: "2026-08-04T15:00:00+08:00",
+          close_price: 1330.06,
+        },
+      ],
+    };
+    const [bottomDivergence, topDivergence] = macdIndicatorFixture.divergences;
+    const macdWithEquivalentTimezone = {
+      ...macdIndicatorFixture,
+      divergences: [
+        {
+          ...bottomDivergence,
+          status: "confirmed" as const,
+          pivot_time: "2026-08-04T07:00:00Z",
+          confirmed_at: "2026-08-04T07:00:00Z",
+        },
+        { ...topDivergence, pivot_time: "2026-08-04T07:00:00Z" },
+      ],
+    };
+    const option = buildKlineOption(
+      dailyBarsWithBothPivots,
+      undefined,
+      macdWithEquivalentTimezone,
+    );
+    const series = option.series as Array<{
+      name: string;
+      markPoint?: {
+        data: Array<{
+          coord: [string, number];
+          name: string;
+          value: string;
+          symbol: string;
+          symbolSize: number;
+          symbolRotate: number;
+          label: { show: boolean };
+          itemStyle: { color: string };
+        }>;
+      };
+      markLine?: {
+        data: Array<{
+          xAxis: string;
+          name: string;
+          label: { formatter: string; position: string };
+          lineStyle: { type: string; opacity: number };
+        }>;
+      };
+    }>;
+
+    const priceMarks = series.find((item) => item.name === "K 线")?.markPoint?.data;
+    const priceLines = series.find((item) => item.name === "K 线")?.markLine?.data;
+    const diffSeries = series.find((item) => item.name === "DIFF");
+    const diffMarks = diffSeries?.markPoint?.data;
+    const diffLines = diffSeries?.markLine?.data;
+
+    expect(priceLines).toBeUndefined();
+    expect(diffMarks).toBeUndefined();
+    expect(diffLines?.map((line) => line.label.formatter)).toEqual(expect.arrayContaining([
+      "前低1/前高1\n08-01",
+      "前低2/背离低点/确认/前高2/背离高点/金叉\n08-04",
+    ]));
+    const priceMarkNames = priceMarks?.map((mark) => mark.name) ?? [];
+    expect(priceMarkNames).not.toEqual(expect.arrayContaining([
+      "底背离前低1",
+      "底背离前低2",
+      "底背离低点",
+      "底背离确认",
+    ]));
+  });
+
+  test("提示框解释背离状态、锚点和对应交叉", () => {
+    const option = buildKlineOption(dailyBarsFixture, undefined, {
+      ...macdIndicatorFixture,
+      divergences: [
+        {
+          ...macdIndicatorFixture.divergences[0],
+          pivot_price: 1315.04,
+          pivot_diff: -0.37,
+        },
+        macdIndicatorFixture.divergences[1],
+      ],
+    });
+    const formatter = (option.tooltip as {
+      formatter: (params: Array<{ dataIndex: number }>) => string;
+    }).formatter;
+    const content = formatter([{ dataIndex: 0 }]);
+
+    expect(content).toContain("底背离形成中");
+    expect(content).not.toContain("发现时间");
+    expect(content).toContain("后续创新低或创新高时可能更新或失效");
+    expect(content).toContain("前低1");
+    expect(content).toContain("2026-08-01 15:00:00");
+    expect(content).toContain("价格 1,315.04　DIFF -0.02");
+    expect(content).toContain("前低2");
+    expect(content).toContain("2026-08-04 15:00:00");
+    expect(content).toContain("价格 1,330.06　DIFF 0.18");
+    expect(content).toContain("背离低点价格 1,315.04　DIFF -0.37");
+    expect(content).not.toContain("当前价格 1,346.06");
+    expect(content).not.toContain("当前 DIFF -0.02");
+    expect(content).toContain("已出现金叉");
+  });
+
+  test("非日K不显示背离标记", () => {
+    const option = buildKlineOption(todayBarsFixture, undefined, macdIndicatorFixture);
+    const series = option.series as Array<{
+      name: string;
+      markPoint?: { data: unknown[] };
+    }>;
+
+    expect(series.find((item) => item.name === "K 线")?.markPoint).toBeUndefined();
+    expect(series.find((item) => item.name === "DIFF")?.markPoint).toBeUndefined();
+  });
+
+  test("日K没有背离时用弱标记展示普通局部高低点", () => {
     const barsWithPivots = {
       ...dailyBarsFixture,
       items: [
-        { ...dailyBarsFixture.items[0], bar_time: "2026-08-01T15:00:00+08:00", high_price: 10, low_price: 8 },
-        { ...dailyBarsFixture.items[0], bar_time: "2026-08-02T15:00:00+08:00", high_price: 11, low_price: 7 },
-        { ...dailyBarsFixture.items[0], bar_time: "2026-08-03T15:00:00+08:00", high_price: 12, low_price: 6 },
-        { ...dailyBarsFixture.items[0], bar_time: "2026-08-04T15:00:00+08:00", high_price: 15, low_price: 5 },
-        { ...dailyBarsFixture.items[0], bar_time: "2026-08-05T15:00:00+08:00", high_price: 12, low_price: 6 },
-        { ...dailyBarsFixture.items[0], bar_time: "2026-08-06T15:00:00+08:00", high_price: 11, low_price: 7 },
-        { ...dailyBarsFixture.items[0], bar_time: "2026-08-07T15:00:00+08:00", high_price: 10, low_price: 8 },
+        { ...dailyBarsFixture.items[0], bar_time: "2026-08-01T15:00:00+08:00", high_price: 10, low_price: 8, close_price: 9, open_price: 9 },
+        { ...dailyBarsFixture.items[0], bar_time: "2026-08-02T15:00:00+08:00", high_price: 11, low_price: 7, close_price: 8, open_price: 8 },
+        { ...dailyBarsFixture.items[0], bar_time: "2026-08-03T15:00:00+08:00", high_price: 12, low_price: 6, close_price: 7, open_price: 7 },
+        { ...dailyBarsFixture.items[0], bar_time: "2026-08-04T15:00:00+08:00", high_price: 15, low_price: 5, close_price: 10, open_price: 10 },
+        { ...dailyBarsFixture.items[0], bar_time: "2026-08-05T15:00:00+08:00", high_price: 12, low_price: 6, close_price: 8, open_price: 8 },
+        { ...dailyBarsFixture.items[0], bar_time: "2026-08-06T15:00:00+08:00", high_price: 11, low_price: 7, close_price: 9, open_price: 9 },
+        { ...dailyBarsFixture.items[0], bar_time: "2026-08-07T15:00:00+08:00", high_price: 10, low_price: 8, close_price: 9, open_price: 9 },
       ],
     };
-    const macdWithDivergence = {
-      ...macdIndicatorFixture,
-      divergences: [{
-        direction: "bottom" as const,
-        status: "confirmed" as const,
-        anchor_one_time: "2026-08-01T15:00:00+08:00",
-        anchor_one_price: 8,
-        anchor_one_diff: -0.02,
-        anchor_two_time: "2026-08-04T15:00:00+08:00",
-        anchor_two_price: 5,
-        anchor_two_diff: 0.18,
-        pivot_time: "2026-08-04T15:00:00+08:00",
-        pivot_price: 5,
-        pivot_diff: 0.18,
-        detected_at: "2026-08-04T15:00:00+08:00",
-        updated_at: "2026-08-04T15:00:00+08:00",
-        calculated_at: "2026-08-04T15:00:00+08:00",
-        quality: "ok" as const,
-        confirmed_at: "2026-08-04T15:00:00+08:00",
-        corresponding_signal: "golden_cross" as const,
-        corresponding_signal_time: "2026-08-04T15:00:00+08:00",
-        recent_days: 0,
-      }],
-    };
-    const option = buildKlineOption(barsWithPivots, undefined, macdWithDivergence);
-    const chartSeries = option.series as Array<{
-      name: string;
-      markPoint?: { data: Array<{ name: string }> };
-      markLine?: { data: Array<{ name: string }> };
-    }>;
-    const priceMarks = chartSeries.find((item) => item.name === "K 线")?.markPoint?.data;
-    const macdLines = chartSeries.find((item) => item.name === "DIFF")?.markLine?.data;
 
-    expect(priceMarks).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: "普通低点" }),
-      expect.objectContaining({ name: "普通高点" }),
-    ]));
-    expect(macdLines).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: expect.stringContaining("MACD 金叉") }),
-      expect.objectContaining({ name: expect.stringContaining("底背离") }),
+    const option = buildKlineOption(barsWithPivots, undefined, {
+      ...macdIndicatorFixture,
+      divergences: [],
+    });
+    const series = option.series as Array<{
+      name: string;
+      markPoint?: {
+        data: Array<{
+          coord: [string, number];
+          name: string;
+          symbolSize: number;
+          itemStyle: { color: string };
+        }>;
+      };
+      markLine?: { data: unknown[] };
+    }>;
+    const kline = series.find((item) => item.name === "K 线");
+
+    expect(kline?.markLine).toBeUndefined();
+    expect(kline?.markPoint?.data).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        coord: ["2026-08-04T15:00:00+08:00", 5],
+        name: "普通低点",
+        symbolSize: 4,
+      }),
+      expect.objectContaining({
+        coord: ["2026-08-04T15:00:00+08:00", 15],
+        name: "普通高点",
+        symbolSize: 4,
+      }),
     ]));
   });
 
@@ -221,7 +330,7 @@ describe("KlineChart", () => {
     expect(kLine?.markPoint).toBeUndefined();
     const kdjGoldenLine = kLine?.markLine?.data.find((item) => item.name === "KDJ 金叉");
     const kdjDeathLine = kLine?.markLine?.data.find((item) => item.name === "KDJ 死叉");
-    const macdGoldenLine = diffLine?.markLine?.data.find((item) => item.name === "MACD 金叉");
+    const macdGoldenLine = diffLine?.markLine?.data.find((item) => item.name.includes("MACD 金叉"));
     expect(kdjGoldenLine).toEqual(expect.objectContaining({
       xAxis: "2026-08-04T15:00:00+08:00",
       label: expect.objectContaining({ formatter: "金叉\n08-04", position: "end" }),

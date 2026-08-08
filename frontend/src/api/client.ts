@@ -74,6 +74,13 @@ export const marketApi = {
     if (params.kdjSignal) query.set("kdj_signal", params.kdjSignal);
     if (params.kdjSignalZone) query.set("kdj_signal_zone", params.kdjSignalZone);
     if (params.kdjRecentWindow) query.set("kdj_recent_window", params.kdjRecentWindow);
+    params.macdDivergences?.forEach((value) => query.append("macd_divergences", value));
+    if (params.macdDivergenceCross) {
+      query.set("macd_divergence_cross", params.macdDivergenceCross);
+    }
+    if (params.macdDivergenceRecentWindow) {
+      query.set("macd_divergence_recent_window", params.macdDivergenceRecentWindow);
+    }
     return request<StockPage>(`/api/market/stocks?${query}`, options);
   },
   getStock: (market: Market, code: string, options?: RequestOptions) =>

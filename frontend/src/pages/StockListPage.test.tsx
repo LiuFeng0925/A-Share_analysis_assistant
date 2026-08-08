@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { marketApi } from "../api/client";
 import { summaryFixture, stockPageFixture } from "../test/fixtures";
 import { StockListPage } from "./StockListPage";
@@ -12,7 +12,13 @@ vi.mock("../api/client", () => ({
 beforeEach(() => {
   vi.mocked(marketApi.getSummary).mockReset().mockResolvedValue(summaryFixture);
   vi.mocked(marketApi.getStocks).mockReset().mockResolvedValue(stockPageFixture);
+  window.sessionStorage.clear();
 });
+
+function LocationProbe() {
+  const location = useLocation();
+  return <output aria-label="当前列表地址">{`${location.pathname}${location.search}`}</output>;
+}
 
 test("一只股票只占一行并在防抖后按名称搜索", async () => {
   render(
@@ -106,7 +112,7 @@ test("支持市场筛选、排序和分页", async () => {
   );
 });
 
-test("支持 MACD 信号、零轴位置和最近出现时间筛选", async () => {
+test("MACD 筛选收敛为单行控件并移除说明文案", async () => {
   render(
     <MemoryRouter>
       <StockListPage />
@@ -115,19 +121,19 @@ test("支持 MACD 信号、零轴位置和最近出现时间筛选", async () =>
 
   await screen.findByRole("row", { name: /贵州茅台/ });
   expect(screen.getByText("日 K MACD 雷达")).toBeInTheDocument();
-  expect(screen.getByText("近 5 个交易日内，按日 K 的最后一次 MACD 交叉信号筛选。")).toBeInTheDocument();
+  expect(screen.queryByText("近 5 个交易日内，按日 K 的最后一次 MACD 交叉信号筛选。")).not.toBeInTheDocument();
   expect(screen.getByRole("option", { name: "近 5 日金叉" })).toBeInTheDocument();
   expect(screen.getByRole("option", { name: "近 5 日死叉" })).toBeInTheDocument();
+  expect(screen.queryByLabelText("MACD 出现时间")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("背离对应交叉")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("背离出现时间")).not.toBeInTheDocument();
+
   fireEvent.change(screen.getByLabelText("日 K MACD 信号"), {
-    target: { value: "golden_cross" },
+    target: { value: "golden_cross:3d" },
   });
   fireEvent.change(screen.getByLabelText("零轴位置"), {
     target: { value: "above" },
   });
-  fireEvent.change(screen.getByLabelText("MACD 出现时间"), {
-    target: { value: "3d" },
-  });
-
   await waitFor(() =>
     expect(marketApi.getStocks).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -180,6 +186,153 @@ test("支持日 K KDJ 信号、交叉区域和最近出现时间组合筛选", a
     }),
     expect.anything(),
   ));
+});
+
+test("支持组合 MACD 背离筛选", async () => {
+  render(
+    <MemoryRouter>
+      <StockListPage />
+    </MemoryRouter>,
+  );
+
+  await screen.findByRole("row", { name: /贵州茅台/ });
+  fireEvent.click(screen.getByRole("button", { name: "MACD 背离：不限" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "底背离形成中" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "顶背离已确认" }));
+
+  await waitFor(() => expect(marketApi.getStocks).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      macdDivergences: ["bottom_forming", "top_confirmed"],
+    }),
+    expect.any(Object),
+  ));
+  expect(screen.getByRole("button", { name: "MACD 背离：已选 2 项" })).toBeInTheDocument();
+});
+
+test("MACD 背离支持最近出现时间窗口筛选", async () => {
+  render(
+    <MemoryRouter>
+      <StockListPage />
+    </MemoryRouter>,
+  );
+
+  await screen.findByRole("row", { name: /贵州茅台/ });
+  expect(screen.getByLabelText("背离时间")).toBeInTheDocument();
+  expect(screen.getByRole("option", { name: "近 20 日" })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "MACD 背离：不限" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "底背离已确认" }));
+  fireEvent.change(screen.getByLabelText("背离时间"), { target: { value: "20d" } });
+
+  await waitFor(() => expect(marketApi.getStocks).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      macdDivergences: ["bottom_confirmed"],
+      macdDivergenceRecentWindow: "20d",
+    }),
+    expect.any(Object),
+  ));
+});
+
+test("清空指标会清空 MACD 背离筛选", async () => {
+  render(
+    <MemoryRouter>
+      <StockListPage />
+    </MemoryRouter>,
+  );
+
+  await screen.findByRole("row", { name: /贵州茅台/ });
+  fireEvent.click(screen.getByRole("button", { name: "MACD 背离：不限" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "底背离已确认" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "清空指标" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "清空指标" }));
+
+  await waitFor(() => expect(marketApi.getStocks).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      macdDivergences: undefined,
+      macdDivergenceRecentWindow: undefined,
+    }),
+    expect.any(Object),
+  ));
+});
+
+test("从地址参数恢复筛选状态并请求对应列表", async () => {
+  render(
+    <MemoryRouter initialEntries={[
+      "/?query=%E8%8C%85%E5%8F%B0&market=SH&page=2&sort_by=amount&sort_order=desc&macd_signal=golden_cross&macd_recent_window=3d&macd_zero_axis=above&macd_divergences=bottom_forming&macd_divergences=top_confirmed&macd_divergence_recent_window=10d",
+    ]}>
+      <Routes>
+        <Route path="/" element={<><LocationProbe /><StockListPage /></>} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  expect(await screen.findByRole("row", { name: /贵州茅台/ })).toBeInTheDocument();
+  expect(screen.getByPlaceholderText("搜索股票代码或名称")).toHaveValue("茅台");
+  expect(screen.getByLabelText("市场筛选")).toHaveValue("SH");
+  expect(screen.getByLabelText("日 K MACD 信号")).toHaveValue("golden_cross:3d");
+  expect(screen.getByLabelText("零轴位置")).toHaveValue("above");
+  expect(screen.getByLabelText("背离时间")).toHaveValue("10d");
+  expect(screen.getByRole("button", { name: "MACD 背离：已选 2 项" })).toBeInTheDocument();
+  expect(screen.getByLabelText("当前列表地址")).toHaveTextContent("query=%E8%8C%85%E5%8F%B0");
+  expect(marketApi.getStocks).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      query: "茅台",
+      market: "SH",
+      page: 2,
+      sortBy: "amount",
+      sortOrder: "desc",
+      macdSignal: "golden_cross",
+      macdRecentWindow: "3d",
+      macdZeroAxis: "above",
+      macdDivergences: ["bottom_forming", "top_confirmed"],
+      macdDivergenceRecentWindow: "10d",
+    }),
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
+});
+
+test("返回列表页时恢复对应筛选地址的浏览位置", async () => {
+  const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+  window.sessionStorage.setItem(
+    "stock-list-scroll:/?market=SZ&macd_signal=death_cross&macd_recent_window=5d",
+    "432",
+  );
+
+  render(
+    <MemoryRouter initialEntries={["/?market=SZ&macd_signal=death_cross&macd_recent_window=5d"]}>
+      <StockListPage />
+    </MemoryRouter>,
+  );
+
+  expect(await screen.findByRole("row", { name: /贵州茅台/ })).toBeInTheDocument();
+  expect(screen.getByLabelText("市场筛选")).toHaveValue("SZ");
+  expect(screen.getByLabelText("日 K MACD 信号")).toHaveValue("death_cross:5d");
+  expect(scrollTo).toHaveBeenCalledWith({ top: 432, left: 0, behavior: "auto" });
+
+  scrollTo.mockRestore();
+});
+
+test("筛选操作会同步到列表地址，供详情返回时复用", async () => {
+  render(
+    <MemoryRouter initialEntries={["/"]}>
+      <Routes>
+        <Route path="/" element={<><LocationProbe /><StockListPage /></>} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  await screen.findByRole("row", { name: /贵州茅台/ });
+  fireEvent.change(screen.getByLabelText("市场筛选"), { target: { value: "SH" } });
+  fireEvent.change(screen.getByLabelText("日 K MACD 信号"), { target: { value: "golden_cross:5d" } });
+  fireEvent.click(screen.getByRole("button", { name: "MACD 背离：不限" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "底背离已确认" }));
+  fireEvent.change(screen.getByLabelText("背离时间"), { target: { value: "5d" } });
+
+  await waitFor(() => expect(screen.getByLabelText("当前列表地址")).toHaveTextContent("market=SH"));
+  expect(screen.getByLabelText("当前列表地址")).toHaveTextContent("macd_signal=golden_cross");
+  expect(screen.getByLabelText("当前列表地址")).toHaveTextContent("macd_recent_window=5d");
+  expect(screen.getByLabelText("当前列表地址")).toHaveTextContent("macd_divergences=bottom_confirmed");
+  expect(screen.getByLabelText("当前列表地址")).toHaveTextContent("macd_divergence_recent_window=5d");
 });
 
 test("股票行可使用 Enter 键进入详情", async () => {

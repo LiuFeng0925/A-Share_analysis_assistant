@@ -262,6 +262,46 @@ def test_history_bar_converts_lots_to_shares_and_records_acquisition_time():
     assert bars[0].quality_status is QualityStatus.OK
 
 
+def test_tencent_daily_history_infers_lot_volume_from_amount_when_needed():
+    frame = pd.DataFrame(
+        [
+            {
+                "date": "2026-08-07",
+                "open": 5.23,
+                "close": 5.40,
+                "high": 5.40,
+                "low": 5.21,
+                "volume": 235_371.0,
+                "turnover": 0.0395,
+                "amount": 125_377_300.0,
+            },
+            {
+                "date": "2026-08-07",
+                "open": 41.02,
+                "close": 42.09,
+                "high": 42.09,
+                "low": 40.20,
+                "volume": 77_441_700.0,
+                "turnover": 0.0465,
+                "amount": 3_195_898_000.0,
+            },
+        ]
+    )
+
+    bars = AkshareSource.normalize_history_bars(
+        "000788",
+        frame,
+        "1d",
+        "qfq",
+        acquired_at=datetime(2026, 8, 7, 17, 0, tzinfo=TZ),
+        source="akshare-tencent",
+        volume_is_lots=False,
+    )
+
+    assert bars[0].volume == 23_537_100
+    assert bars[1].volume == 77_441_700
+
+
 def test_minute_normalization_filters_zero_ohlc_bad_bar():
     frame = pd.DataFrame(
         [

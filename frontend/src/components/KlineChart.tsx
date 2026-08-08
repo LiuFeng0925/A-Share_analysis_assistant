@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as echarts from "echarts";
 import type { ECharts, EChartsOption } from "echarts";
-import type { BarSeries, KdjIndicator, MacdIndicator } from "../api/types";
+import type { BarSeries, KdjIndicator, MacdDivergence, MacdIndicator } from "../api/types";
 import {
   formatMarketNumber,
   formatShanghaiAxisLabel,
@@ -71,6 +71,175 @@ function kdjSignalZoneLabel(value: KdjIndicator["items"][number]["signal_zone"])
   return "";
 }
 
+function sameBarTime(left: string, right: string) {
+  const leftTime = Date.parse(left);
+  const rightTime = Date.parse(right);
+  if (!Number.isNaN(leftTime) && !Number.isNaN(rightTime)) return leftTime === rightTime;
+  return left === right;
+}
+
+function chartTimeFor(eventTime: string, categories: string[]) {
+  return categories.find((time) => sameBarTime(time, eventTime)) ?? eventTime;
+}
+
+function shortShanghaiDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value.slice(5, 10);
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: "Asia/Shanghai",
+  }).format(date).replace("/", "-");
+}
+
+function macdEventTone(direction: "bottom" | "top") {
+  return direction === "bottom"
+    ? { color: "#e5484d", weakColor: "rgba(229, 72, 77, 0.6)", rotate: 0 }
+    : { color: "#16a36f", weakColor: "rgba(22, 163, 111, 0.6)", rotate: 180 };
+}
+
+function namedMarkPoint({
+  name,
+  time,
+  value,
+  label,
+  direction,
+  weak = false,
+  symbolSize = 7,
+}: {
+  name: string;
+  time: string;
+  value: number | null | undefined;
+  label: string;
+  direction: "bottom" | "top";
+  weak?: boolean;
+  symbolSize?: number;
+}) {
+  if (!isFiniteNumber(value)) return null;
+  const tone = macdEventTone(direction);
+  return {
+    name,
+    coord: [time, value],
+    value: label,
+    symbol: "circle",
+    symbolSize,
+    itemStyle: {
+      color: weak ? tone.weakColor : tone.color,
+      borderColor: "#fff",
+      borderWidth: 1,
+    },
+    label: {
+      show: false,
+    },
+    tooltip: {
+      formatter: `${name}<br />${formatShanghaiDateTime(time)}<br />数值 ${formatMarketNumber(value)}`,
+    },
+  };
+}
+
+interface VerticalLineDraft {
+  name: string;
+  time: string;
+  label: string;
+  direction: "bottom" | "top";
+  weak?: boolean;
+}
+
+function namedVerticalLine({
+  name,
+  time,
+  label,
+  direction,
+  weak = false,
+}: VerticalLineDraft) {
+  const tone = macdEventTone(direction);
+  return {
+    name,
+    xAxis: time,
+    label: {
+      show: true,
+      formatter: `${label}\n${shortShanghaiDate(time)}`,
+      position: "end" as const,
+      color: tone.color,
+      fontSize: 10,
+      fontWeight: 800,
+      backgroundColor: direction === "bottom"
+        ? "rgba(229, 72, 77, 0.08)"
+        : "rgba(22, 163, 111, 0.08)",
+      borderRadius: 4,
+      padding: [2, 4],
+    },
+    lineStyle: {
+      color: weak ? tone.weakColor : tone.color,
+      type: "dashed" as const,
+      width: 1,
+      opacity: weak ? 0.28 : 0.45,
+    },
+    tooltip: {
+      formatter: `${name}<br />${formatShanghaiDateTime(time)}`,
+    },
+  };
+}
+
+function mergeVerticalLines(lines: VerticalLineDraft[]) {
+  const byTime = new Map<string, VerticalLineDraft & { labels: string[]; names: string[] }>();
+  lines.forEach((line) => {
+    const current = byTime.get(line.time);
+    if (!current) {
+      byTime.set(line.time, {
+        ...line,
+        labels: [line.label],
+        names: [line.name],
+      });
+      return;
+    }
+    if (!current.labels.includes(line.label)) current.labels.push(line.label);
+    current.names.push(line.name);
+    current.weak = current.weak && line.weak;
+  });
+  return Array.from(byTime.values()).map((line) => namedVerticalLine({
+    name: line.names.join(" / "),
+    time: line.time,
+    label: line.labels.join("/"),
+    direction: line.direction,
+    weak: line.weak,
+  }));
+}
+
+function divergenceSignalLabel(event: MacdDivergence) {
+  if (event.corresponding_signal === "golden_cross") return "已出现金叉";
+  if (event.corresponding_signal === "death_cross") return "已出现死叉";
+  return "尚未出现对应交叉";
+}
+
+function divergenceTooltipContent(event: MacdDivergence) {
+  const direction = event.direction === "bottom" ? "底背离" : "顶背离";
+  const status = event.status === "forming" ? "形成中" : "已确认";
+  const anchorLabel = event.direction === "bottom"
+    ? { one: "前低1", two: "前低2", pivot: "背离低点" }
+    : { one: "前高1", two: "前高2", pivot: "背离高点" };
+  return [
+    `${direction}${status}`,
+    `${anchorLabel.one} ${formatShanghaiDateTime(event.anchor_one_time)}　价格 ${formatMarketNumber(event.anchor_one_price)}　DIFF ${formatMarketNumber(event.anchor_one_diff)}`,
+    `${anchorLabel.two} ${formatShanghaiDateTime(event.anchor_two_time)}　价格 ${formatMarketNumber(event.anchor_two_price)}　DIFF ${formatMarketNumber(event.anchor_two_diff)}`,
+    `${anchorLabel.pivot}价格 ${formatMarketNumber(event.pivot_price)}　DIFF ${formatMarketNumber(event.pivot_diff)}`,
+    event.confirmed_at ? `确认时间 ${formatShanghaiDateTime(event.confirmed_at)}` : null,
+    `对应交叉：${divergenceSignalLabel(event)}`,
+    event.corresponding_signal_time ? `交叉时间 ${formatShanghaiDateTime(event.corresponding_signal_time)}` : null,
+    event.status === "forming" ? "该背离仍在形成，后续创新低或创新高时可能更新或失效" : null,
+  ];
+}
+
+function relatedDivergenceTime(event: MacdDivergence, barTime: string) {
+  return [
+    event.anchor_one_time,
+    event.anchor_two_time,
+    event.pivot_time,
+    event.confirmed_at,
+    event.corresponding_signal_time,
+  ].some((time) => Boolean(time && sameBarTime(time, barTime)));
+}
+
 function tooltipContent(
   series: BarSeries,
   dataIndex: number,
@@ -79,8 +248,11 @@ function tooltipContent(
 ) {
   const bar = series.items[dataIndex];
   if (!bar) return "暂无 K 线数据";
-  const macdPoint = macd?.items.find((item) => item.bar_time === bar.bar_time);
-  const kdjPoint = kdj?.items.find((item) => item.bar_time === bar.bar_time);
+  const macdPoint = macd?.items.find((item) => sameBarTime(item.bar_time, bar.bar_time));
+  const kdjPoint = kdj?.items.find((item) => sameBarTime(item.bar_time, bar.bar_time));
+  const divergences = series.period === "1d"
+    ? macd?.divergences.filter((event) => relatedDivergenceTime(event, bar.bar_time)) ?? []
+    : [];
   return [
     `<strong>${formatShanghaiDateTime(bar.bar_time)}</strong>`,
     `开 ${formatMarketNumber(bar.open_price)}　高 ${formatMarketNumber(bar.high_price)}`,
@@ -96,8 +268,119 @@ function tooltipContent(
     kdjPoint
       ? `${kdjZoneLabel(kdjPoint.current_zone)}　${kdjSignalZoneLabel(kdjPoint.signal_zone)}${kdjSignalLabel(kdjPoint.signal_type)}　${kdjPoint.is_intraday ? "盘中动态" : "已确认"}`
       : null,
+    ...divergences.flatMap((event) => divergenceTooltipContent(event)),
     bar.is_complete ? "已完成" : "动态柱",
   ].filter(Boolean).join("<br />");
+}
+
+function buildDiffEventLines(events: MacdDivergence[], categories: string[]): VerticalLineDraft[] {
+  return events.flatMap((event) => {
+    const directionName = event.direction === "bottom" ? "底背离" : "顶背离";
+    const anchorLabel = event.direction === "bottom"
+      ? { one: "前低1", two: "前低2", pivot: "背离低点" }
+      : { one: "前高1", two: "前高2", pivot: "背离高点" };
+    const confirmationTime = event.confirmed_at
+      ? chartTimeFor(event.confirmed_at, categories)
+      : null;
+
+    return [
+      {
+        name: `${directionName}DIFF${anchorLabel.one}`,
+        time: chartTimeFor(event.anchor_one_time, categories),
+        label: anchorLabel.one,
+        direction: event.direction,
+        weak: true,
+      },
+      {
+        name: `${directionName}DIFF${anchorLabel.two}`,
+        time: chartTimeFor(event.anchor_two_time, categories),
+        label: anchorLabel.two,
+        direction: event.direction,
+        weak: true,
+      },
+      {
+        name: `${directionName}DIFF${anchorLabel.pivot}`,
+        time: chartTimeFor(event.pivot_time, categories),
+        label: anchorLabel.pivot,
+        direction: event.direction,
+      },
+      ...(confirmationTime
+        ? [{
+            name: `${directionName}DIFF确认`,
+            time: confirmationTime,
+            label: "确认",
+            direction: event.direction,
+          }]
+        : []),
+    ];
+  });
+}
+
+function isPlainPivot(
+  series: BarSeries,
+  index: number,
+  direction: "bottom" | "top",
+  sideBars = 3,
+) {
+  const item = series.items[index];
+  if (!item || index < sideBars || index + sideBars >= series.items.length) return false;
+  const price = direction === "bottom" ? item.low_price : item.high_price;
+  return series.items.every((bar, barIndex) => {
+    if (barIndex < index - sideBars || barIndex > index + sideBars || barIndex === index) {
+      return true;
+    }
+    const nearbyPrice = direction === "bottom" ? bar.low_price : bar.high_price;
+    return direction === "bottom" ? price < nearbyPrice : price > nearbyPrice;
+  });
+}
+
+function buildPlainPivotMarks(series: BarSeries) {
+  if (series.period !== "1d") return [];
+  return series.items.flatMap((bar, index) => [
+    isPlainPivot(series, index, "bottom")
+      ? namedMarkPoint({
+          name: "普通低点",
+          time: bar.bar_time,
+          value: bar.low_price,
+          label: "低",
+          direction: "bottom",
+          weak: true,
+          symbolSize: 4,
+        })
+      : null,
+    isPlainPivot(series, index, "top")
+      ? namedMarkPoint({
+          name: "普通高点",
+          time: bar.bar_time,
+          value: bar.high_price,
+          label: "高",
+          direction: "top",
+          weak: true,
+          symbolSize: 4,
+        })
+      : null,
+  ].filter((mark): mark is NonNullable<typeof mark> => mark !== null));
+}
+
+function buildMacdCrossLines(macd: MacdIndicator | null | undefined, categories: string[]): VerticalLineDraft[] {
+  return buildIndicatorCrossLines("MACD", macd?.items ?? [], categories);
+}
+
+function buildIndicatorCrossLines(
+  indicatorName: "MACD" | "KDJ",
+  items: Array<{ bar_time: string; signal_type: "none" | "golden_cross" | "death_cross" }>,
+  categories: string[],
+): VerticalLineDraft[] {
+  return items.flatMap((item) => {
+    if (item.signal_type !== "golden_cross" && item.signal_type !== "death_cross") return [];
+    const direction = item.signal_type === "golden_cross" ? "bottom" : "top";
+    return {
+      name: `${indicatorName} ${item.signal_type === "golden_cross" ? "金叉" : "死叉"}`,
+      time: chartTimeFor(item.bar_time, categories),
+      label: item.signal_type === "golden_cross" ? "金叉" : "死叉",
+      direction,
+    };
+  });
 }
 
 export function buildKlineOption(
@@ -106,8 +389,10 @@ export function buildKlineOption(
   macd?: MacdIndicator | null,
   kdj?: KdjIndicator | null,
 ): EChartsOption {
-  const hasMacd = Boolean(macd?.items.length);
-  const hasKdj = Boolean(kdj?.items.length);
+  const activeMacd = macd?.period === series.period ? macd : null;
+  const activeKdj = kdj?.period === series.period ? kdj : null;
+  const hasMacd = Boolean(activeMacd?.items.length);
+  const hasKdj = Boolean(activeKdj?.items.length);
   const hasIndicators = hasMacd || hasKdj;
   const categories = series.items.map((bar) => bar.bar_time);
   const candles = series.items.map((bar) => [
@@ -120,7 +405,7 @@ export function buildKlineOption(
     value: bar.volume,
     itemStyle: { color: bar.close_price >= bar.open_price ? "#e5484d" : "#16a36f" },
   }));
-  const macdByTime = new Map(macd?.items.map((item) => [item.bar_time, item]) ?? []);
+  const macdByTime = new Map(activeMacd?.items.map((item) => [item.bar_time, item]) ?? []);
   const diff = categories.map((time) => macdByTime.get(time)?.diff ?? null);
   const dea = categories.map((time) => macdByTime.get(time)?.dea ?? null);
   const histogram = categories.map((time) => {
@@ -130,25 +415,22 @@ export function buildKlineOption(
       itemStyle: { color: value !== null && value >= 0 ? "#e5484d" : "#16a36f" },
     };
   });
-  const kdjByTime = new Map(kdj?.items.map((item) => [item.bar_time, item]) ?? []);
+  const kdjByTime = new Map(activeKdj?.items.map((item) => [item.bar_time, item]) ?? []);
   const kValues = categories.map((time) => kdjByTime.get(time)?.k_value ?? null);
   const dValues = categories.map((time) => kdjByTime.get(time)?.d_value ?? null);
   const jValues = categories.map((time) => kdjByTime.get(time)?.j_value ?? null);
   const kdjAxisIndex = hasMacd ? 3 : 2;
-  const kdjSignals = (kdj?.items ?? [])
-    .filter((item) => item.signal_type !== "none" && item.k_value !== null)
-    .map((item) => ({
-      name: item.signal_type === "golden_cross" ? "金叉" : "死叉",
-      coord: [item.bar_time, item.k_value] as [string, number],
-      value: item.signal_type === "golden_cross" ? "金" : "死",
-      symbol: "triangle",
-      symbolRotate: item.signal_type === "golden_cross" ? 0 : 180,
-      symbolSize: 12,
-      itemStyle: {
-        color: item.signal_type === "golden_cross" ? "#e5484d" : "#16a36f",
-      },
-      label: { show: false },
-    }));
+  const kdjCrossLines = mergeVerticalLines(buildIndicatorCrossLines(
+    "KDJ",
+    activeKdj?.items ?? [],
+    categories,
+  ));
+  const divergences = series.period === "1d" ? activeMacd?.divergences ?? [] : [];
+  const pricePivotMarks = buildPlainPivotMarks(series);
+  const diffDivergenceLines = mergeVerticalLines([
+    ...buildDiffEventLines(divergences, categories),
+    ...buildMacdCrossLines(activeMacd, categories),
+  ]);
   const axisLabelFormatter = (value: string) =>
     formatShanghaiAxisLabel(value, series.period, series.range);
   const linkedAxes = Array.from({ length: 2 + Number(hasMacd) + Number(hasKdj) }, (_, i) => i);
@@ -205,7 +487,7 @@ export function buildKlineOption(
       formatter: (params: unknown) => {
         const items = Array.isArray(params) ? params : [params];
         const first = items[0] as { dataIndex?: number } | undefined;
-        return tooltipContent(series, first?.dataIndex ?? -1, macd, kdj);
+        return tooltipContent(series, first?.dataIndex ?? -1, activeMacd, activeKdj);
       },
     },
     grid: hasMacd && hasKdj
@@ -342,6 +624,9 @@ export function buildKlineOption(
           borderColor: "#e5484d",
           borderColor0: "#16a36f",
         },
+        ...(pricePivotMarks.length
+          ? { markPoint: { data: pricePivotMarks } }
+          : {}),
       },
       {
         name: "成交量",
@@ -361,6 +646,9 @@ export function buildKlineOption(
               smooth: true,
               lineStyle: { width: 1.4, color: "#3157d5" },
               data: diff,
+              ...(diffDivergenceLines.length
+                ? { markLine: { symbol: "none" as const, data: diffDivergenceLines } }
+                : {}),
             },
             {
               name: "DEA",
@@ -417,6 +705,7 @@ export function buildKlineOption(
                     lineStyle: { type: "dashed" as const, width: 1.6, color: "#e5484d" },
                     label: { position: "insideEndBottom" as const },
                   },
+                  ...kdjCrossLines,
                 ],
               },
               markArea: {
@@ -446,7 +735,6 @@ export function buildKlineOption(
                   ],
                 ],
               },
-              markPoint: { data: kdjSignals },
             },
             {
               name: "D",

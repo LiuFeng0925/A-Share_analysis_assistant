@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { marketApi } from "../api/client";
@@ -96,7 +96,7 @@ test("详情页展示 MACD 结果并把日线指标传给 K 线副图", async ()
   expect(await screen.findByText("MACD 指标 · 日K")).toBeInTheDocument();
   expect(screen.getByText("近 3 日金叉")).toBeInTheDocument();
   expect(screen.getByText("零轴线上")).toBeInTheDocument();
-  expect(screen.getByText("金叉")).toBeInTheDocument();
+  expect(screen.getByText("MACD 交叉")).toBeInTheDocument();
   expect(screen.queryByText("DIFF 0.18")).not.toBeInTheDocument();
   expect(screen.queryByText("DEA 0.11")).not.toBeInTheDocument();
   expect(screen.queryByText("红绿柱")).not.toBeInTheDocument();
@@ -215,14 +215,8 @@ test("30 分钟在开市时每 60 秒静默刷新 K 线和两个指标", async (
   vi.useFakeTimers();
   vi.mocked(marketApi.getSummary).mockResolvedValue({ ...summaryFixture, market_status: "open" });
   vi.mocked(marketApi.getBars).mockResolvedValue({ ...dailyBarsFixture, period: "30m" });
-  vi.mocked(marketApi.getMacdIndicator).mockResolvedValue({
-    ...macdIndicatorFixture,
-    period: "30m",
-  });
-  vi.mocked(marketApi.getKdjIndicator).mockResolvedValue({
-    ...kdjIndicatorFixture,
-    period: "30m",
-  });
+  vi.mocked(marketApi.getMacdIndicator).mockResolvedValue({ ...macdIndicatorFixture, period: "30m" });
+  vi.mocked(marketApi.getKdjIndicator).mockResolvedValue({ ...kdjIndicatorFixture, period: "30m" });
   renderDetail();
   fireEvent.click(screen.getByRole("button", { name: "30分" }));
   await act(async () => Promise.resolve());
@@ -252,6 +246,59 @@ test("KDJ 静默刷新失败时保留上次成功结果", async () => {
 
   expect(screen.getByText("K 18.20")).toBeInTheDocument();
   expect(screen.getByText(/KDJ 刷新失败/)).toBeInTheDocument();
+});
+
+test("详情顶部用最新日K补齐今日开盘最高最低", async () => {
+  vi.mocked(marketApi.getStock).mockResolvedValue({
+    ...stockDetailFixture,
+    open_price: null,
+    high_price: null,
+    low_price: null,
+  });
+  vi.mocked(marketApi.getBars).mockResolvedValue({
+    ...dailyBarsFixture,
+    items: [{
+      ...dailyBarsFixture.items[0],
+      open_price: 41.02,
+      high_price: 42.09,
+      low_price: 40.2,
+      close_price: 42.09,
+    }],
+  });
+
+  renderDetail();
+
+  const quoteGrid = await screen.findByLabelText("核心行情");
+  expect(within(quoteGrid).getByText("今日开盘").parentElement).toHaveTextContent("41.02");
+  expect(within(quoteGrid).getByText("今日最高").parentElement).toHaveTextContent("42.09");
+  expect(within(quoteGrid).getByText("今日最低").parentElement).toHaveTextContent("40.20");
+});
+
+test("普通金叉与多个背离状态分区展示", async () => {
+  renderDetail();
+
+  expect(await screen.findByText("MACD 交叉")).toBeInTheDocument();
+  expect(screen.getByText("近 3 日金叉")).toBeInTheDocument();
+  expect(screen.getByText("MACD 背离")).toBeInTheDocument();
+  expect(screen.getByText("底背离形成中")).toHaveClass("is-bullish-forming");
+  expect(screen.getByText("顶背离已确认")).toHaveClass("is-bearish-confirmed");
+  expect(screen.getByText("已出现金叉")).toBeInTheDocument();
+});
+
+test("非日K周期只展示普通交叉", async () => {
+  vi.mocked(marketApi.getMacdIndicator)
+    .mockResolvedValueOnce(macdIndicatorFixture)
+    .mockResolvedValueOnce({
+      ...macdIndicatorFixture,
+      period: "5m",
+      summary: { ...macdIndicatorFixture.summary, recent_signal_label: "5分金叉" },
+    });
+  renderDetail();
+  fireEvent.click(await screen.findByRole("button", { name: "5分" }));
+
+  expect(await screen.findByText("5分金叉")).toBeInTheDocument();
+  expect(screen.getByText("MACD 交叉")).toBeInTheDocument();
+  expect(screen.queryByText("MACD 背离")).not.toBeInTheDocument();
 });
 
 test("切换 K 线周期后请求并展示同周期 MACD", async () => {
@@ -348,6 +395,40 @@ test("换周期时不把旧图表误标为新周期", async () => {
   expect(screen.getByText("正在加载 K 线数据…")).toBeInTheDocument();
   await act(async () => resolveToday?.(todayBarsFixture));
   expect(await screen.findByTestId("kline-chart")).toHaveTextContent("1m:1");
+});
+
+test("切回已加载周期时立即展示缓存并后台刷新", async () => {
+  let resolveDailyRefresh: ((value: typeof dailyBarsFixture) => void) | undefined;
+  const fiveMinuteBars = { ...dailyBarsFixture, period: "5m" as const };
+  const fiveMinuteMacd = {
+    ...macdIndicatorFixture,
+    period: "5m" as const,
+    summary: { ...macdIndicatorFixture.summary, recent_signal_label: "5分金叉" },
+  };
+  vi.mocked(marketApi.getBars)
+    .mockResolvedValueOnce(dailyBarsFixture)
+    .mockResolvedValueOnce(fiveMinuteBars)
+    .mockReturnValueOnce(new Promise((resolve) => { resolveDailyRefresh = resolve; }));
+  vi.mocked(marketApi.getMacdIndicator)
+    .mockResolvedValueOnce(macdIndicatorFixture)
+    .mockResolvedValueOnce(fiveMinuteMacd)
+    .mockResolvedValueOnce(macdIndicatorFixture);
+  renderDetail();
+  expect(await screen.findByTestId("kline-chart")).toHaveTextContent("1d:1:近 3 日金叉");
+
+  fireEvent.click(screen.getByRole("button", { name: "5分" }));
+  expect(await screen.findByTestId("kline-chart")).toHaveTextContent("5m:1:5分金叉");
+
+  fireEvent.click(screen.getByRole("button", { name: "日K" }));
+
+  await waitFor(() => expect(marketApi.getBars).toHaveBeenCalledTimes(3));
+  expect(screen.getByTestId("kline-chart")).toHaveTextContent("1d:1:近 3 日金叉");
+  expect(screen.getByText("正在刷新 K 线…")).toBeInTheDocument();
+  await act(async () => resolveDailyRefresh?.({
+    ...dailyBarsFixture,
+    last_updated_at: "2026-08-04T15:20:00+08:00",
+  }));
+  expect(screen.getByTestId("kline-chart")).toHaveTextContent("1d:1:近 3 日金叉");
 });
 
 test("非法市场参数显示中文错误且不发送行情请求", async () => {

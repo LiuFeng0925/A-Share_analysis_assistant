@@ -297,6 +297,7 @@ tr:focus-visible {
 .indicator-filter-bar {
   display: flex;
   align-items: center;
+  flex-wrap: nowrap;
   gap: 10px;
   min-height: 54px;
   padding: 10px 16px;
@@ -307,7 +308,8 @@ tr:focus-visible {
 .indicator-filter-title {
   display: grid;
   gap: 2px;
-  min-width: 112px;
+  flex: 0 0 auto;
+  min-width: 110px;
   color: var(--ink);
   font-size: 13px;
   font-weight: 750;
@@ -321,15 +323,9 @@ tr:focus-visible {
   letter-spacing: 0.08em;
 }
 
-.indicator-filter-note {
-  max-width: 260px;
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.45;
-}
-
 .indicator-filter {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 8px;
   color: var(--muted);
@@ -339,7 +335,7 @@ tr:focus-visible {
 
 .indicator-filter select {
   height: 34px;
-  min-width: 118px;
+  min-width: 126px;
   padding: 0 28px 0 10px;
   color: var(--ink);
   background: var(--surface);
@@ -363,6 +359,131 @@ tr:focus-visible {
 .indicator-filter-clear:disabled {
   cursor: not-allowed;
   opacity: 0.46;
+}
+
+.divergence-select {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.divergence-select-trigger {
+  height: 34px;
+  min-width: 154px;
+  padding: 0 30px 0 12px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: left;
+}
+
+.divergence-select-trigger::after {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--muted);
+  border-bottom: 1.5px solid var(--muted);
+  content: "";
+  transform: translateY(-65%) rotate(45deg);
+}
+
+.divergence-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  width: 270px;
+  padding: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 18px 38px rgba(23, 32, 51, 0.14);
+}
+
+.divergence-option {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.divergence-option input {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin: 0 5px 0 0;
+  accent-color: currentColor;
+}
+
+.divergence-option span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.divergence-option.is-bottom {
+  color: #bc3940;
+}
+
+.divergence-option.is-bottom span {
+  background: #fff7f7;
+}
+
+.divergence-option.is-top {
+  color: #157d58;
+}
+
+.divergence-option.is-top span {
+  background: #f4fbf7;
+}
+
+.divergence-option.is-confirmed span {
+  color: #ffffff;
+}
+
+.divergence-option.is-bottom.is-confirmed span {
+  background: #d94c54;
+  border-color: #d94c54;
+}
+
+.divergence-option.is-top.is-confirmed span {
+  background: #19815d;
+  border-color: #19815d;
+}
+
+.divergence-option:not(.is-confirmed) input:checked + span {
+  background: #fff0f1;
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+
+.divergence-option.is-top:not(.is-confirmed) input:checked + span {
+  background: #e8f7ef;
+}
+
+.divergence-option.is-confirmed input:checked + span {
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.65);
+}
+
+.divergence-option input:focus-visible + span {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
 }
 
 .search-field {
@@ -592,6 +713,49 @@ tr:focus-visible {
 .kdj-signal.is-death {
   color: #08764d;
   background: #eaf8f1;
+}
+
+.macd-summary-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  max-width: 210px;
+}
+
+.macd-divergence-summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 1px 6px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.macd-divergence-summary.is-bullish-forming {
+  color: #b4232a;
+  background: #fff7f7;
+  border-color: #f1a7ab;
+}
+
+.macd-divergence-summary.is-bullish-confirmed {
+  color: #fff;
+  background: #c9353d;
+}
+
+.macd-divergence-summary.is-bearish-forming {
+  color: #08764d;
+  background: #f3fbf7;
+  border-color: #8ed0b4;
+}
+
+.macd-divergence-summary.is-bearish-confirmed {
+  color: #fff;
+  background: #12845a;
 }
 
 .price-cell {
@@ -1217,60 +1381,88 @@ tr:focus-visible {
   background: #fff0ed;
 }
 
-.indicator-main-signal {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 44px;
-  margin: 12px 14px 10px;
-  border-radius: 10px;
-  font-size: 16px;
-  font-weight: 850;
-}
-
-.indicator-main-signal.is-golden {
-  color: #b4232a;
-  background: #fff0f1;
-}
-
-.indicator-main-signal.is-death {
-  color: #08764d;
-  background: #eaf8f1;
-}
-
-.indicator-main-signal.is-muted {
-  color: var(--muted);
-  background: #f2f4f8;
-}
-
-.indicator-summary-tags {
+.indicator-result-group {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 7px;
-  margin: 0;
-  padding: 0 14px 14px;
+  gap: 8px;
+  padding: 12px 14px;
 }
 
-.indicator-summary-tags div {
-  min-height: 46px;
-  padding: 8px 9px;
-  background: #fafbfd;
-  border: 1px solid #edf0f5;
-  border-radius: 9px;
+.indicator-result-group + .indicator-result-group {
+  border-top: 1px solid #edf0f5;
 }
 
-.indicator-summary-tags dt {
-  margin-bottom: 4px;
+.indicator-result-group > span {
   color: var(--muted);
-  font-size: 10px;
-  font-weight: 650;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.02em;
 }
 
-.indicator-summary-tags dd {
-  margin: 0;
-  color: var(--ink);
+.indicator-result-tags,
+.indicator-divergence-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.indicator-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
   font-size: 12px;
-  font-weight: 750;
+  font-weight: 800;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.indicator-tag.is-golden,
+.indicator-tag.is-bullish-forming {
+  color: #b4232a;
+  background: #fff8f8;
+  border-color: #efb8bc;
+}
+
+.indicator-tag.is-death,
+.indicator-tag.is-bearish-forming {
+  color: #08764d;
+  background: #f4fbf7;
+  border-color: #abdcc8;
+}
+
+.indicator-tag.is-bullish-confirmed {
+  color: #ffffff;
+  background: #c83d45;
+  border-color: #c83d45;
+}
+
+.indicator-tag.is-bearish-confirmed {
+  color: #ffffff;
+  background: #19815d;
+  border-color: #19815d;
+}
+
+.indicator-tag.is-muted,
+.indicator-tag.is-neutral {
+  color: #596579;
+  background: #f5f7fa;
+  border-color: #dce2ea;
+}
+
+.indicator-divergences {
+  display: grid;
+  gap: 7px;
+}
+
+.indicator-divergence-item > span {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .kdj-values {
@@ -1560,11 +1752,6 @@ tr:focus-visible {
     flex: 1 0 100%;
   }
 
-  .indicator-filter-note {
-    flex: 1 0 100%;
-    max-width: none;
-  }
-
   .search-field {
     flex-basis: 100%;
     max-width: none;
@@ -1576,6 +1763,14 @@ tr:focus-visible {
 
   .indicator-filter {
     flex: 1 1 170px;
+  }
+
+  .divergence-select {
+    flex: 1 1 170px;
+  }
+
+  .divergence-select-trigger {
+    width: 100%;
   }
 
   .indicator-filter-clear {
@@ -1595,6 +1790,13 @@ tr:focus-visible {
 
   .result-count {
     margin-left: 0;
+  }
+
+  .divergence-menu {
+    right: auto;
+    left: 0;
+    width: min(270px, calc(100vw - 48px));
+    grid-template-columns: 1fr;
   }
 
   .chart-note {

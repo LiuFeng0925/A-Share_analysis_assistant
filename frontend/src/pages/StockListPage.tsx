@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useLocation, useSearchParams } from "react-router-dom";
 import { isAbortError, marketApi } from "../api/client";
 import type {
   KdjRecentWindow,
   KdjSignalFilter,
   KdjSignalZoneFilter,
+  MacdDivergenceFilter,
+  MacdDivergenceRecentWindow,
   MacdRecentWindow,
   MacdSignalFilter,
   MacdZeroAxisFilter,
@@ -17,6 +20,138 @@ import { StockTable } from "../components/StockTable";
 import { usePolling } from "../hooks/usePolling";
 
 const PAGE_SIZE = 50;
+type MacdSignalSelection = "" | `${MacdSignalFilter}:${MacdRecentWindow}`;
+const DEFAULT_SORT_BY: StockQuery["sortBy"] = "code";
+const DEFAULT_SORT_ORDER: StockQuery["sortOrder"] = "asc";
+const SCROLL_STORAGE_PREFIX = "stock-list-scroll:";
+
+const DIVERGENCE_OPTIONS: Array<{ value: MacdDivergenceFilter; label: string; direction: "bottom" | "top"; confirmed: boolean }> = [
+  { value: "bottom_forming", label: "底背离形成中", direction: "bottom", confirmed: false },
+  { value: "bottom_confirmed", label: "底背离已确认", direction: "bottom", confirmed: true },
+  { value: "top_forming", label: "顶背离形成中", direction: "top", confirmed: false },
+  { value: "top_confirmed", label: "顶背离已确认", direction: "top", confirmed: true },
+];
+const MACD_SIGNAL_OPTIONS: Array<{ value: MacdSignalSelection; label: string }> = [
+  { value: "", label: "全部信号" },
+  { value: "golden_cross:today", label: "今日金叉" },
+  { value: "golden_cross:3d", label: "近 3 日金叉" },
+  { value: "golden_cross:5d", label: "近 5 日金叉" },
+  { value: "death_cross:today", label: "今日死叉" },
+  { value: "death_cross:3d", label: "近 3 日死叉" },
+  { value: "death_cross:5d", label: "近 5 日死叉" },
+];
+const DIVERGENCE_TIME_OPTIONS: Array<{ value: MacdDivergenceRecentWindow | ""; label: string }> = [
+  { value: "", label: "时间不限" },
+  { value: "today", label: "今日" },
+  { value: "3d", label: "近 3 日" },
+  { value: "5d", label: "近 5 日" },
+  { value: "10d", label: "近 10 日" },
+  { value: "20d", label: "近 20 日" },
+];
+
+function parseMacdSignalSelection(value: MacdSignalSelection): {
+  signal?: MacdSignalFilter;
+  recentWindow?: MacdRecentWindow;
+} {
+  if (!value) return {};
+  const [signal, recentWindow] = value.split(":") as [MacdSignalFilter, MacdRecentWindow];
+  return { signal, recentWindow };
+}
+
+function isMarket(value: string | null): value is Market {
+  return value === "SH" || value === "SZ" || value === "BJ";
+}
+
+function isSortBy(value: string | null): value is StockQuery["sortBy"] {
+  return value === "code"
+    || value === "latest_price"
+    || value === "change_percent"
+    || value === "amount"
+    || value === "turnover_rate"
+    || value === "total_market_cap";
+}
+
+function isSortOrder(value: string | null): value is StockQuery["sortOrder"] {
+  return value === "asc" || value === "desc";
+}
+
+function isMacdSignal(value: string | null): value is MacdSignalFilter {
+  return value === "golden_cross" || value === "death_cross";
+}
+
+function isMacdRecentWindow(value: string | null): value is MacdRecentWindow {
+  return value === "today" || value === "3d" || value === "5d";
+}
+
+function isMacdDivergenceRecentWindow(value: string | null): value is MacdDivergenceRecentWindow {
+  return value === "today" || value === "3d" || value === "5d" || value === "10d" || value === "20d";
+}
+
+function isMacdZeroAxis(value: string | null): value is MacdZeroAxisFilter {
+  return value === "above" || value === "below";
+}
+
+function isMacdDivergence(value: string): value is MacdDivergenceFilter {
+  return DIVERGENCE_OPTIONS.some((option) => option.value === value);
+}
+
+function numberFromParams(params: URLSearchParams, key: string, fallback: number) {
+  const parsed = Number(params.get(key));
+  if (!Number.isInteger(parsed) || parsed < 1) return fallback;
+  return parsed;
+}
+
+function macdSignalSelectionFromParams(params: URLSearchParams): MacdSignalSelection {
+  const signal = params.get("macd_signal");
+  if (!isMacdSignal(signal)) return "";
+  const recentWindow = params.get("macd_recent_window");
+  return `${signal}:${isMacdRecentWindow(recentWindow) ? recentWindow : "5d"}`;
+}
+
+function macdDivergencesFromParams(params: URLSearchParams) {
+  const selected = new Set(params.getAll("macd_divergences").filter(isMacdDivergence));
+  return DIVERGENCE_OPTIONS
+    .map((option) => option.value)
+    .filter((value) => selected.has(value));
+}
+
+function stockListParamsFromState({
+  query,
+  market,
+  page,
+  sortBy,
+  sortOrder,
+  macdSignalSelection,
+  macdZeroAxis,
+  macdDivergences,
+  macdDivergenceRecentWindow,
+}: {
+  query: string;
+  market: Market | "";
+  page: number;
+  sortBy: StockQuery["sortBy"];
+  sortOrder: StockQuery["sortOrder"];
+  macdSignalSelection: MacdSignalSelection;
+  macdZeroAxis: MacdZeroAxisFilter | "";
+  macdDivergences: MacdDivergenceFilter[];
+  macdDivergenceRecentWindow: MacdDivergenceRecentWindow | "";
+}) {
+  const params = new URLSearchParams();
+  if (query) params.set("query", query);
+  if (market) params.set("market", market);
+  if (page > 1) params.set("page", String(page));
+  if (sortBy !== DEFAULT_SORT_BY) params.set("sort_by", sortBy);
+  if (sortOrder !== DEFAULT_SORT_ORDER) params.set("sort_order", sortOrder);
+  const macdSignal = parseMacdSignalSelection(macdSignalSelection);
+  if (macdSignal.signal) params.set("macd_signal", macdSignal.signal);
+  if (macdSignal.recentWindow) params.set("macd_recent_window", macdSignal.recentWindow);
+  if (macdZeroAxis) params.set("macd_zero_axis", macdZeroAxis);
+  macdDivergences.forEach((value) => params.append("macd_divergences", value));
+  if (macdDivergenceRecentWindow) {
+    params.set("macd_divergence_recent_window", macdDivergenceRecentWindow);
+  }
+  return params;
+}
 
 function formatUpdateTime(value: string | null) {
   if (!value) return "等待首次行情";
@@ -38,15 +173,35 @@ function readableError(error: unknown) {
 }
 
 export function StockListPage() {
-  const [searchInput, setSearchInput] = useState("");
-  const [query, setQuery] = useState("");
-  const [market, setMarket] = useState<Market | "">("");
-  const [page, setPage] = useState(1);
-  const [sortBy, setSortBy] = useState<StockQuery["sortBy"]>("code");
-  const [sortOrder, setSortOrder] = useState<StockQuery["sortOrder"]>("asc");
-  const [macdSignal, setMacdSignal] = useState<MacdSignalFilter | "">("");
-  const [macdZeroAxis, setMacdZeroAxis] = useState<MacdZeroAxisFilter | "">("");
-  const [macdRecentWindow, setMacdRecentWindow] = useState<MacdRecentWindow | "">("");
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialQuery = searchParams.get("query")?.trim() ?? "";
+  const initialMarket = searchParams.get("market");
+  const initialSortBy = searchParams.get("sort_by");
+  const initialSortOrder = searchParams.get("sort_order");
+  const initialMacdZeroAxis = searchParams.get("macd_zero_axis");
+  const initialMacdDivergenceRecentWindow = searchParams.get("macd_divergence_recent_window");
+  const [searchInput, setSearchInput] = useState(initialQuery);
+  const [query, setQuery] = useState(initialQuery);
+  const [market, setMarket] = useState<Market | "">(isMarket(initialMarket) ? initialMarket : "");
+  const [page, setPage] = useState(() => numberFromParams(searchParams, "page", 1));
+  const [sortBy, setSortBy] = useState<StockQuery["sortBy"]>(isSortBy(initialSortBy) ? initialSortBy : DEFAULT_SORT_BY);
+  const [sortOrder, setSortOrder] = useState<StockQuery["sortOrder"]>(
+    isSortOrder(initialSortOrder) ? initialSortOrder : DEFAULT_SORT_ORDER,
+  );
+  const [macdSignalSelection, setMacdSignalSelection] = useState<MacdSignalSelection>(
+    () => macdSignalSelectionFromParams(searchParams),
+  );
+  const [macdZeroAxis, setMacdZeroAxis] = useState<MacdZeroAxisFilter | "">(
+    isMacdZeroAxis(initialMacdZeroAxis) ? initialMacdZeroAxis : "",
+  );
+  const [macdDivergences, setMacdDivergences] = useState<MacdDivergenceFilter[]>(
+    () => macdDivergencesFromParams(searchParams),
+  );
+  const [macdDivergenceRecentWindow, setMacdDivergenceRecentWindow] = useState<MacdDivergenceRecentWindow | "">(
+    isMacdDivergenceRecentWindow(initialMacdDivergenceRecentWindow) ? initialMacdDivergenceRecentWindow : "",
+  );
+  const [divergenceMenuOpen, setDivergenceMenuOpen] = useState(false);
   const [kdjSignal, setKdjSignal] = useState<KdjSignalFilter | "">("");
   const [kdjSignalZone, setKdjSignalZone] = useState<KdjSignalZoneFilter | "">("");
   const [kdjRecentWindow, setKdjRecentWindow] = useState<KdjRecentWindow | "">("");
@@ -56,6 +211,8 @@ export function StockListPage() {
   const [error, setError] = useState<string | null>(null);
   const requestSequence = useRef(0);
   const mounted = useRef(true);
+  const restoredScrollKey = useRef<string | null>(null);
+  const selectedMacdSignal = parseMacdSignalSelection(macdSignalSelection);
 
   useEffect(() => {
     const id = window.setTimeout(() => {
@@ -73,6 +230,42 @@ export function StockListPage() {
     };
   }, []);
 
+  useEffect(() => {
+    const nextParams = stockListParamsFromState({
+      query,
+      market,
+      page,
+      sortBy,
+      sortOrder,
+      macdSignalSelection,
+      macdZeroAxis,
+      macdDivergences,
+      macdDivergenceRecentWindow,
+    });
+    if (nextParams.toString() !== searchParams.toString()) {
+      setSearchParams(nextParams, { replace: true });
+    }
+  }, [
+    macdDivergences,
+    macdDivergenceRecentWindow,
+    macdSignalSelection,
+    macdZeroAxis,
+    market,
+    page,
+    query,
+    searchParams,
+    setSearchParams,
+    sortBy,
+    sortOrder,
+  ]);
+
+  useEffect(() => {
+    const scrollKey = `${SCROLL_STORAGE_PREFIX}${location.pathname}${location.search}`;
+    return () => {
+      window.sessionStorage.setItem(scrollKey, String(window.scrollY));
+    };
+  }, [location.pathname, location.search]);
+
   const load = useCallback(async (signal?: AbortSignal) => {
     const sequence = ++requestSequence.current;
     setLoading(true);
@@ -87,12 +280,14 @@ export function StockListPage() {
           pageSize: PAGE_SIZE,
           sortBy,
           sortOrder,
-          macdSignal: macdSignal || undefined,
+          macdSignal: selectedMacdSignal.signal,
           macdZeroAxis: macdZeroAxis || undefined,
-          macdRecentWindow: macdRecentWindow || undefined,
+          macdRecentWindow: selectedMacdSignal.recentWindow,
           kdjSignal: kdjSignal || undefined,
           kdjSignalZone: kdjSignalZone || undefined,
           kdjRecentWindow: kdjRecentWindow || undefined,
+          macdDivergences: macdDivergences.length > 0 ? macdDivergences : undefined,
+          macdDivergenceRecentWindow: macdDivergenceRecentWindow || undefined,
         }, { signal }),
       ]);
       if (!mounted.current || sequence !== requestSequence.current) return;
@@ -109,8 +304,9 @@ export function StockListPage() {
     kdjRecentWindow,
     kdjSignal,
     kdjSignalZone,
-    macdRecentWindow,
-    macdSignal,
+    macdDivergences,
+    macdDivergenceRecentWindow,
+    macdSignalSelection,
     macdZeroAxis,
     market,
     page,
@@ -120,6 +316,17 @@ export function StockListPage() {
   ]);
 
   usePolling(load, 60_000);
+
+  useEffect(() => {
+    if (stockPage === null) return;
+    const scrollKey = `${SCROLL_STORAGE_PREFIX}${location.pathname}${location.search}`;
+    if (restoredScrollKey.current === scrollKey) return;
+    restoredScrollKey.current = scrollKey;
+    const savedTop = Number(window.sessionStorage.getItem(scrollKey));
+    if (Number.isFinite(savedTop) && savedTop > 0) {
+      window.scrollTo({ top: savedTop, left: 0, behavior: "auto" });
+    }
+  }, [stockPage, location.pathname, location.search]);
 
   const handleSort = (field: StockQuery["sortBy"]) => {
     setPage(1);
@@ -131,14 +338,25 @@ export function StockListPage() {
     }
   };
 
+  const toggleDivergence = (value: MacdDivergenceFilter) => {
+    setMacdDivergences((current) => DIVERGENCE_OPTIONS
+      .map((option) => option.value)
+      .filter((item) => (item === value ? !current.includes(item) : current.includes(item))));
+    setPage(1);
+  };
+
   const totalPages = stockPage ? Math.max(1, Math.ceil(stockPage.total / PAGE_SIZE)) : 1;
   const hasData = stockPage !== null;
-  const hasIndicatorFilters = macdSignal !== ""
+  const hasIndicatorFilters = macdSignalSelection !== ""
     || macdZeroAxis !== ""
-    || macdRecentWindow !== ""
+    || macdDivergences.length > 0
+    || macdDivergenceRecentWindow !== ""
     || kdjSignal !== ""
     || kdjSignalZone !== ""
     || kdjRecentWindow !== "";
+  const divergenceButtonText = macdDivergences.length > 0
+    ? `MACD 背离：已选 ${macdDivergences.length} 项`
+    : "MACD 背离：不限";
   const marketStatus = summary?.market_status === "open"
     ? "交易中"
     : summary?.market_status === "closed"
@@ -207,22 +425,19 @@ export function StockListPage() {
             <small>指标筛选</small>
             日 K MACD 雷达
           </span>
-          <span className="indicator-filter-note">
-            近 5 个交易日内，按日 K 的最后一次 MACD 交叉信号筛选。
-          </span>
           <label className="indicator-filter">
             <span>日 K MACD 信号</span>
             <select
               aria-label="日 K MACD 信号"
-              value={macdSignal}
+              value={macdSignalSelection}
               onChange={(event) => {
-                setMacdSignal(event.target.value as MacdSignalFilter | "");
+                setMacdSignalSelection(event.target.value as MacdSignalSelection);
                 setPage(1);
               }}
             >
-              <option value="">全部信号</option>
-              <option value="golden_cross">近 5 日金叉</option>
-              <option value="death_cross">近 5 日死叉</option>
+              {MACD_SIGNAL_OPTIONS.map((option) => (
+                <option key={option.value || "all"} value={option.value}>{option.label}</option>
+              ))}
             </select>
           </label>
           <label className="indicator-filter">
@@ -240,20 +455,46 @@ export function StockListPage() {
               <option value="below">零轴线下</option>
             </select>
           </label>
+          <div className="divergence-select">
+            <button
+              type="button"
+              className="divergence-select-trigger"
+              aria-expanded={divergenceMenuOpen}
+              onClick={() => setDivergenceMenuOpen((open) => !open)}
+            >
+              {divergenceButtonText}
+            </button>
+            {divergenceMenuOpen && (
+              <div className="divergence-menu" role="group" aria-label="MACD 背离选项">
+                {DIVERGENCE_OPTIONS.map((option) => (
+                  <label
+                    key={option.value}
+                    className={`divergence-option is-${option.direction}${option.confirmed ? " is-confirmed" : ""}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={macdDivergences.includes(option.value)}
+                      onChange={() => toggleDivergence(option.value)}
+                    />
+                    <span>{option.label}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
           <label className="indicator-filter">
-            <span>出现时间</span>
+            <span>背离时间</span>
             <select
-              aria-label="MACD 出现时间"
-              value={macdRecentWindow}
+              aria-label="背离时间"
+              value={macdDivergenceRecentWindow}
               onChange={(event) => {
-                setMacdRecentWindow(event.target.value as MacdRecentWindow | "");
+                setMacdDivergenceRecentWindow(event.target.value as MacdDivergenceRecentWindow | "");
                 setPage(1);
               }}
             >
-              <option value="">时间不限</option>
-              <option value="today">今日</option>
-              <option value="3d">近 3 日</option>
-              <option value="5d">近 5 日</option>
+              {DIVERGENCE_TIME_OPTIONS.map((option) => (
+                <option key={option.value || "all"} value={option.value}>{option.label}</option>
+              ))}
             </select>
           </label>
         </div>
@@ -318,12 +559,14 @@ export function StockListPage() {
             className="indicator-filter-clear"
             disabled={!hasIndicatorFilters || loading}
             onClick={() => {
-              setMacdSignal("");
+              setMacdSignalSelection("");
               setMacdZeroAxis("");
-              setMacdRecentWindow("");
               setKdjSignal("");
               setKdjSignalZone("");
               setKdjRecentWindow("");
+              setMacdDivergences([]);
+              setMacdDivergenceRecentWindow("");
+              setDivergenceMenuOpen(false);
               setPage(1);
             }}
           >

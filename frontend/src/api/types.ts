@@ -8,6 +8,13 @@ export type MacdSignalFilter = Exclude<MacdSignal, "none">;
 export type MacdZeroAxis = "above" | "below" | "unknown";
 export type MacdZeroAxisFilter = Exclude<MacdZeroAxis, "unknown">;
 export type MacdRecentWindow = "today" | "3d" | "5d";
+export type MacdDivergenceRecentWindow = MacdRecentWindow | "10d" | "20d";
+export type MacdDivergenceFilter =
+  | "bottom_forming"
+  | "bottom_confirmed"
+  | "top_forming"
+  | "top_confirmed";
+export type MacdDivergenceCrossFilter = "present" | "absent";
 export type MacdQuality = "ok" | "partial" | "insufficient" | "error";
 export type KdjSignal = "none" | "golden_cross" | "death_cross";
 export type KdjSignalFilter = Exclude<KdjSignal, "none">;
@@ -58,6 +65,7 @@ export interface StockQuote {
   kdj_signal_zone: KdjSignalZone | null;
   kdj_current_zone: KdjZone | null;
   kdj_quality: KdjQuality | null;
+  macd_divergence_labels: MacdDivergenceFilter[];
 }
 
 export interface StockPage {
@@ -86,6 +94,9 @@ export interface StockQuery {
   kdjSignal?: KdjSignalFilter;
   kdjSignalZone?: KdjSignalZoneFilter;
   kdjRecentWindow?: KdjRecentWindow;
+  macdDivergences?: MacdDivergenceFilter[];
+  macdDivergenceCross?: MacdDivergenceCrossFilter;
+  macdDivergenceRecentWindow?: MacdDivergenceRecentWindow;
 }
 
 export interface Bar {
@@ -152,11 +163,34 @@ export interface MacdSummary {
   quality: MacdQuality;
 }
 
+export interface MacdDivergence {
+  direction: "bottom" | "top";
+  status: "forming" | "confirmed";
+  anchor_one_time: string;
+  anchor_one_price: number;
+  anchor_one_diff: number;
+  anchor_two_time: string;
+  anchor_two_price: number;
+  anchor_two_diff: number;
+  pivot_time: string;
+  pivot_price: number;
+  pivot_diff: number;
+  detected_at: string;
+  updated_at: string;
+  calculated_at: string;
+  quality: MacdQuality;
+  confirmed_at: string | null;
+  corresponding_signal: MacdSignal;
+  corresponding_signal_time: string | null;
+  recent_days: number;
+}
+
 export interface MacdIndicator {
   market: Market;
   code: string;
   period: BarPeriod;
   summary: MacdSummary;
+  divergences: MacdDivergence[];
   items: MacdPoint[];
 }
 

@@ -82,16 +82,27 @@ function zeroAxisLabel(value: MacdIndicator["summary"]["zero_axis"] | undefined)
   return "零轴未知";
 }
 
-function macdSignalLabel(value: MacdIndicator["summary"]["signal_type"] | undefined) {
-  if (value === "golden_cross") return "金叉";
-  if (value === "death_cross") return "死叉";
-  return "暂无交叉";
-}
-
 function macdSignalTone(value: MacdIndicator["summary"]["signal_type"] | undefined) {
   if (value === "golden_cross") return "is-golden";
   if (value === "death_cross") return "is-death";
   return "is-muted";
+}
+
+function divergenceLabel(divergence: MacdIndicator["divergences"][number]) {
+  const direction = divergence.direction === "bottom" ? "底背离" : "顶背离";
+  const status = divergence.status === "forming" ? "形成中" : "已确认";
+  return `${direction}${status}`;
+}
+
+function divergenceTone(divergence: MacdIndicator["divergences"][number]) {
+  const direction = divergence.direction === "bottom" ? "bullish" : "bearish";
+  return `is-${direction}-${divergence.status}`;
+}
+
+function divergenceSignalLabel(divergence: MacdIndicator["divergences"][number]) {
+  if (divergence.corresponding_signal === "golden_cross") return "已出现金叉";
+  if (divergence.corresponding_signal === "death_cross") return "已出现死叉";
+  return "尚未出现对应交叉";
 }
 
 function macdQualityLabel(value: MacdIndicator["summary"]["quality"] | undefined) {
@@ -130,6 +141,10 @@ function kdjQualityLabel(value: KdjIndicator["summary"]["quality"] | undefined) 
 
 function periodKey(market: Market, code: string, option: PeriodOption) {
   return `${market}/${code}/${option.period}/${option.range}/${option.adjustment}`;
+}
+
+function macdKey(market: Market, code: string, period: BarPeriod) {
+  return `${market}/${code}/${period}`;
 }
 
 function indicatorPeriodLabel(option: PeriodOption) {
@@ -321,6 +336,8 @@ export function StockDetailPage() {
   const summaryRequestSequence = useRef(0);
   const barsRef = useRef<BarSeries | null>(null);
   const loadedBarsKeyRef = useRef<string | null>(null);
+  const barsCacheRef = useRef(new Map<string, BarSeries>());
+  const macdCacheRef = useRef(new Map<string, MacdIndicator>());
   const activeBarsRequestKeyRef = useRef<string | null>(null);
   const selectedBarsKeyRef = useRef<string | null>(null);
   const marketWasOpenRef = useRef(false);
@@ -381,9 +398,12 @@ export function StockDetailPage() {
 
   const loadMacd = useCallback(async (signal?: AbortSignal, silent = false) => {
     if (!market || !code) return;
+    const key = macdKey(market, code, selectedPeriod.period);
+    const cachedMacd = macdCacheRef.current.get(key);
     const sequence = ++macdRequestSequence.current;
     setMacdLoading(true);
     setMacdError(null);
+    setMacd(cachedMacd ?? null);
     try {
       const nextMacd = await marketApi.getMacdIndicator(
         market,
@@ -392,6 +412,7 @@ export function StockDetailPage() {
         { signal },
       );
       if (mounted.current && sequence === macdRequestSequence.current) {
+        macdCacheRef.current.set(key, nextMacd);
         setMacd(nextMacd);
       }
     } catch (error) {
@@ -438,6 +459,13 @@ export function StockDetailPage() {
   const loadBars = useCallback(async (signal?: AbortSignal) => {
     if (!market || !code) return;
     const key = periodKey(market, code, selectedPeriod);
+    const cachedBars = barsCacheRef.current.get(key);
+    if (cachedBars) {
+      barsRef.current = cachedBars;
+      loadedBarsKeyRef.current = key;
+      setBars(cachedBars);
+      setLoadedBarsKey(key);
+    }
     const keepsCurrentChart = loadedBarsKeyRef.current === key && barsRef.current !== null;
     const sequence = ++barsRequestSequence.current;
     activeBarsRequestKeyRef.current = key;
@@ -457,6 +485,7 @@ export function StockDetailPage() {
         adjustment: selectedPeriod.adjustment,
       }, { signal });
       if (mounted.current && sequence === barsRequestSequence.current) {
+        barsCacheRef.current.set(key, nextBars);
         barsRef.current = nextBars;
         loadedBarsKeyRef.current = key;
         setBars(nextBars);
@@ -574,6 +603,10 @@ export function StockDetailPage() {
     || (!visibleBars && !matchingBarsError);
   const barsRefreshing = barsRefreshingKey === selectedBarsKey;
   const latestBar = visibleBars?.items.at(-1);
+  const latestDailyBar = visibleBars?.period === "1d" ? latestBar : undefined;
+  const quoteOpenPrice = stock?.open_price ?? latestDailyBar?.open_price ?? null;
+  const quoteHighPrice = stock?.high_price ?? latestDailyBar?.high_price ?? null;
+  const quoteLowPrice = stock?.low_price ?? latestDailyBar?.low_price ?? null;
   const matchingMacd = macd?.period === selectedPeriod.period ? macd : null;
   const chartMacd = visibleBars && matchingMacd?.period === visibleBars.period ? matchingMacd : null;
   const macdSummary = matchingMacd?.summary;
@@ -588,14 +621,19 @@ export function StockDetailPage() {
   );
   const hasExtremeJ = isFiniteNumber(kdjSummary?.j_value)
     && (kdjSummary.j_value > 100 || kdjSummary.j_value < 0);
+  const dailyDivergences = selectedPeriod.period === "1d"
+    ? [...(matchingMacd?.divergences ?? [])].sort((left, right) => (
+      right.pivot_time.localeCompare(left.pivot_time)
+    ))
+    : [];
   const quoteFields = [
     { label: "最新价", value: formatMarketNumber(stock?.latest_price), className: change.className },
     { label: "涨跌额", value: formatSigned(stock?.change_amount), className: changeAmount.className, direction: changeAmount.label },
     { label: "涨跌幅", value: formatSigned(stock?.change_percent, "%"), className: changePercent.className, direction: changePercent.label },
-    { label: "今开", value: formatMarketNumber(stock?.open_price), className: "" },
+    { label: "今日开盘", value: formatMarketNumber(quoteOpenPrice), className: "" },
     { label: "昨收", value: formatMarketNumber(stock?.previous_close), className: "" },
-    { label: "最高", value: formatMarketNumber(stock?.high_price), className: "" },
-    { label: "最低", value: formatMarketNumber(stock?.low_price), className: "" },
+    { label: "今日最高", value: formatMarketNumber(quoteHighPrice), className: "" },
+    { label: "今日最低", value: formatMarketNumber(quoteLowPrice), className: "" },
     { label: "成交量（股）", value: formatCompact(stock?.volume), className: "" },
     { label: "成交额", value: formatCompact(stock?.amount), className: "" },
     { label: "换手率", value: isFiniteNumber(stock?.turnover_rate) ? `${formatMarketNumber(stock.turnover_rate)}%` : "—", className: "" },
@@ -729,19 +767,35 @@ export function StockDetailPage() {
             <div className="indicator-state is-error" role="alert">{macdError}</div>
           ) : macdSummary ? (
             <>
-              <strong className={`indicator-main-signal ${macdSignalTone(macdSummary.signal_type)}`}>
-                {macdSummary.recent_signal_label}
-              </strong>
-              <dl className="indicator-summary-tags">
-                <div>
-                  <dt>零轴</dt>
-                  <dd>{zeroAxisLabel(macdSummary.zero_axis)}</dd>
+              <section className="indicator-result-group" aria-label="MACD 交叉">
+                <span>MACD 交叉</span>
+                <div className="indicator-result-tags">
+                  <strong className={`indicator-tag ${macdSignalTone(macdSummary.signal_type)}`}>
+                    {macdSummary.recent_signal_label}
+                  </strong>
+                  <strong className="indicator-tag is-neutral">
+                    {zeroAxisLabel(macdSummary.zero_axis)}
+                  </strong>
                 </div>
-                <div>
-                  <dt>信号</dt>
-                  <dd>{macdSignalLabel(macdSummary.signal_type)}</dd>
-                </div>
-              </dl>
+              </section>
+              {dailyDivergences.length > 0 && (
+                <section className="indicator-result-group" aria-label="MACD 背离">
+                  <span>MACD 背离</span>
+                  <div className="indicator-divergences">
+                    {dailyDivergences.map((divergence) => (
+                      <div
+                        className="indicator-divergence-item"
+                        key={`${divergence.direction}-${divergence.pivot_time}-${divergence.detected_at}`}
+                      >
+                        <strong className={`indicator-tag ${divergenceTone(divergence)}`}>
+                          {divergenceLabel(divergence)}
+                        </strong>
+                        <span>{divergenceSignalLabel(divergence)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
               {macdError && <span className="indicator-refresh-note" role="alert">{macdError}</span>}
             </>
           ) : (

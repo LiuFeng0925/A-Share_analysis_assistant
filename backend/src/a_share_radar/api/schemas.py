@@ -1,9 +1,16 @@
 from datetime import date
 from typing import Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from a_share_radar.domain.models import Market, QualityStatus
+
+MacdDivergenceLabel = Literal[
+    "bottom_forming",
+    "bottom_confirmed",
+    "top_forming",
+    "top_confirmed",
+]
 
 
 class AttributeModel(BaseModel):
@@ -51,6 +58,7 @@ class StockQuoteResponse(AttributeModel):
     kdj_signal_zone: str | None = None
     kdj_current_zone: str | None = None
     kdj_quality: str | None = None
+    macd_divergence_labels: list[MacdDivergenceLabel] = Field(default_factory=list)
 
 
 class StockPageResponse(AttributeModel):
@@ -116,12 +124,35 @@ class MacdSummaryResponse(AttributeModel):
     quality: str
 
 
+class MacdDivergenceResponse(AttributeModel):
+    direction: Literal["bottom", "top"]
+    status: Literal["forming", "confirmed"]
+    anchor_one_time: AwareDatetime
+    anchor_one_price: float
+    anchor_one_diff: float
+    anchor_two_time: AwareDatetime
+    anchor_two_price: float
+    anchor_two_diff: float
+    pivot_time: AwareDatetime
+    pivot_price: float
+    pivot_diff: float
+    detected_at: AwareDatetime
+    updated_at: AwareDatetime
+    calculated_at: AwareDatetime
+    quality: Literal["ok", "partial", "insufficient", "error"]
+    confirmed_at: AwareDatetime | None
+    corresponding_signal: Literal["none", "golden_cross", "death_cross"]
+    corresponding_signal_time: AwareDatetime | None
+    recent_days: int
+
+
 class MacdIndicatorResponse(AttributeModel):
     market: Market
     code: str
     period: str
     summary: MacdSummaryResponse
     items: list[MacdPointResponse]
+    divergences: list[MacdDivergenceResponse]
 
 
 class KdjPointResponse(AttributeModel):

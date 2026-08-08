@@ -12,6 +12,7 @@ from a_share_radar.domain.indicators import (
     ZeroAxisPosition,
 )
 from a_share_radar.domain.models import Bar, Market, QualityStatus
+from a_share_radar.services.macd_divergence import calculate_macd_divergences
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 MINIMUM_MACD_BARS = 35
@@ -99,6 +100,22 @@ def calculate_macd_series(
         recent_signal, trading_days, latest.bar_time.date()
     )
     signal_label = _signal_label(recent_signal, recent_signal_days, market_open)
+    divergences = (
+        calculate_macd_divergences(
+            calculation_bars,
+            points,
+            trading_days,
+            evaluation_day=_divergence_evaluation_day(
+                calculation_bars,
+                trading_days,
+                now.astimezone(SHANGHAI).date(),
+            ),
+            calculated_at=now,
+            quality=quality,
+        )
+        if period == "1d"
+        else ()
+    )
     return MacdCalculation(
         summary=MacdSummary(
             market=latest.market,
@@ -121,6 +138,7 @@ def calculate_macd_series(
             quality=quality,
         ),
         points=points,
+        divergences=divergences,
     )
 
 
@@ -129,6 +147,16 @@ def _period_bars(bars: Sequence[Bar], period: str) -> list[Bar]:
         (bar for bar in bars if bar.period == period),
         key=lambda bar: bar.bar_time,
     )
+
+
+def _divergence_evaluation_day(
+    bars: Sequence[Bar], trading_days: Sequence[date], current_day: date
+) -> date:
+    latest_bar_day = bars[-1].bar_time.date()
+    elapsed_trading_days = [day for day in trading_days if day <= current_day]
+    if elapsed_trading_days:
+        return max(latest_bar_day, max(elapsed_trading_days))
+    return latest_bar_day
 
 
 def _identity(bars: Sequence[Bar], latest_quote: Any | None) -> tuple[Market, str]:

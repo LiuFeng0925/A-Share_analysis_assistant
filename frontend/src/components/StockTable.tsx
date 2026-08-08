@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "react-router-dom";
-import type { StockQuery, StockQuote } from "../api/types";
+import type { MacdDivergenceFilter, StockQuery, StockQuote } from "../api/types";
 
 interface StockTableProps {
   stocks: StockQuote[];
@@ -92,6 +92,20 @@ function formatKdjSignal(stock: StockQuote) {
         ? "高位"
         : "";
   return stock.kdj_signal_label.replace(/(金叉|死叉)$/, `${zone}$1`);
+}
+
+const DIVERGENCE_SUMMARIES: Record<
+  MacdDivergenceFilter,
+  { label: string; tone: string }
+> = {
+  bottom_forming: { label: "底背离形成中", tone: "is-bullish-forming" },
+  bottom_confirmed: { label: "底背离已确认", tone: "is-bullish-confirmed" },
+  top_forming: { label: "顶背离形成中", tone: "is-bearish-forming" },
+  top_confirmed: { label: "顶背离已确认", tone: "is-bearish-confirmed" },
+};
+
+function uniqueDivergenceLabels(stock: StockQuote) {
+  return [...new Set(stock.macd_divergence_labels)];
 }
 
 function SortButton({
@@ -195,9 +209,23 @@ export function StockTable({ stocks, sortBy, sortOrder, onSort }: StockTableProp
                   </div>
                 </td>
                 <td>
-                  <span className={`macd-signal ${macdSignalClass(stock.macd_signal_type)}`}>
-                    {formatMacdSignal(stock)}
-                  </span>
+                  <div className="macd-summary-tags">
+                    <span className={`macd-signal ${macdSignalClass(stock.macd_signal_type)}`}>
+                      {formatMacdSignal(stock)}
+                    </span>
+                    {uniqueDivergenceLabels(stock).map((label) => {
+                      const summary = DIVERGENCE_SUMMARIES[label];
+                      if (!summary) return null;
+                      return (
+                        <span
+                          key={label}
+                          className={`macd-divergence-summary ${summary.tone}`}
+                        >
+                          {summary.label}
+                        </span>
+                      );
+                    })}
+                  </div>
                 </td>
                 <td>
                   <span className={`kdj-signal ${kdjSignalClass(stock.kdj_signal_type)}`}>

@@ -18,6 +18,9 @@ from a_share_radar.domain.indicators import (
     KdjSummary,
     KdjZone,
     MacdCalculation,
+    MacdDivergenceDirection,
+    MacdDivergenceEvent,
+    MacdDivergenceStatus,
     MacdPoint,
     MacdQuality,
     MacdSignal,
@@ -62,6 +65,7 @@ class StockQuoteRow:
     kdj_signal_zone: KdjSignalZone | None = None
     kdj_current_zone: KdjZone | None = None
     kdj_quality: KdjQuality | None = None
+    macd_divergence_labels: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,7 +139,15 @@ _QUOTE_COLUMNS = """
     m.signal_type, CAST(m.signal_date AS VARCHAR), m.recent_signal_days,
     m.recent_signal_label, m.zero_axis, m.quality,
     kdj.signal_type, CAST(kdj.signal_time AS VARCHAR), kdj.recent_signal_days,
-    kdj.recent_signal_label, kdj.signal_zone, kdj.current_zone, kdj.quality
+    kdj.recent_signal_label, kdj.signal_zone, kdj.current_zone, kdj.quality,
+    (
+      SELECT string_agg(DISTINCT d.direction || '_' || d.status, ',' ORDER BY d.direction || '_' || d.status)
+      FROM indicator_macd_divergence d
+      WHERE d.market = s.market
+        AND d.code = s.code
+        AND d.period = '1d'
+        AND d.is_valid = TRUE
+    )
 """
 _MACD_JOIN = """
     LEFT JOIN indicator_macd_latest m
@@ -145,8 +157,15 @@ _KDJ_JOIN = """
     LEFT JOIN indicator_kdj_latest kdj
       ON kdj.market = s.market AND kdj.code = s.code AND kdj.period = '1d'
 """
-_MACD_RECENT_WINDOWS = {"today": 0, "3d": 2, "5d": 4}
 _KDJ_RECENT_WINDOWS = {"today": 0, "3d": 2, "5d": 4}
+_MACD_RECENT_WINDOWS = {"today": 0, "3d": 2, "5d": 4, "10d": 9, "20d": 19}
+_MACD_DIVERGENCE_KEYS = {
+    "bottom_forming": ("bottom", "forming"),
+    "bottom_confirmed": ("bottom", "confirmed"),
+    "top_forming": ("top", "forming"),
+    "top_confirmed": ("top", "confirmed"),
+}
+_MACD_DIVERGENCE_CROSS = {"present", "absent"}
 
 _SNAPSHOT_BATCH_RELATION = "snapshot_batch_input"
 _ARCHIVE_EXISTING_RELATION = "archive_existing_input"
@@ -776,6 +795,9 @@ class MarketRepository:
         kdj_signal: str | None = None,
         kdj_signal_zone: str | None = None,
         kdj_recent_window: str | None = None,
+        macd_divergences: list[str] | None = None,
+        macd_divergence_cross: str | None = None,
+        macd_divergence_recent_window: str | None = None,
     ) -> StockPage:
         if sort_by not in SORT_COLUMNS:
             raise ValueError(f"不支持的排序字段：{sort_by}")
@@ -809,6 +831,23 @@ class MarketRepository:
             raise ValueError(f"不支持的 KDJ 信号区域：{kdj_signal_zone}")
         if kdj_recent_window is not None and kdj_recent_window not in _KDJ_RECENT_WINDOWS:
             raise ValueError(f"不支持的 KDJ 最近时间：{kdj_recent_window}")
+        if macd_divergences is not None:
+            unsupported_divergences = set(macd_divergences) - _MACD_DIVERGENCE_KEYS.keys()
+            if unsupported_divergences:
+                unsupported = next(iter(unsupported_divergences))
+                raise ValueError(f"不支持的 MACD 背离：{unsupported}")
+        if (
+            macd_divergence_cross is not None
+            and macd_divergence_cross not in _MACD_DIVERGENCE_CROSS
+        ):
+            raise ValueError(f"不支持的 MACD 背离交叉：{macd_divergence_cross}")
+        if (
+            macd_divergence_recent_window is not None
+            and macd_divergence_recent_window not in _MACD_RECENT_WINDOWS
+        ):
+            raise ValueError(
+                f"不支持的 MACD 背离最近时间：{macd_divergence_recent_window}"
+            )
 
         conditions: list[str] = []
         parameters: list[Any] = []
@@ -844,6 +883,46 @@ class MarketRepository:
             conditions.append("kdj.recent_signal_days IS NOT NULL")
             conditions.append("kdj.recent_signal_days BETWEEN 0 AND ?")
             parameters.append(_KDJ_RECENT_WINDOWS[kdj_recent_window])
+        if (
+            macd_divergences
+            or macd_divergence_cross is not None
+            or macd_divergence_recent_window is not None
+        ):
+            divergence_conditions = [
+                "d.market = s.market",
+                "d.code = s.code",
+                "d.period = '1d'",
+                "d.is_valid = TRUE",
+            ]
+            if macd_divergences:
+                selected_types = [
+                    _MACD_DIVERGENCE_KEYS[divergence]
+                    for divergence in dict.fromkeys(macd_divergences)
+                ]
+                divergence_conditions.append(
+                    "(" + " OR ".join(
+                        "(d.direction = ? AND d.status = ?)"
+                        for _ in selected_types
+                    ) + ")"
+                )
+                parameters.extend(
+                    value for selected_type in selected_types for value in selected_type
+                )
+            if macd_divergence_cross is not None:
+                operator = "<>" if macd_divergence_cross == "present" else "="
+                divergence_conditions.append(
+                    f"d.corresponding_signal {operator} 'none'"
+                )
+            if macd_divergence_recent_window is not None:
+                divergence_conditions.append("d.recent_days <= ?")
+                parameters.append(
+                    _MACD_RECENT_WINDOWS[macd_divergence_recent_window]
+                )
+            conditions.append(
+                "EXISTS (SELECT 1 FROM indicator_macd_divergence d WHERE "
+                + " AND ".join(divergence_conditions)
+                + ")"
+            )
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         offset = (page - 1) * page_size
 
@@ -999,6 +1078,7 @@ class MarketRepository:
         )
 
     def upsert_macd(self, calculation: MacdCalculation) -> None:
+        self._validate_macd_identity(calculation)
         summary = calculation.summary
         point_rows = [
             (
@@ -1015,6 +1095,35 @@ class MarketRepository:
                 point.quality.value,
             )
             for point in calculation.points
+        ]
+        divergence_rows = [
+            (
+                event.market.value,
+                event.code,
+                event.period,
+                event.direction.value,
+                event.status.value,
+                event.anchor_one_time,
+                event.anchor_one_price,
+                event.anchor_one_diff,
+                event.anchor_two_time,
+                event.anchor_two_price,
+                event.anchor_two_diff,
+                event.pivot_time,
+                event.pivot_price,
+                event.pivot_diff,
+                event.detected_at,
+                event.updated_at,
+                event.calculated_at,
+                event.quality.value,
+                event.confirmed_at,
+                event.invalidated_at,
+                event.is_valid,
+                event.corresponding_signal.value,
+                event.corresponding_signal_time,
+                event.recent_days,
+            )
+            for event in calculation.divergences
         ]
         with self.database.lock:
             connection = self.database.connection
@@ -1065,6 +1174,28 @@ class MarketRepository:
                         """,
                         point_rows,
                     )
+                connection.execute(
+                    """
+                    DELETE FROM indicator_macd_divergence
+                    WHERE market = ? AND code = ? AND period = ?
+                    """,
+                    (summary.market.value, summary.code, summary.period),
+                )
+                if divergence_rows:
+                    connection.executemany(
+                        """
+                        INSERT INTO indicator_macd_divergence (
+                          market, code, period, direction, status,
+                          anchor_one_time, anchor_one_price, anchor_one_diff,
+                          anchor_two_time, anchor_two_price, anchor_two_diff,
+                          pivot_time, pivot_price, pivot_diff, detected_at,
+                          updated_at, calculated_at, quality,
+                          confirmed_at, invalidated_at, is_valid,
+                          corresponding_signal, corresponding_signal_time, recent_days
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        divergence_rows,
+                    )
                 connection.execute("COMMIT")
             except Exception:
                 connection.execute("ROLLBACK")
@@ -1095,6 +1226,23 @@ class MarketRepository:
                 FROM indicator_macd_series
                 WHERE market = ? AND code = ? AND period = ?
                 ORDER BY bar_time ASC
+                """,
+                (market.value, code, period),
+            ).fetchall()
+            divergence_rows = connection.execute(
+                """
+                SELECT market, code, period, direction, status,
+                       CAST(anchor_one_time AS VARCHAR), anchor_one_price, anchor_one_diff,
+                       CAST(anchor_two_time AS VARCHAR), anchor_two_price, anchor_two_diff,
+                       CAST(pivot_time AS VARCHAR), pivot_price, pivot_diff,
+                       CAST(detected_at AS VARCHAR), CAST(updated_at AS VARCHAR),
+                       CAST(calculated_at AS VARCHAR), quality,
+                       CAST(confirmed_at AS VARCHAR), CAST(invalidated_at AS VARCHAR),
+                       is_valid, corresponding_signal,
+                       CAST(corresponding_signal_time AS VARCHAR), recent_days
+                FROM indicator_macd_divergence
+                WHERE market = ? AND code = ? AND period = ?
+                ORDER BY detected_at ASC, direction ASC
                 """,
                 (market.value, code, period),
             ).fetchall()
@@ -1132,7 +1280,59 @@ class MarketRepository:
             )
             for row in point_rows
         )
-        return MacdCalculation(summary=summary, points=points)
+        divergences = tuple(
+            MacdDivergenceEvent(
+                market=Market(row[0]),
+                code=row[1],
+                period=row[2],
+                direction=MacdDivergenceDirection(row[3]),
+                status=MacdDivergenceStatus(row[4]),
+                anchor_one_time=datetime.fromisoformat(row[5]),
+                anchor_one_price=row[6],
+                anchor_one_diff=row[7],
+                anchor_two_time=datetime.fromisoformat(row[8]),
+                anchor_two_price=row[9],
+                anchor_two_diff=row[10],
+                pivot_time=datetime.fromisoformat(row[11]),
+                pivot_price=row[12],
+                pivot_diff=row[13],
+                detected_at=datetime.fromisoformat(row[14]),
+                updated_at=datetime.fromisoformat(row[15]),
+                calculated_at=datetime.fromisoformat(row[16]),
+                quality=MacdQuality(row[17]),
+                confirmed_at=None if row[18] is None else datetime.fromisoformat(row[18]),
+                invalidated_at=None if row[19] is None else datetime.fromisoformat(row[19]),
+                is_valid=row[20],
+                corresponding_signal=MacdSignal(row[21]),
+                corresponding_signal_time=(
+                    None if row[22] is None else datetime.fromisoformat(row[22])
+                ),
+                recent_days=row[23],
+            )
+            for row in divergence_rows
+        )
+        return MacdCalculation(summary=summary, points=points, divergences=divergences)
+
+    @staticmethod
+    def _validate_macd_identity(calculation: MacdCalculation) -> None:
+        summary = calculation.summary
+        identity = (summary.market, summary.code, summary.period)
+        if any(
+            (point.market, point.code, point.period) != identity
+            for point in calculation.points
+        ):
+            raise ValueError("MACD 点与摘要标识不一致")
+        if any(
+            (event.market, event.code, event.period) != identity
+            for event in calculation.divergences
+        ):
+            raise ValueError("MACD 背离事件与摘要标识不一致")
+        if any(
+            (event.calculated_at, event.quality)
+            != (summary.calculated_at, summary.quality)
+            for event in calculation.divergences
+        ):
+            raise ValueError("MACD 背离事件与摘要计算元数据不一致")
 
     def upsert_kdj(self, calculation: KdjCalculation) -> None:
         summary = calculation.summary
@@ -1478,6 +1678,9 @@ class MarketRepository:
             kdj_signal_zone=None if row[29] is None else KdjSignalZone(row[29]),
             kdj_current_zone=None if row[30] is None else KdjZone(row[30]),
             kdj_quality=None if row[31] is None else KdjQuality(row[31]),
+            macd_divergence_labels=(
+                () if row[32] is None else tuple(dict.fromkeys(row[32].split(",")))
+            ),
         )
 
     @staticmethod

@@ -105,6 +105,28 @@ async def test_stock_list_can_return_an_empty_later_page(app_with_fixture_data):
     assert response.json() == {"items": [], "total": 2, "page": 2, "page_size": 10}
 
 
+async def test_股票列表支持四种背离状态多选且非法值返回422(app_with_fixture_data):
+    selected = await get(
+        app_with_fixture_data,
+        "/api/market/stocks",
+        params=[
+            ("macd_divergences", "bottom_forming"),
+            ("macd_divergences", "bottom_confirmed"),
+            ("macd_divergence_cross", "present"),
+            ("macd_divergence_recent_window", "20d"),
+            ("page_size", "10"),
+        ],
+    )
+    invalid = await get(
+        app_with_fixture_data,
+        "/api/market/stocks",
+        params={"macd_divergences": "unknown", "page_size": 10},
+    )
+
+    assert selected.status_code == 200
+    assert invalid.status_code == 422
+
+
 async def test_stock_detail_returns_latest_quote(app_with_fixture_data):
     response = await get(app_with_fixture_data, "/api/stocks/SH/600519")
 
@@ -440,3 +462,15 @@ def test_response_models_validate_dataclass_enum_and_aware_datetime(fake_source)
                 "is_complete": True,
             }
         )
+
+
+def test_股票响应拒绝未知MACD背离摘要标签(fake_source):
+    from a_share_radar.api.schemas import StockQuoteResponse
+
+    payload = StockQuoteResponse.model_validate(
+        fake_source.snapshot_rows[0], from_attributes=True
+    ).model_dump()
+    payload["macd_divergence_labels"] = ["unknown"]
+
+    with pytest.raises(ValidationError):
+        StockQuoteResponse.model_validate(payload)
