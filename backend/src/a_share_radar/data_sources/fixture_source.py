@@ -222,9 +222,13 @@ class FixtureSource:
     ) -> list[Bar]:
         if code not in self._profiles_by_code:
             return []
-        if period != "1m" or adjustment != "none":
+        if period == "1m" and adjustment == "none":
+            bars = self._minute_bars(code)
+        elif period in {"5m", "15m", "30m", "60m"} and adjustment == "qfq":
+            bars = self._multiperiod_minute_bars(code, period)
+        else:
             return []
-        return [bar for bar in self._minute_bars(code) if start <= bar.bar_time <= end]
+        return [bar for bar in bars if start <= bar.bar_time <= end]
 
     @classmethod
     def _trading_days(cls) -> list[date]:
@@ -251,11 +255,16 @@ class FixtureSource:
         low_padding = max(abs(base_price) * 0.0033, 0.04)
         volume_step = max(volume_base // 180, 10_000)
         result: list[Bar] = []
-        for index, trading_day in enumerate(cls._daily_bar_days()):
-            open_price = base_price + index * step
-            close_price = open_price + (
-                alternating_move if index % 2 == 0 else -alternating_move / 2
-            )
+        trading_days = cls._daily_bar_days()
+        for index, trading_day in enumerate(trading_days):
+            if code == "600519" and index >= len(trading_days) - 8:
+                open_price = 1670.0 if index == len(trading_days) - 8 else 1540.0 + index % 2 * 2
+                close_price = open_price
+            else:
+                open_price = base_price + index * step
+                close_price = open_price + (
+                    alternating_move if index % 2 == 0 else -alternating_move / 2
+                )
             high_price = max(open_price, close_price) + high_padding
             low_price = min(open_price, close_price) - low_padding
             volume = volume_base + index * volume_step
@@ -355,4 +364,65 @@ class FixtureSource:
                     acquired_at=cls.captured_at,
                 )
             )
+        return result
+
+    @classmethod
+    def _multiperiod_minute_bars(cls, code: str, period: str) -> list[Bar]:
+        profile = cls._profiles_by_code[code]
+        period_minutes = int(period.removesuffix("m"))
+        trading_days = [*cls._daily_bar_days()[-10:], cls.trade_date]
+        session_times: list[time] = []
+        for session_start, session_end in (
+            (time(9, 30), time(11, 30)),
+            (time(13, 0), time(15, 0)),
+        ):
+            cursor = datetime.combine(cls.trade_date, session_start, tzinfo=SHANGHAI)
+            session_close = datetime.combine(cls.trade_date, session_end, tzinfo=SHANGHAI)
+            cursor += timedelta(minutes=period_minutes)
+            while cursor <= session_close:
+                session_times.append(cursor.time())
+                cursor += timedelta(minutes=period_minutes)
+
+        result: list[Bar] = []
+        for day_index, trading_day in enumerate(trading_days):
+            for bucket_index, bucket_time in enumerate(session_times):
+                bar_time = datetime.combine(trading_day, bucket_time, tzinfo=SHANGHAI)
+                if trading_day == cls.trade_date and bar_time > cls.captured_at:
+                    continue
+                index = day_index * len(session_times) + bucket_index
+                cycle = index % 16
+                wave = cycle if cycle <= 8 else 16 - cycle
+                direction = 1 if (index // 8) % 2 == 0 else -1
+                open_price = (
+                    profile.minute_base_price
+                    + day_index * profile.minute_step * 1.5
+                    + direction * wave * profile.minute_step * 4
+                )
+                movement = max(abs(profile.minute_base_price) * 0.0007, 0.008)
+                close_price = open_price + (movement if index % 2 == 0 else -movement / 2)
+                high_price = max(open_price, close_price) + movement * 0.8
+                low_price = min(open_price, close_price) - movement * 0.7
+                volume = profile.minute_volume_base * period_minutes + index * 1_000
+                is_complete = bar_time < cls.captured_at
+                result.append(
+                    Bar(
+                        code=code,
+                        market=profile.stock.market,
+                        period=period,
+                        adjustment="qfq",
+                        bar_time=bar_time,
+                        open_price=round(open_price, 3),
+                        high_price=round(high_price, 3),
+                        low_price=round(low_price, 3),
+                        close_price=round(close_price, 3),
+                        volume=volume,
+                        amount=round(volume * close_price, 2),
+                        source=cls.name,
+                        is_complete=is_complete,
+                        acquired_at=cls.captured_at,
+                        quality_status=(
+                            QualityStatus.OK if is_complete else QualityStatus.PARTIAL
+                        ),
+                    )
+                )
         return result

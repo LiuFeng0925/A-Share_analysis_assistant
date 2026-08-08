@@ -169,7 +169,12 @@ def create_app(
                     resolved_source, repository
                 )
                 fixture_clock[0] = persisted_fixture_now
-                app.state.clock = MarketClock(trading_days)
+                fixture_market_clock = MarketClock(trading_days)
+                app.state.clock = fixture_market_clock
+                await indicator_service.refresh_market_indicators(
+                    persisted_fixture_now,
+                    market_open=fixture_market_clock.is_open(persisted_fixture_now),
+                )
                 yield
                 return
 

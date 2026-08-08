@@ -313,14 +313,7 @@ export function buildKlineOption(
               min: (extent: { min: number }) => Math.min(0, Math.floor(extent.min - 5)),
               max: (extent: { max: number }) => Math.max(100, Math.ceil(extent.max + 5)),
               splitLine: { show: false },
-              axisLabel: {
-                color: "#687386",
-                formatter: (value: number) => {
-                  if (value === 20) return "20 超卖线";
-                  if (value === 80) return "80 超买线";
-                  return String(value);
-                },
-              },
+              axisLabel: { color: "#687386" },
             },
           ]
         : []),
@@ -402,15 +395,29 @@ export function buildKlineOption(
               markLine: {
                 silent: true,
                 symbol: "none",
-                lineStyle: { type: "dashed" as const, width: 1.4, color: "#8a94a6" },
                 label: {
                   show: true,
-                  position: "end" as const,
                   color: "#596579",
-                  formatter: (params: { value?: unknown }) =>
-                    params.value === 20 ? "20 超卖线" : "80 超买线",
+                  fontSize: 10,
+                  backgroundColor: "rgba(255, 255, 255, 0.9)",
+                  borderRadius: 3,
+                  padding: [2, 4],
+                  formatter: "{b}",
                 },
-                data: [{ yAxis: 20 }, { yAxis: 80 }],
+                data: [
+                  {
+                    name: "20 超卖线",
+                    yAxis: 20,
+                    lineStyle: { type: "dashed" as const, width: 1.6, color: "#16a36f" },
+                    label: { position: "insideEndTop" as const },
+                  },
+                  {
+                    name: "80 超买线",
+                    yAxis: 80,
+                    lineStyle: { type: "dashed" as const, width: 1.6, color: "#e5484d" },
+                    label: { position: "insideEndBottom" as const },
+                  },
+                ],
               },
               markArea: {
                 silent: true,

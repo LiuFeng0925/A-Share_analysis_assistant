@@ -580,6 +580,12 @@ export function StockDetailPage() {
   const matchingKdj = kdj?.period === selectedPeriod.period ? kdj : null;
   const chartKdj = visibleBars && matchingKdj?.period === visibleBars.period ? matchingKdj : null;
   const kdjSummary = matchingKdj?.summary;
+  const kdjSignalPoint = matchingKdj?.items.find(
+    (item) => item.bar_time === kdjSummary?.signal_time,
+  );
+  const kdjSignalIsIntraday = Boolean(
+    kdjSummary?.signal_time && (kdjSignalPoint?.is_intraday ?? kdjSummary.is_intraday),
+  );
   const hasExtremeJ = isFiniteNumber(kdjSummary?.j_value)
     && (kdjSummary.j_value > 100 || kdjSummary.j_value < 0);
   const quoteFields = [
@@ -782,7 +788,7 @@ export function StockDetailPage() {
                 </div>
                 <div>
                   <dt>信号状态</dt>
-                  <dd>{kdjSummary.is_intraday ? "盘中动态" : "已确认"}</dd>
+                  <dd>{kdjSignalIsIntraday ? "盘中动态" : "已确认"}</dd>
                 </div>
               </dl>
               {hasExtremeJ && <span className="kdj-extreme">短期动能极端</span>}

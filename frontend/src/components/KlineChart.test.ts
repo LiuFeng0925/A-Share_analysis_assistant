@@ -101,7 +101,14 @@ describe("KlineChart", () => {
     const zoom = option.dataZoom as Array<{ xAxisIndex?: number[] }>;
     const chartSeries = option.series as Array<{
       name: string;
-      markLine?: { data: Array<{ yAxis: number }> };
+      markLine?: {
+        data: Array<{
+          name: string;
+          yAxis: number;
+          lineStyle: { color: string; type: string };
+          label: { position: string };
+        }>;
+      };
       markArea?: { data: Array<Array<{ name?: string; yAxis: number }>> };
       markPoint?: { data: Array<{ name: string; coord: [string, number] }> };
     }>;
@@ -121,8 +128,18 @@ describe("KlineChart", () => {
       "J",
     ]);
     expect(kLine?.markLine?.data).toEqual([
-      expect.objectContaining({ yAxis: 20 }),
-      expect.objectContaining({ yAxis: 80 }),
+      expect.objectContaining({
+        name: "20 超卖线",
+        yAxis: 20,
+        lineStyle: expect.objectContaining({ color: "#16a36f", type: "dashed" }),
+        label: expect.objectContaining({ position: "insideEndTop" }),
+      }),
+      expect.objectContaining({
+        name: "80 超买线",
+        yAxis: 80,
+        lineStyle: expect.objectContaining({ color: "#e5484d", type: "dashed" }),
+        label: expect.objectContaining({ position: "insideEndBottom" }),
+      }),
     ]);
     expect(kLine?.markArea?.data).toEqual([
       [expect.objectContaining({ name: "超卖区", yAxis: 0 }), { yAxis: 20 }],

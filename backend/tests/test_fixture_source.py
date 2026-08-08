@@ -119,6 +119,22 @@ async def test_fixture_source_returns_weekly_and_monthly_periods_for_e2e():
     )
 
 
+async def test_fixture_source_returns_multiperiod_minute_bars_for_kdj_e2e():
+    source = FixtureSource()
+    start = datetime(2026, 7, 1, 9, 30, tzinfo=TZ)
+    end = datetime(2026, 8, 4, 15, 0, tzinfo=TZ)
+
+    for period in ("5m", "15m", "30m", "60m"):
+        bars = await source.fetch_minute_bars(
+            "000001", start, end, period, "qfq"
+        )
+
+        assert len(bars) >= 20
+        assert all(bar.period == period and bar.adjustment == "qfq" for bar in bars)
+        assert bars[-1].bar_time == datetime(2026, 8, 4, 10, 30, tzinfo=TZ)
+        assert bars[-1].is_complete is False
+
+
 async def test_fixture_lifespan_persists_all_data_without_background_jobs(tmp_path):
     app = create_app(settings=Settings(data_dir=tmp_path, fixture_source=True))
 
@@ -131,6 +147,25 @@ async def test_fixture_lifespan_persists_all_data_without_background_jobs(tmp_pa
         assert isinstance(app.state.source, FixtureSource)
         assert app.state.scheduler is None
         assert app.state.history_task is None
+
+
+async def test_fixture_lifespan_precomputes_daily_kdj_for_list_screening(tmp_path):
+    app = create_app(settings=Settings(data_dir=tmp_path, fixture_source=True))
+
+    async with app.router.lifespan_context(app), AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get(
+            "/api/market/stocks",
+            params={
+                "kdj_signal": "golden_cross",
+                "kdj_signal_zone": "low",
+                "kdj_recent_window": "today",
+            },
+        )
+
+    assert response.status_code == 200
+    assert [item["code"] for item in response.json()["items"]] == ["600519"]
 
 
 async def test_fixture_lifespan_accepts_bar_fetch_batches(tmp_path):

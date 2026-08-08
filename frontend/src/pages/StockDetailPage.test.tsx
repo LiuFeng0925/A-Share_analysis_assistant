@@ -131,6 +131,35 @@ test("详情页展示 KDJ 数值、区域、信号时间并传给副图", async 
   );
 });
 
+test("KDJ 信号状态跟随交叉柱，不被后续动态柱误标为盘中信号", async () => {
+  vi.mocked(marketApi.getKdjIndicator).mockResolvedValue({
+    ...kdjIndicatorFixture,
+    summary: {
+      ...kdjIndicatorFixture.summary,
+      signal_time: "2026-08-01T15:00:00+08:00",
+      recent_signal_label: "近 3 日金叉",
+      is_intraday: true,
+    },
+    items: [
+      {
+        ...kdjIndicatorFixture.items[0],
+        signal_type: "golden_cross",
+        signal_zone: "low",
+      },
+      {
+        ...kdjIndicatorFixture.items[1],
+        signal_type: "none",
+        signal_zone: "unknown",
+      },
+    ],
+  });
+
+  renderDetail();
+
+  expect(await screen.findByText("KDJ 指标 · 日K")).toBeInTheDocument();
+  expect(screen.getByText("已确认")).toBeInTheDocument();
+});
+
 test("切换到 30 分钟会同步请求 K 线、MACD 与 KDJ", async () => {
   vi.mocked(marketApi.getBars).mockResolvedValueOnce(dailyBarsFixture).mockResolvedValueOnce({
     ...dailyBarsFixture,
