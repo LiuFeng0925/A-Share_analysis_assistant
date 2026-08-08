@@ -101,7 +101,19 @@ def calculate_kdj_series(
         (point for point in reversed(points) if point.signal_type is not KdjSignal.NONE),
         None,
     )
-    recent_signal_days = _recent_signal_days(recent_signal, trading_days, latest.bar_time.date())
+    recent_signal_days = _recent_signal_days(
+        recent_signal,
+        trading_days,
+        latest.bar_time.date(),
+        [item.bar_time.date() for item in calculation_bars],
+    )
+    summary_quality = (
+        KdjQuality.PARTIAL
+        if recent_signal is not None
+        and recent_signal.bar_time.date() != latest.bar_time.date()
+        and recent_signal_days is None
+        else quality
+    )
     return KdjCalculation(
         summary=KdjSummary(
             market=latest.market,
@@ -122,7 +134,7 @@ def calculate_kdj_series(
             recent_signal_label=_signal_label(recent_signal, recent_signal_days, market_open),
             status=_status(latest),
             is_intraday=latest.is_intraday,
-            quality=quality,
+            quality=summary_quality,
         ),
         points=tuple(points),
     )
@@ -184,13 +196,30 @@ def _classify_signal_zone(k_value: float, d_value: float) -> KdjSignalZone:
 
 
 def _recent_signal_days(
-    point: KdjPoint | None, trading_days: Sequence[date], latest_date: date
+    point: KdjPoint | None,
+    trading_days: Sequence[date],
+    latest_date: date,
+    observed_bar_days: Sequence[date],
 ) -> int | None:
     if point is None:
         return None
-    ordered_days = sorted({*trading_days, latest_date, point.bar_time.date()})
+    signal_date = point.bar_time.date()
+    if signal_date == latest_date:
+        return 0
+    known_days = set(trading_days)
+    if signal_date not in known_days or latest_date not in known_days:
+        return None
+    observed_interval = {
+        observed_day
+        for observed_day in observed_bar_days
+        if signal_date <= observed_day <= latest_date
+    }
+    if not observed_interval.issubset(known_days):
+        return None
+    ordered_days = sorted(known_days)
     positions = {trading_day: index for index, trading_day in enumerate(ordered_days)}
-    return positions[latest_date] - positions[point.bar_time.date()]
+    distance = positions[latest_date] - positions[signal_date]
+    return distance if distance >= 0 else None
 
 
 def _signal_label(

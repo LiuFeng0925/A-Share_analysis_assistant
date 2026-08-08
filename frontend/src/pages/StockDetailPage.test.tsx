@@ -161,6 +161,31 @@ test("KDJ 信号状态跟随交叉柱，不被后续动态柱误标为盘中信�
   expect(screen.getByText("已确认")).toBeInTheDocument();
 });
 
+test("KDJ 没有交叉时不会误显示为已确认信号", async () => {
+  vi.mocked(marketApi.getKdjIndicator).mockResolvedValue({
+    ...kdjIndicatorFixture,
+    summary: {
+      ...kdjIndicatorFixture.summary,
+      signal_type: "none",
+      signal_time: null,
+      signal_zone: "unknown",
+      recent_signal_days: null,
+      recent_signal_label: "暂无",
+    },
+    items: kdjIndicatorFixture.items.map((item) => ({
+      ...item,
+      signal_type: "none",
+      signal_zone: "unknown",
+    })),
+  });
+
+  renderDetail();
+
+  expect(await screen.findByText("KDJ 指标 · 日K")).toBeInTheDocument();
+  expect(screen.getByText("暂无信号")).toBeInTheDocument();
+  expect(screen.queryByText("已确认")).not.toBeInTheDocument();
+});
+
 test("切换到 30 分钟会同步请求 K 线、MACD 与 KDJ", async () => {
   vi.mocked(marketApi.getBars).mockResolvedValueOnce(dailyBarsFixture).mockResolvedValueOnce({
     ...dailyBarsFixture,
@@ -457,6 +482,23 @@ test("市场状态恢复成功会清除旧刷新错误并在闭市后停止", as
 
   await act(async () => vi.advanceTimersByTime(120_000));
   expect(marketApi.getSummary).toHaveBeenCalledTimes(3);
+});
+
+test("首次市场状态请求失败后仍会静默重试并恢复刷新", async () => {
+  vi.useFakeTimers();
+  vi.mocked(marketApi.getSummary)
+    .mockRejectedValueOnce(new Error("状态服务暂不可用"))
+    .mockResolvedValue({ ...summaryFixture, market_status: "open" });
+  renderDetail();
+  await act(async () => Promise.resolve());
+
+  expect(marketApi.getSummary).toHaveBeenCalledTimes(1);
+  const barsBefore = vi.mocked(marketApi.getBars).mock.calls.length;
+  await act(async () => vi.advanceTimersByTimeAsync(60_000));
+
+  expect(marketApi.getSummary).toHaveBeenCalledTimes(2);
+  expect(marketApi.getBars).toHaveBeenCalledTimes(barsBefore + 1);
+  expect(screen.getByText("开市（交易中）")).toBeInTheDocument();
 });
 
 test("显示上海时间、数据来源与质量状态，非法时间使用占位", async () => {

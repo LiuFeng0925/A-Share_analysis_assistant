@@ -325,7 +325,7 @@ export function StockDetailPage() {
   const selectedBarsKeyRef = useRef<string | null>(null);
   const marketWasOpenRef = useRef(false);
   const mounted = useRef(true);
-  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(Boolean(market && code));
   const selectedBarsKey = market && code ? periodKey(market, code, selectedPeriod) : null;
   selectedBarsKeyRef.current = selectedBarsKey;
 
@@ -788,7 +788,13 @@ export function StockDetailPage() {
                 </div>
                 <div>
                   <dt>信号状态</dt>
-                  <dd>{kdjSignalIsIntraday ? "盘中动态" : "已确认"}</dd>
+                  <dd>
+                    {kdjSummary.signal_type === "none" || !kdjSummary.signal_time
+                      ? "暂无信号"
+                      : kdjSignalIsIntraday
+                        ? "盘中动态"
+                        : "已确认"}
+                  </dd>
                 </div>
               </dl>
               {hasExtremeJ && <span className="kdj-extreme">短期动能极端</span>}

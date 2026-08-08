@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 from a_share_radar.domain.indicators import KdjQuality, KdjSignal, MacdQuality
 from a_share_radar.domain.models import Bar, Market, QualityStatus, QuoteSnapshot, Stock
 from a_share_radar.services.indicator_service import IndicatorService
+from a_share_radar.storage.repository import BarIngestionAudit
 
 TZ = ZoneInfo("Asia/Shanghai")
 
@@ -51,6 +52,32 @@ def five_minute_bar(index: int, close_price: float) -> Bar:
     )
 
 
+def thirty_minute_bar(index: int, close_price: float) -> Bar:
+    item = five_minute_bar(index, close_price)
+    end_labels = (
+        time(10, 0),
+        time(10, 30),
+        time(11, 0),
+        time(11, 30),
+        time(13, 30),
+        time(14, 0),
+        time(14, 30),
+        time(15, 0),
+    )
+    trade_date = date(2026, 7, 9) + timedelta(days=index // len(end_labels))
+    bar_time = datetime.combine(
+        trade_date,
+        end_labels[index % len(end_labels)],
+        tzinfo=TZ,
+    )
+    return replace(
+        item,
+        period="30m",
+        bar_time=bar_time,
+        acquired_at=bar_time,
+    )
+
+
 def quote_snapshot(captured_at: datetime, latest_price: float) -> QuoteSnapshot:
     return QuoteSnapshot(
         code="600519",
@@ -74,9 +101,15 @@ def quote_snapshot(captured_at: datetime, latest_price: float) -> QuoteSnapshot:
 
 
 class RecordingBarService:
-    def __init__(self, repository, bars: list[Bar]):
+    def __init__(
+        self,
+        repository,
+        bars: list[Bar],
+        audit: BarIngestionAudit | None = None,
+    ):
         self.repository = repository
         self.bars = bars
+        self.audit = audit
         self.calls: list[tuple[Market, str, str, str, str]] = []
 
     async def get_bars(
@@ -99,6 +132,11 @@ class RecordingBarService:
         ]
         self.repository.upsert_bars(matching)
         return matching
+
+    async def latest_ingestion(
+        self, market: Market, code: str, period: str, adjustment: str
+    ) -> BarIngestionAudit | None:
+        return self.audit
 
 
 async def test_indicator_service_refreshes_stock_macd_from_daily_bars_and_latest_quote(repository):
@@ -310,6 +348,96 @@ async def test_indicator_service_refreshes_daily_kdj_from_latest_quote(repositor
     assert calculation is not None
     assert calculation.summary.signal_type is KdjSignal.GOLDEN_CROSS
     assert calculation.summary.recent_signal_label == "盘中金叉"
+
+
+async def test_indicator_service_recalculates_kdj_after_fetching_new_30m_bar(repository):
+    first_now = datetime(2026, 7, 10, 10, 35, tzinfo=TZ)
+    second_now = datetime(2026, 7, 10, 11, 5, tzinfo=TZ)
+    repository.upsert_stocks([Stock("600519", Market.SH, "贵州茅台")])
+    repository.replace_trading_days({date(2026, 7, 9), first_now.date()})
+    bars = [thirty_minute_bar(index, 10.0 + index * 0.02) for index in range(10)]
+    stock = repository.get_stock(Market.SH, "600519")
+    assert stock is not None
+    bar_service = RecordingBarService(repository, bars)
+    service = IndicatorService(repository, bar_service)
+
+    first = await service.get_stock_kdj(
+        stock,
+        first_now,
+        market_open=True,
+        period="30m",
+    )
+    assert first is not None
+
+    next_bar = replace(
+        thirty_minute_bar(10, 12.5),
+        acquired_at=second_now,
+    )
+    bar_service.bars.append(next_bar)
+
+    refreshed = await service.get_stock_kdj(
+        stock,
+        second_now,
+        market_open=True,
+        period="30m",
+    )
+
+    assert refreshed is not None
+    assert refreshed.summary.calculated_at == second_now
+    assert refreshed.summary.market_time == next_bar.bar_time
+    assert len(refreshed.points) == len(first.points) + 1
+    assert (
+        refreshed.summary.k_value,
+        refreshed.summary.d_value,
+        refreshed.summary.j_value,
+    ) != (
+        first.summary.k_value,
+        first.summary.d_value,
+        first.summary.j_value,
+    )
+    assert bar_service.calls == [
+        (Market.SH, "600519", "30m", "6mo", "qfq"),
+        (Market.SH, "600519", "30m", "6mo", "qfq"),
+    ]
+
+
+async def test_indicator_service_marks_cached_kdj_error_when_bar_refresh_fails(repository):
+    first_now = datetime(2026, 7, 11, 11, 30, tzinfo=TZ)
+    retry_now = datetime(2026, 7, 11, 11, 35, tzinfo=TZ)
+    repository.upsert_stocks([Stock("600519", Market.SH, "贵州茅台")])
+    repository.replace_trading_days({first_now.date()})
+    bars = [five_minute_bar(index, 10.0 + index * 0.02) for index in range(12)]
+    repository.upsert_bars(bars)
+    stock = repository.get_stock(Market.SH, "600519")
+    assert stock is not None
+    initial_service = IndicatorService(repository)
+    await initial_service.refresh_stock_kdj(
+        stock,
+        first_now,
+        market_open=True,
+        period="5m",
+    )
+    audit = BarIngestionAudit(
+        acquired_at=retry_now,
+        source="fixture",
+        quality_status="error",
+        raw_row_count=0,
+        valid_row_count=0,
+        invalid_row_count=0,
+        status="failed",
+    )
+
+    result = await IndicatorService(
+        repository,
+        RecordingBarService(repository, bars, audit),
+    ).get_stock_kdj(stock, retry_now, market_open=True, period="5m")
+
+    assert result is not None
+    assert result.summary.quality is KdjQuality.ERROR
+    assert result.summary.calculated_at == first_now
+    stored = repository.get_kdj(Market.SH, "600519", "5m")
+    assert stored is not None
+    assert stored.summary.quality is KdjQuality.OK
 
 
 async def test_market_indicator_refresh_isolates_macd_and_kdj_failures(

@@ -828,7 +828,7 @@ class MarketRepository:
             if macd_signal is None:
                 conditions.append("m.signal_type <> 'none'")
             conditions.append("m.recent_signal_days IS NOT NULL")
-            conditions.append("m.recent_signal_days <= ?")
+            conditions.append("m.recent_signal_days BETWEEN 0 AND ?")
             parameters.append(_MACD_RECENT_WINDOWS[macd_recent_window])
         if any(value is not None for value in (kdj_signal, kdj_signal_zone, kdj_recent_window)):
             conditions.append("kdj.quality NOT IN ('error', 'insufficient')")
@@ -842,7 +842,7 @@ class MarketRepository:
             parameters.append(kdj_signal_zone)
         if kdj_recent_window is not None:
             conditions.append("kdj.recent_signal_days IS NOT NULL")
-            conditions.append("kdj.recent_signal_days <= ?")
+            conditions.append("kdj.recent_signal_days BETWEEN 0 AND ?")
             parameters.append(_KDJ_RECENT_WINDOWS[kdj_recent_window])
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         offset = (page - 1) * page_size

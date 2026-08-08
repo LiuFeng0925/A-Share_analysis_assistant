@@ -1,10 +1,11 @@
 import asyncio
 import logging
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from a_share_radar.domain.indicators import KdjCalculation, MacdCalculation
+from a_share_radar.domain.indicators import KdjCalculation, KdjQuality, MacdCalculation
 from a_share_radar.domain.models import Stock
 from a_share_radar.services.kdj import calculate_kdj_series
 from a_share_radar.services.macd import calculate_macd_series
@@ -96,9 +97,12 @@ class IndicatorService:
         if period not in SUPPORTED_INDICATOR_PERIODS:
             raise ValueError(f"不支持的 KDJ 周期：{period}")
         await self._ensure_period_bars(stock, now, period)
+        bar_fetch_failed = await self._latest_bar_fetch_failed(stock, period)
         calculation = await _run_repository_call(
             self.repository.get_kdj, stock.market, stock.code, period
         )
+        if bar_fetch_failed and calculation is not None:
+            return _with_kdj_quality(calculation, KdjQuality.ERROR)
         if calculation is None or await self._indicator_is_stale(
             calculation, stock, now, market_open=market_open
         ):
@@ -111,6 +115,8 @@ class IndicatorService:
             calculation = await _run_repository_call(
                 self.repository.get_kdj, stock.market, stock.code, period
             )
+        if bar_fetch_failed and calculation is not None:
+            return _with_kdj_quality(calculation, KdjQuality.ERROR)
         return calculation
 
     async def refresh_stock_macd(
@@ -248,6 +254,21 @@ class IndicatorService:
             now,
         )
 
+    async def _latest_bar_fetch_failed(
+        self,
+        stock: Stock | StockQuoteRow,
+        period: str,
+    ) -> bool:
+        latest_ingestion = getattr(self.bar_service, "latest_ingestion", None)
+        if latest_ingestion is None:
+            return False
+        adjustment = "none" if period == "1m" else "qfq"
+        audit = await latest_ingestion(stock.market, stock.code, period, adjustment)
+        return bool(
+            audit is not None
+            and (audit.status == "failed" or audit.quality_status == "error")
+        )
+
     async def _macd_is_stale(
         self,
         calculation: MacdCalculation,
@@ -339,3 +360,14 @@ class IndicatorService:
             and latest_quote is not None
             and latest_quote.captured_at > calculation.summary.calculated_at
         )
+
+
+def _with_kdj_quality(
+    calculation: KdjCalculation,
+    quality: KdjQuality,
+) -> KdjCalculation:
+    return replace(
+        calculation,
+        summary=replace(calculation.summary, quality=quality),
+        points=tuple(replace(point, quality=quality) for point in calculation.points),
+    )

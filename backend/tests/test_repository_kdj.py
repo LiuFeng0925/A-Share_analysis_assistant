@@ -155,3 +155,20 @@ def test_kdj_zone_without_signal_filter_still_requires_actual_recent_cross(repos
     )
 
     assert [item.code for item in page.items] == ["600519"]
+
+
+def test_kdj_recent_window_never_matches_negative_trading_day_distance(repository):
+    repository.upsert_stocks([Stock("600519", Market.SH, "贵州茅台")])
+    repository.upsert_kdj(kdj_calculation("600519", days=-1))
+
+    page = repository.list_stocks(
+        None,
+        None,
+        "code",
+        "asc",
+        1,
+        50,
+        kdj_recent_window="today",
+    )
+
+    assert page.total == 0

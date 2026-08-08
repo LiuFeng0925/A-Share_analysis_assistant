@@ -193,3 +193,43 @@ def test_kdj_daily_view_uses_latest_quote_as_provisional_bar():
     assert result.summary.quality is KdjQuality.PARTIAL
     assert result.points[-1].signal_type is KdjSignal.GOLDEN_CROSS
     assert result.summary.recent_signal_label == "盘中金叉"
+
+
+def test_kdj_does_not_guess_recent_window_when_trading_calendar_is_incomplete():
+    bars = [bar(index, close) for index, close in enumerate([0.0] * 22 + [35.0, 40.0])]
+
+    result = calculate_kdj_series(
+        bars,
+        latest_quote=None,
+        trading_days=[],
+        now=NOW,
+        market_open=False,
+    )
+
+    assert result.summary.signal_type is KdjSignal.GOLDEN_CROSS
+    assert result.summary.recent_signal_days is None
+    assert result.summary.recent_signal_label.endswith("金叉")
+    assert result.summary.recent_signal_label.startswith("2026-")
+    assert result.summary.quality is KdjQuality.PARTIAL
+
+
+def test_kdj_rejects_calendar_with_endpoints_but_missing_observed_middle_day():
+    bars = [
+        bar(index, close)
+        for index, close in enumerate([0.0] * 22 + [35.0, 40.0, 40.0])
+    ]
+    signal_date = bars[-3].bar_time.date()
+    latest_date = bars[-1].bar_time.date()
+    incomplete_calendar = [signal_date, latest_date]
+
+    result = calculate_kdj_series(
+        bars,
+        latest_quote=None,
+        trading_days=incomplete_calendar,
+        now=NOW,
+        market_open=False,
+    )
+
+    assert result.summary.signal_type is KdjSignal.GOLDEN_CROSS
+    assert result.summary.recent_signal_days is None
+    assert result.summary.quality is KdjQuality.PARTIAL
