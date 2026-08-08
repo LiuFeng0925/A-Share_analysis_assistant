@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { marketApi } from "../api/client";
 import {
   dailyBarsFixture,
+  kdjIndicatorFixture,
   macdIndicatorFixture,
   stockDetailFixture,
   summaryFixture,
@@ -19,6 +20,7 @@ vi.mock("../api/client", () => ({
     getSummary: vi.fn(),
     getStocks: vi.fn(),
     getMacdIndicator: vi.fn(),
+    getKdjIndicator: vi.fn(),
   },
 }));
 
@@ -26,12 +28,14 @@ vi.mock("../components/KlineChart", () => ({
   KlineChart: ({
     series,
     macd,
+    kdj,
   }: {
     series: typeof dailyBarsFixture;
     macd?: typeof macdIndicatorFixture | null;
+    kdj?: typeof kdjIndicatorFixture | null;
   }) => (
     <div data-testid="kline-chart">
-      {series.period}:{series.items.length}:{macd?.summary.recent_signal_label ?? "无 MACD"}
+      {series.period}:{series.items.length}:{macd?.summary.recent_signal_label ?? "无 MACD"}:{kdj?.summary.recent_signal_label ?? "无 KDJ"}
     </div>
   ),
 }));
@@ -47,6 +51,7 @@ beforeEach(() => {
     items: [],
   });
   vi.mocked(marketApi.getMacdIndicator).mockReset().mockResolvedValue(macdIndicatorFixture);
+  vi.mocked(marketApi.getKdjIndicator).mockReset().mockResolvedValue(kdjIndicatorFixture);
 });
 
 afterEach(() => {
@@ -104,6 +109,94 @@ test("详情页展示 MACD 结果并把日线指标传给 K 线副图", async ()
     "1d",
     expect.objectContaining({ signal: expect.any(AbortSignal) }),
   );
+});
+
+test("详情页展示 KDJ 数值、区域、信号时间并传给副图", async () => {
+  renderDetail();
+
+  expect(await screen.findByText("KDJ 指标 · 日K")).toBeInTheDocument();
+  expect(screen.getByText("K 18.20")).toBeInTheDocument();
+  expect(screen.getByText("D 17.10")).toBeInTheDocument();
+  expect(screen.getByText("J 20.40")).toBeInTheDocument();
+  expect(screen.getByText("超卖区")).toBeInTheDocument();
+  expect(screen.getByText("低位")).toBeInTheDocument();
+  expect(screen.getAllByText("盘中动态").length).toBeGreaterThanOrEqual(1);
+  expect(screen.getAllByText("2026-08-04 10:26:00").length).toBeGreaterThanOrEqual(1);
+  expect(screen.getByTestId("kline-chart")).toHaveTextContent("盘中金叉");
+  expect(marketApi.getKdjIndicator).toHaveBeenCalledWith(
+    "SH",
+    "600519",
+    "1d",
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
+});
+
+test("切换到 30 分钟会同步请求 K 线、MACD 与 KDJ", async () => {
+  vi.mocked(marketApi.getBars).mockResolvedValueOnce(dailyBarsFixture).mockResolvedValueOnce({
+    ...dailyBarsFixture,
+    period: "30m",
+  });
+  vi.mocked(marketApi.getMacdIndicator)
+    .mockResolvedValueOnce(macdIndicatorFixture)
+    .mockResolvedValueOnce({ ...macdIndicatorFixture, period: "30m" });
+  vi.mocked(marketApi.getKdjIndicator)
+    .mockResolvedValueOnce(kdjIndicatorFixture)
+    .mockResolvedValueOnce({ ...kdjIndicatorFixture, period: "30m" });
+  renderDetail();
+
+  fireEvent.click(await screen.findByRole("button", { name: "30分" }));
+
+  await waitFor(() => expect(marketApi.getKdjIndicator).toHaveBeenLastCalledWith(
+    "SH",
+    "600519",
+    "30m",
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  ));
+  expect(await screen.findByText("KDJ 指标 · 30分")).toBeInTheDocument();
+  expect(screen.getByTestId("kline-chart")).toHaveTextContent("30m");
+});
+
+test("30 分钟在开市时每 60 秒静默刷新 K 线和两个指标", async () => {
+  vi.useFakeTimers();
+  vi.mocked(marketApi.getSummary).mockResolvedValue({ ...summaryFixture, market_status: "open" });
+  vi.mocked(marketApi.getBars).mockResolvedValue({ ...dailyBarsFixture, period: "30m" });
+  vi.mocked(marketApi.getMacdIndicator).mockResolvedValue({
+    ...macdIndicatorFixture,
+    period: "30m",
+  });
+  vi.mocked(marketApi.getKdjIndicator).mockResolvedValue({
+    ...kdjIndicatorFixture,
+    period: "30m",
+  });
+  renderDetail();
+  fireEvent.click(screen.getByRole("button", { name: "30分" }));
+  await act(async () => Promise.resolve());
+
+  const barsBefore = vi.mocked(marketApi.getBars).mock.calls.length;
+  const macdBefore = vi.mocked(marketApi.getMacdIndicator).mock.calls.length;
+  const kdjBefore = vi.mocked(marketApi.getKdjIndicator).mock.calls.length;
+  await act(async () => vi.advanceTimersByTimeAsync(60_000));
+
+  expect(marketApi.getBars).toHaveBeenCalledTimes(barsBefore + 1);
+  expect(marketApi.getMacdIndicator).toHaveBeenCalledTimes(macdBefore + 1);
+  expect(marketApi.getKdjIndicator).toHaveBeenCalledTimes(kdjBefore + 1);
+  expect(screen.queryByText("正在计算 KDJ…")).not.toBeInTheDocument();
+});
+
+test("KDJ 静默刷新失败时保留上次成功结果", async () => {
+  vi.useFakeTimers();
+  vi.mocked(marketApi.getSummary).mockResolvedValue({ ...summaryFixture, market_status: "open" });
+  vi.mocked(marketApi.getKdjIndicator)
+    .mockResolvedValueOnce(kdjIndicatorFixture)
+    .mockRejectedValueOnce(new Error("KDJ 临时失败"));
+  renderDetail();
+  await act(async () => Promise.resolve());
+  expect(screen.getByText("K 18.20")).toBeInTheDocument();
+
+  await act(async () => vi.advanceTimersByTimeAsync(60_000));
+
+  expect(screen.getByText("K 18.20")).toBeInTheDocument();
+  expect(screen.getByText(/KDJ 刷新失败/)).toBeInTheDocument();
 });
 
 test("切换 K 线周期后请求并展示同周期 MACD", async () => {
@@ -266,8 +359,27 @@ test("后端判定闭市或节假日时不重复请求今日 K 线", async () =>
 
   await act(async () => vi.advanceTimersByTime(60_000));
   await act(async () => vi.advanceTimersByTime(60_000));
-  expect(marketApi.getSummary).toHaveBeenCalledTimes(3);
+  expect(marketApi.getSummary).toHaveBeenCalledTimes(1);
   expect(marketApi.getBars).toHaveBeenCalledTimes(2);
+});
+
+test("市场从开市切换为闭市时完成最后一次刷新后停止轮询", async () => {
+  vi.useFakeTimers();
+  vi.mocked(marketApi.getSummary)
+    .mockResolvedValueOnce(summaryFixture)
+    .mockResolvedValue({ ...summaryFixture, market_status: "closed" });
+  renderDetail();
+  await act(async () => Promise.resolve());
+
+  await act(async () => vi.advanceTimersByTimeAsync(60_000));
+  const barsAfterClose = vi.mocked(marketApi.getBars).mock.calls.length;
+  const kdjAfterClose = vi.mocked(marketApi.getKdjIndicator).mock.calls.length;
+  expect(barsAfterClose).toBe(2);
+  expect(kdjAfterClose).toBe(2);
+
+  await act(async () => vi.advanceTimersByTimeAsync(120_000));
+  expect(marketApi.getBars).toHaveBeenCalledTimes(barsAfterClose);
+  expect(marketApi.getKdjIndicator).toHaveBeenCalledTimes(kdjAfterClose);
 });
 
 test("后端判定开市时每 60 秒刷新且不会请求重入", async () => {
@@ -293,7 +405,7 @@ test("后端判定开市时每 60 秒刷新且不会请求重入", async () => {
   expect(marketApi.getBars).toHaveBeenCalledTimes(4);
 });
 
-test("市场状态恢复成功会清除旧刷新错误，切换周期也不会让错误重现", async () => {
+test("市场状态恢复成功会清除旧刷新错误并在闭市后停止", async () => {
   vi.useFakeTimers();
   vi.mocked(marketApi.getSummary)
     .mockResolvedValueOnce(summaryFixture)
@@ -313,13 +425,8 @@ test("市场状态恢复成功会清除旧刷新错误，切换周期也不会�
   await act(async () => vi.advanceTimersByTime(60_000));
   expect(screen.queryByText(/自动刷新状态检查失败/)).not.toBeInTheDocument();
 
-  vi.mocked(marketApi.getSummary).mockRejectedValueOnce(new Error("再次失败"));
-  await act(async () => vi.advanceTimersByTime(60_000));
-  expect(screen.getByRole("alert")).toHaveTextContent("再次失败");
-  fireEvent.click(screen.getByRole("button", { name: "日K" }));
-  await act(async () => Promise.resolve());
-  fireEvent.click(screen.getByRole("button", { name: "今日" }));
-  expect(screen.queryByText(/再次失败/)).not.toBeInTheDocument();
+  await act(async () => vi.advanceTimersByTime(120_000));
+  expect(marketApi.getSummary).toHaveBeenCalledTimes(3);
 });
 
 test("显示上海时间、数据来源与质量状态，非法时间使用占位", async () => {

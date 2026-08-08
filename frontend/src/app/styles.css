@@ -1262,6 +1262,49 @@ tr:focus-visible {
   font-weight: 750;
 }
 
+.kdj-values {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 12px 14px 0;
+}
+
+.kdj-values strong {
+  padding: 8px 4px;
+  color: var(--ink);
+  background: #f7f9fd;
+  border: 1px solid #e8edf5;
+  border-radius: 8px;
+  font-family: var(--font-data);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.kdj-summary-tags div:nth-child(1) {
+  background: linear-gradient(145deg, #f4fbf7, #fafdfb);
+}
+
+.kdj-extreme,
+.indicator-refresh-note {
+  display: block;
+  margin: 0 14px 12px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.kdj-extreme {
+  color: #8a5c11;
+  background: #fff7df;
+}
+
+.indicator-refresh-note {
+  color: #8d311f;
+  background: #fff6f3;
+}
+
 .indicator-card p {
   margin: 0;
   padding: 12px 16px 0;

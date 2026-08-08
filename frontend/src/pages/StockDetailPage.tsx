@@ -6,6 +6,7 @@ import type {
   BarPeriod,
   BarRange,
   BarSeries,
+  KdjIndicator,
   MacdIndicator,
   Market,
   MarketSummary,
@@ -94,6 +95,30 @@ function macdSignalTone(value: MacdIndicator["summary"]["signal_type"] | undefin
 }
 
 function macdQualityLabel(value: MacdIndicator["summary"]["quality"] | undefined) {
+  const labels = {
+    ok: "计算正常",
+    partial: "盘中动态",
+    insufficient: "数据不足",
+    error: "计算异常",
+  } as const;
+  return value ? labels[value] : "等待计算";
+}
+
+function kdjZoneLabel(value: KdjIndicator["summary"]["current_zone"] | undefined) {
+  if (value === "oversold") return "超卖区";
+  if (value === "overbought") return "超买区";
+  if (value === "neutral") return "普通区";
+  return "区域未知";
+}
+
+function kdjSignalZoneLabel(value: KdjIndicator["summary"]["signal_zone"] | undefined) {
+  if (value === "low") return "低位";
+  if (value === "middle") return "中位";
+  if (value === "high") return "高位";
+  return "未知";
+}
+
+function kdjQualityLabel(value: KdjIndicator["summary"]["quality"] | undefined) {
   const labels = {
     ok: "计算正常",
     partial: "盘中动态",
@@ -277,24 +302,30 @@ export function StockDetailPage() {
   const [marketSummary, setMarketSummary] = useState<MarketSummary | null>(null);
   const [bars, setBars] = useState<BarSeries | null>(null);
   const [macd, setMacd] = useState<MacdIndicator | null>(null);
+  const [kdj, setKdj] = useState<KdjIndicator | null>(null);
   const [loadedBarsKey, setLoadedBarsKey] = useState<string | null>(null);
   const [stockLoading, setStockLoading] = useState(Boolean(market && code));
   const [macdLoading, setMacdLoading] = useState(Boolean(market && code));
+  const [kdjLoading, setKdjLoading] = useState(Boolean(market && code));
   const [barsLoadingKey, setBarsLoadingKey] = useState<string | null>(null);
   const [barsRefreshingKey, setBarsRefreshingKey] = useState<string | null>(null);
   const [stockError, setStockError] = useState<string | null>(null);
   const [macdError, setMacdError] = useState<string | null>(null);
+  const [kdjError, setKdjError] = useState<string | null>(null);
   const [barsError, setBarsError] = useState<{ key: string; message: string } | null>(null);
   const [barsRefreshError, setBarsRefreshError] = useState<{ key: string; message: string } | null>(null);
   const stockRequestSequence = useRef(0);
   const barsRequestSequence = useRef(0);
   const macdRequestSequence = useRef(0);
+  const kdjRequestSequence = useRef(0);
   const summaryRequestSequence = useRef(0);
   const barsRef = useRef<BarSeries | null>(null);
   const loadedBarsKeyRef = useRef<string | null>(null);
   const activeBarsRequestKeyRef = useRef<string | null>(null);
   const selectedBarsKeyRef = useRef<string | null>(null);
+  const marketWasOpenRef = useRef(false);
   const mounted = useRef(true);
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
   const selectedBarsKey = market && code ? periodKey(market, code, selectedPeriod) : null;
   selectedBarsKeyRef.current = selectedBarsKey;
 
@@ -305,26 +336,30 @@ export function StockDetailPage() {
       stockRequestSequence.current += 1;
       barsRequestSequence.current += 1;
       macdRequestSequence.current += 1;
+      kdjRequestSequence.current += 1;
     };
   }, []);
 
-  const loadStock = useCallback(async (signal?: AbortSignal) => {
+  const loadStock = useCallback(async (signal?: AbortSignal, silent = false) => {
     if (!market || !code) return;
     const sequence = ++stockRequestSequence.current;
-    setStockLoading(true);
+    if (!silent) setStockLoading(true);
     setStockError(null);
-    setStock(null);
+    if (!silent) setStock(null);
     try {
       const nextStock = await marketApi.getStock(market, code, { signal });
       if (mounted.current && sequence === stockRequestSequence.current) setStock(nextStock);
     } catch (error) {
       if (mounted.current && sequence === stockRequestSequence.current) {
         if (isAbortError(error)) return;
-        setStock(null);
-        setStockError(readableError(error, "股票"));
+        if (!silent) setStock(null);
+        const message = readableError(error, "股票");
+        setStockError(silent ? `股票刷新失败：${message}` : message);
       }
     } finally {
-      if (mounted.current && sequence === stockRequestSequence.current) setStockLoading(false);
+      if (!silent && mounted.current && sequence === stockRequestSequence.current) {
+        setStockLoading(false);
+      }
     }
   }, [code, market]);
 
@@ -334,6 +369,8 @@ export function StockDetailPage() {
       const summary = await marketApi.getSummary({ signal });
       if (mounted.current && sequence === summaryRequestSequence.current) {
         setMarketSummary(summary);
+        marketWasOpenRef.current = summary.market_status === "open";
+        setAutoRefreshEnabled(summary.market_status === "open");
       }
       return summary;
     } catch (error) {
@@ -342,12 +379,11 @@ export function StockDetailPage() {
     }
   }, []);
 
-  const loadMacd = useCallback(async (signal?: AbortSignal) => {
+  const loadMacd = useCallback(async (signal?: AbortSignal, silent = false) => {
     if (!market || !code) return;
     const sequence = ++macdRequestSequence.current;
     setMacdLoading(true);
     setMacdError(null);
-    setMacd(null);
     try {
       const nextMacd = await marketApi.getMacdIndicator(
         market,
@@ -361,12 +397,40 @@ export function StockDetailPage() {
     } catch (error) {
       if (mounted.current && sequence === macdRequestSequence.current) {
         if (isAbortError(error)) return;
-        setMacd(null);
-        setMacdError(error instanceof Error ? `MACD 加载失败：${error.message}` : "MACD 加载失败");
+        const prefix = silent ? "MACD 刷新失败" : "MACD 加载失败";
+        setMacdError(error instanceof Error ? `${prefix}：${error.message}` : prefix);
       }
     } finally {
       if (mounted.current && sequence === macdRequestSequence.current) {
         setMacdLoading(false);
+      }
+    }
+  }, [code, market, selectedPeriod]);
+
+  const loadKdj = useCallback(async (signal?: AbortSignal, silent = false) => {
+    if (!market || !code) return;
+    const sequence = ++kdjRequestSequence.current;
+    setKdjLoading(true);
+    setKdjError(null);
+    try {
+      const nextKdj = await marketApi.getKdjIndicator(
+        market,
+        code,
+        selectedPeriod.period,
+        { signal },
+      );
+      if (mounted.current && sequence === kdjRequestSequence.current) {
+        setKdj(nextKdj);
+      }
+    } catch (error) {
+      if (mounted.current && sequence === kdjRequestSequence.current) {
+        if (isAbortError(error)) return;
+        const prefix = silent ? "KDJ 刷新失败" : "KDJ 加载失败";
+        setKdjError(error instanceof Error ? `${prefix}：${error.message}` : prefix);
+      }
+    } finally {
+      if (mounted.current && sequence === kdjRequestSequence.current) {
+        setKdjLoading(false);
       }
     }
   }, [code, market, selectedPeriod]);
@@ -434,21 +498,36 @@ export function StockDetailPage() {
 
   useEffect(() => {
     const controller = new AbortController();
+    void loadKdj(controller.signal);
+    return () => controller.abort();
+  }, [loadKdj]);
+
+  useEffect(() => {
+    const controller = new AbortController();
     void loadBars(controller.signal);
     return () => controller.abort();
   }, [loadBars]);
 
-  const pollToday = useCallback(async (signal: AbortSignal) => {
+  const pollIndicators = useCallback(async (signal: AbortSignal) => {
     const key = selectedBarsKeyRef.current;
     if (!key || activeBarsRequestKeyRef.current === key) return;
     try {
       const summary = await marketApi.getSummary({ signal });
       if (!mounted.current || selectedBarsKeyRef.current !== key) return;
+      const wasOpen = marketWasOpenRef.current;
+      const isOpen = summary.market_status === "open";
+      marketWasOpenRef.current = isOpen;
       setMarketSummary(summary);
       setBarsRefreshError((current) => current?.key === key ? null : current);
-      if (summary.market_status === "open" && activeBarsRequestKeyRef.current !== key) {
-        await Promise.all([loadBars(signal), loadMacd(signal)]);
+      if ((isOpen || wasOpen) && activeBarsRequestKeyRef.current !== key) {
+        await Promise.all([
+          loadStock(signal, true),
+          loadBars(signal),
+          loadMacd(signal, true),
+          loadKdj(signal, true),
+        ]);
       }
+      if (!isOpen) setAutoRefreshEnabled(false);
     } catch (error) {
       if (isAbortError(error)) return;
       if (mounted.current && selectedBarsKeyRef.current === key) {
@@ -458,10 +537,10 @@ export function StockDetailPage() {
         });
       }
     }
-  }, [loadBars, loadMacd]);
+  }, [loadBars, loadKdj, loadMacd, loadStock]);
 
-  usePolling(pollToday, 60_000, {
-    enabled: selectedPeriod.label === "今日",
+  usePolling(pollIndicators, 60_000, {
+    enabled: autoRefreshEnabled,
     immediate: false,
   });
 
@@ -498,6 +577,11 @@ export function StockDetailPage() {
   const matchingMacd = macd?.period === selectedPeriod.period ? macd : null;
   const chartMacd = visibleBars && matchingMacd?.period === visibleBars.period ? matchingMacd : null;
   const macdSummary = matchingMacd?.summary;
+  const matchingKdj = kdj?.period === selectedPeriod.period ? kdj : null;
+  const chartKdj = visibleBars && matchingKdj?.period === visibleBars.period ? matchingKdj : null;
+  const kdjSummary = matchingKdj?.summary;
+  const hasExtremeJ = isFiniteNumber(kdjSummary?.j_value)
+    && (kdjSummary.j_value > 100 || kdjSummary.j_value < 0);
   const quoteFields = [
     { label: "最新价", value: formatMarketNumber(stock?.latest_price), className: change.className },
     { label: "涨跌额", value: formatSigned(stock?.change_amount), className: changeAmount.className, direction: changeAmount.label },
@@ -564,6 +648,8 @@ export function StockDetailPage() {
                 aria-pressed={selectedPeriod.label === option.label}
                 onClick={() => {
                   setBarsRefreshError(null);
+                  setMacdError(null);
+                  setKdjError(null);
                   setSelectedPeriod(option);
                 }}
               >
@@ -611,12 +697,12 @@ export function StockDetailPage() {
               <span>可尝试切换其他周期或稍后重试。</span>
             </div>
           ) : visibleBars ? (
-            <KlineChart series={visibleBars} macd={chartMacd} />
+            <KlineChart series={visibleBars} macd={chartMacd} kdj={chartKdj} />
           ) : null}
         </div>
         <footer className="chart-note">
           <span>拖动图表或底部滑块可缩放查看区间</span>
-          <span>红色为上涨，绿色为下跌；当前周期下方可查看 MACD 副图</span>
+          <span>红涨绿跌；MACD 与 KDJ 跟随当前周期，KDJ 虚线为 20/80 区域边界</span>
         </footer>
       </section>
       <aside className="indicator-panel" aria-label="技术指标结果">
@@ -633,7 +719,7 @@ export function StockDetailPage() {
 
           {macdLoading && !matchingMacd ? (
             <div className="indicator-state" role="status">正在计算 MACD…</div>
-          ) : macdError ? (
+          ) : macdError && !matchingMacd ? (
             <div className="indicator-state is-error" role="alert">{macdError}</div>
           ) : macdSummary ? (
             <>
@@ -650,9 +736,60 @@ export function StockDetailPage() {
                   <dd>{macdSignalLabel(macdSummary.signal_type)}</dd>
                 </div>
               </dl>
+              {macdError && <span className="indicator-refresh-note" role="alert">{macdError}</span>}
             </>
           ) : (
             <div className="indicator-state">暂无 MACD 指标</div>
+          )}
+        </article>
+        <article className="indicator-card kdj-card">
+          <header>
+            <div>
+              <span className="page-kicker">INDICATOR / {indicatorPeriodLabel(selectedPeriod)}</span>
+              <h2>KDJ 指标 · {indicatorPeriodLabel(selectedPeriod)}</h2>
+            </div>
+            <strong className={`indicator-quality ${kdjSummary?.quality ?? "pending"}`}>
+              {kdjQualityLabel(kdjSummary?.quality)}
+            </strong>
+          </header>
+
+          {kdjLoading && !matchingKdj ? (
+            <div className="indicator-state" role="status">正在计算 KDJ…</div>
+          ) : kdjError && !matchingKdj ? (
+            <div className="indicator-state is-error" role="alert">{kdjError}</div>
+          ) : kdjSummary ? (
+            <>
+              <div className="kdj-values" aria-label="KDJ 当前值">
+                <strong>K {formatMarketNumber(kdjSummary.k_value)}</strong>
+                <strong>D {formatMarketNumber(kdjSummary.d_value)}</strong>
+                <strong>J {formatMarketNumber(kdjSummary.j_value)}</strong>
+              </div>
+              <strong className={`indicator-main-signal ${macdSignalTone(kdjSummary.signal_type)}`}>
+                {kdjSummary.recent_signal_label}
+              </strong>
+              <dl className="indicator-summary-tags kdj-summary-tags">
+                <div>
+                  <dt>当前区域</dt>
+                  <dd>{kdjZoneLabel(kdjSummary.current_zone)}</dd>
+                </div>
+                <div>
+                  <dt>交叉区域</dt>
+                  <dd>{kdjSignalZoneLabel(kdjSummary.signal_zone)}</dd>
+                </div>
+                <div>
+                  <dt>信号时间</dt>
+                  <dd>{formatShanghaiDateTime(kdjSummary.signal_time)}</dd>
+                </div>
+                <div>
+                  <dt>信号状态</dt>
+                  <dd>{kdjSummary.is_intraday ? "盘中动态" : "已确认"}</dd>
+                </div>
+              </dl>
+              {hasExtremeJ && <span className="kdj-extreme">短期动能极端</span>}
+              {kdjError && <span className="indicator-refresh-note" role="alert">{kdjError}</span>}
+            </>
+          ) : (
+            <div className="indicator-state">暂无 KDJ 指标</div>
           )}
         </article>
       </aside>
