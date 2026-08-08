@@ -75,7 +75,7 @@ test("HTTP 错误继续提供稳定的中文提示", async () => {
   await expect(marketApi.getSummary()).rejects.toThrow("行情接口失败：503");
 });
 
-test("股票列表请求会携带 MACD 筛选参数", async () => {
+test("股票列表请求会携带 MACD 与 KDJ 筛选参数", async () => {
   const fetchMock = vi.fn().mockResolvedValue(
     new Response(JSON.stringify({ items: [], total: 0, page: 1, page_size: 50 })),
   );
@@ -91,10 +91,13 @@ test("股票列表请求会携带 MACD 筛选参数", async () => {
     macdSignal: "golden_cross",
     macdZeroAxis: "above",
     macdRecentWindow: "3d",
+    kdjSignal: "golden_cross",
+    kdjSignalZone: "low",
+    kdjRecentWindow: "5d",
   });
 
   expect(fetchMock).toHaveBeenCalledWith(
-    "/api/market/stocks?query=%E8%8C%85%E5%8F%B0&market=SH&page=1&page_size=50&sort_by=code&sort_order=asc&macd_signal=golden_cross&macd_zero_axis=above&macd_recent_window=3d",
+    "/api/market/stocks?query=%E8%8C%85%E5%8F%B0&market=SH&page=1&page_size=50&sort_by=code&sort_order=asc&macd_signal=golden_cross&macd_zero_axis=above&macd_recent_window=3d&kdj_signal=golden_cross&kdj_signal_zone=low&kdj_recent_window=5d",
     expect.objectContaining({ signal: expect.any(AbortSignal) }),
   );
 });
@@ -109,6 +112,21 @@ test("MACD 指标接口携带指定 K 线周期", async () => {
 
   expect(fetchMock).toHaveBeenCalledWith(
     "/api/stocks/SH/600519/indicators/macd?period=5m",
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
+});
+
+test("KDJ 指标接口携带指定 K 线周期和取消信号", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ market: "SH", code: "600519", period: "30m", items: [] })),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  const controller = new AbortController();
+
+  await marketApi.getKdjIndicator("SH", "600519", "30m", { signal: controller.signal });
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/stocks/SH/600519/indicators/kdj?period=30m",
     expect.objectContaining({ signal: expect.any(AbortSignal) }),
   );
 });

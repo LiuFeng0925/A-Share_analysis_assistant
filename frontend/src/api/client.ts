@@ -2,6 +2,7 @@ import type {
   BarQuery,
   BarPeriod,
   BarSeries,
+  KdjIndicator,
   MacdIndicator,
   Market,
   MarketSummary,
@@ -70,6 +71,9 @@ export const marketApi = {
     if (params.macdSignal) query.set("macd_signal", params.macdSignal);
     if (params.macdZeroAxis) query.set("macd_zero_axis", params.macdZeroAxis);
     if (params.macdRecentWindow) query.set("macd_recent_window", params.macdRecentWindow);
+    if (params.kdjSignal) query.set("kdj_signal", params.kdjSignal);
+    if (params.kdjSignalZone) query.set("kdj_signal_zone", params.kdjSignalZone);
+    if (params.kdjRecentWindow) query.set("kdj_recent_window", params.kdjRecentWindow);
     return request<StockPage>(`/api/market/stocks?${query}`, options);
   },
   getStock: (market: Market, code: string, options?: RequestOptions) =>
@@ -93,6 +97,16 @@ export const marketApi = {
   ) =>
     request<MacdIndicator>(
       `/api/stocks/${market}/${encodeURIComponent(code)}/indicators/macd?period=${period}`,
+      options,
+    ),
+  getKdjIndicator: (
+    market: Market,
+    code: string,
+    period: BarPeriod = "1d",
+    options?: RequestOptions,
+  ) =>
+    request<KdjIndicator>(
+      `/api/stocks/${market}/${encodeURIComponent(code)}/indicators/kdj?period=${period}`,
       options,
     ),
 };

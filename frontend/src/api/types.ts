@@ -9,6 +9,13 @@ export type MacdZeroAxis = "above" | "below" | "unknown";
 export type MacdZeroAxisFilter = Exclude<MacdZeroAxis, "unknown">;
 export type MacdRecentWindow = "today" | "3d" | "5d";
 export type MacdQuality = "ok" | "partial" | "insufficient" | "error";
+export type KdjSignal = "none" | "golden_cross" | "death_cross";
+export type KdjSignalFilter = Exclude<KdjSignal, "none">;
+export type KdjZone = "oversold" | "neutral" | "overbought" | "unknown";
+export type KdjSignalZone = "low" | "middle" | "high" | "unknown";
+export type KdjSignalZoneFilter = Exclude<KdjSignalZone, "unknown">;
+export type KdjRecentWindow = "today" | "3d" | "5d";
+export type KdjQuality = "ok" | "partial" | "insufficient" | "error";
 
 export interface MarketSummary {
   total: number;
@@ -44,6 +51,13 @@ export interface StockQuote {
   macd_signal_label: string | null;
   macd_zero_axis: MacdZeroAxis | null;
   macd_quality: MacdQuality | null;
+  kdj_signal_type: KdjSignal | null;
+  kdj_signal_time: string | null;
+  kdj_recent_signal_days: number | null;
+  kdj_signal_label: string | null;
+  kdj_signal_zone: KdjSignalZone | null;
+  kdj_current_zone: KdjZone | null;
+  kdj_quality: KdjQuality | null;
 }
 
 export interface StockPage {
@@ -69,6 +83,9 @@ export interface StockQuery {
   macdSignal?: MacdSignalFilter;
   macdZeroAxis?: MacdZeroAxisFilter;
   macdRecentWindow?: MacdRecentWindow;
+  kdjSignal?: KdjSignalFilter;
+  kdjSignalZone?: KdjSignalZoneFilter;
+  kdjRecentWindow?: KdjRecentWindow;
 }
 
 export interface Bar {
@@ -141,4 +158,41 @@ export interface MacdIndicator {
   period: BarPeriod;
   summary: MacdSummary;
   items: MacdPoint[];
+}
+
+export interface KdjPoint {
+  bar_time: string;
+  k_value: number | null;
+  d_value: number | null;
+  j_value: number | null;
+  signal_type: KdjSignal;
+  signal_zone: KdjSignalZone;
+  current_zone: KdjZone;
+  is_intraday: boolean;
+  quality: KdjQuality;
+}
+
+export interface KdjSummary {
+  calculated_at: string;
+  market_time: string | null;
+  k_value: number | null;
+  d_value: number | null;
+  j_value: number | null;
+  current_zone: KdjZone;
+  signal_type: KdjSignal;
+  signal_time: string | null;
+  signal_zone: KdjSignalZone;
+  recent_signal_days: number | null;
+  recent_signal_label: string;
+  status: string;
+  is_intraday: boolean;
+  quality: KdjQuality;
+}
+
+export interface KdjIndicator {
+  market: Market;
+  code: string;
+  period: BarPeriod;
+  summary: KdjSummary;
+  items: KdjPoint[];
 }

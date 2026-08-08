@@ -1,4 +1,11 @@
-import type { BarSeries, MacdIndicator, MarketSummary, StockPage, StockQuote } from "../api/types";
+import type {
+  BarSeries,
+  KdjIndicator,
+  MacdIndicator,
+  MarketSummary,
+  StockPage,
+  StockQuote,
+} from "../api/types";
 
 export const summaryFixture: MarketSummary = {
   total: 5314,
@@ -39,6 +46,13 @@ export const stockPageFixture: StockPage = {
       macd_signal_label: "近 3 日金叉",
       macd_zero_axis: "above",
       macd_quality: "ok",
+      kdj_signal_type: "golden_cross",
+      kdj_signal_time: "2026-08-04T10:26:00+08:00",
+      kdj_recent_signal_days: 0,
+      kdj_signal_label: "今日金叉",
+      kdj_signal_zone: "low",
+      kdj_current_zone: "oversold",
+      kdj_quality: "partial",
     },
     {
       market: "SZ",
@@ -63,6 +77,13 @@ export const stockPageFixture: StockPage = {
       macd_signal_label: "今日死叉",
       macd_zero_axis: "below",
       macd_quality: "ok",
+      kdj_signal_type: "death_cross",
+      kdj_signal_time: "2026-08-04T15:00:00+08:00",
+      kdj_recent_signal_days: 0,
+      kdj_signal_label: "今日死叉",
+      kdj_signal_zone: "high",
+      kdj_current_zone: "overbought",
+      kdj_quality: "ok",
     },
   ],
 };
@@ -159,6 +180,52 @@ export const macdIndicatorFixture: MacdIndicator = {
       zero_axis: "above",
       is_intraday: false,
       quality: "ok",
+    },
+  ],
+};
+
+export const kdjIndicatorFixture: KdjIndicator = {
+  market: "SH",
+  code: "600519",
+  period: "1d",
+  summary: {
+    calculated_at: "2026-08-04T10:26:20+08:00",
+    market_time: "2026-08-04T10:26:00+08:00",
+    k_value: 18.2,
+    d_value: 17.1,
+    j_value: 20.4,
+    current_zone: "oversold",
+    signal_type: "golden_cross",
+    signal_time: "2026-08-04T10:26:00+08:00",
+    signal_zone: "low",
+    recent_signal_days: 0,
+    recent_signal_label: "盘中金叉",
+    status: "golden_after",
+    is_intraday: true,
+    quality: "partial",
+  },
+  items: [
+    {
+      bar_time: "2026-08-01T15:00:00+08:00",
+      k_value: 14.2,
+      d_value: 18.1,
+      j_value: 6.4,
+      signal_type: "none",
+      signal_zone: "unknown",
+      current_zone: "oversold",
+      is_intraday: false,
+      quality: "ok",
+    },
+    {
+      bar_time: "2026-08-04T15:00:00+08:00",
+      k_value: 18.2,
+      d_value: 17.1,
+      j_value: 20.4,
+      signal_type: "golden_cross",
+      signal_zone: "low",
+      current_zone: "oversold",
+      is_intraday: true,
+      quality: "partial",
     },
   ],
 };
