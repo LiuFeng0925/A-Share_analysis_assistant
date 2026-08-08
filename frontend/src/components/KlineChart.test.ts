@@ -78,6 +78,62 @@ describe("KlineChart", () => {
     expect(series[4]).toEqual(expect.objectContaining({ type: "bar" }));
   });
 
+  test("日 K 同时保留普通高低点、MACD 背离和金叉死叉事件线", () => {
+    const barsWithPivots = {
+      ...dailyBarsFixture,
+      items: [
+        { ...dailyBarsFixture.items[0], bar_time: "2026-08-01T15:00:00+08:00", high_price: 10, low_price: 8 },
+        { ...dailyBarsFixture.items[0], bar_time: "2026-08-02T15:00:00+08:00", high_price: 11, low_price: 7 },
+        { ...dailyBarsFixture.items[0], bar_time: "2026-08-03T15:00:00+08:00", high_price: 12, low_price: 6 },
+        { ...dailyBarsFixture.items[0], bar_time: "2026-08-04T15:00:00+08:00", high_price: 15, low_price: 5 },
+        { ...dailyBarsFixture.items[0], bar_time: "2026-08-05T15:00:00+08:00", high_price: 12, low_price: 6 },
+        { ...dailyBarsFixture.items[0], bar_time: "2026-08-06T15:00:00+08:00", high_price: 11, low_price: 7 },
+        { ...dailyBarsFixture.items[0], bar_time: "2026-08-07T15:00:00+08:00", high_price: 10, low_price: 8 },
+      ],
+    };
+    const macdWithDivergence = {
+      ...macdIndicatorFixture,
+      divergences: [{
+        direction: "bottom" as const,
+        status: "confirmed" as const,
+        anchor_one_time: "2026-08-01T15:00:00+08:00",
+        anchor_one_price: 8,
+        anchor_one_diff: -0.02,
+        anchor_two_time: "2026-08-04T15:00:00+08:00",
+        anchor_two_price: 5,
+        anchor_two_diff: 0.18,
+        pivot_time: "2026-08-04T15:00:00+08:00",
+        pivot_price: 5,
+        pivot_diff: 0.18,
+        detected_at: "2026-08-04T15:00:00+08:00",
+        updated_at: "2026-08-04T15:00:00+08:00",
+        calculated_at: "2026-08-04T15:00:00+08:00",
+        quality: "ok" as const,
+        confirmed_at: "2026-08-04T15:00:00+08:00",
+        corresponding_signal: "golden_cross" as const,
+        corresponding_signal_time: "2026-08-04T15:00:00+08:00",
+        recent_days: 0,
+      }],
+    };
+    const option = buildKlineOption(barsWithPivots, undefined, macdWithDivergence);
+    const chartSeries = option.series as Array<{
+      name: string;
+      markPoint?: { data: Array<{ name: string }> };
+      markLine?: { data: Array<{ name: string }> };
+    }>;
+    const priceMarks = chartSeries.find((item) => item.name === "K 线")?.markPoint?.data;
+    const macdLines = chartSeries.find((item) => item.name === "DIFF")?.markLine?.data;
+
+    expect(priceMarks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "普通低点" }),
+      expect.objectContaining({ name: "普通高点" }),
+    ]));
+    expect(macdLines).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: expect.stringContaining("MACD 金叉") }),
+      expect.objectContaining({ name: expect.stringContaining("底背离") }),
+    ]));
+  });
+
   test("MACD 副图标题显示当前 K 线周期", () => {
     const option = buildKlineOption(
       { ...dailyBarsFixture, period: "5m" },
@@ -90,11 +146,25 @@ describe("KlineChart", () => {
   });
 
   test("MACD 下方绘制 KDJ 并让四个横轴共享缩放", () => {
+    const kdjWithBothCrosses = {
+      ...kdjIndicatorFixture,
+      items: kdjIndicatorFixture.items.map((item, index) => index === 0
+        ? {
+            ...item,
+            k_value: 84.2,
+            d_value: 81.1,
+            j_value: 90.4,
+            signal_type: "death_cross" as const,
+            signal_zone: "high" as const,
+            current_zone: "overbought" as const,
+          }
+        : item),
+    };
     const option = buildKlineOption(
       dailyBarsFixture,
       undefined,
       macdIndicatorFixture,
-      kdjIndicatorFixture,
+      kdjWithBothCrosses,
     );
     const grids = option.grid as unknown[];
     const axes = option.xAxis as unknown[];
@@ -104,15 +174,17 @@ describe("KlineChart", () => {
       markLine?: {
         data: Array<{
           name: string;
-          yAxis: number;
-          lineStyle: { color: string; type: string };
-          label: { position: string };
+          yAxis?: number;
+          xAxis?: string;
+          lineStyle: { color: string; type: string; opacity?: number };
+          label: { formatter?: string; position: string };
         }>;
       };
       markArea?: { data: Array<Array<{ name?: string; yAxis: number }>> };
       markPoint?: { data: Array<{ name: string; coord: [string, number] }> };
     }>;
     const kLine = chartSeries.find((item) => item.name === "K");
+    const diffLine = chartSeries.find((item) => item.name === "DIFF");
 
     expect(grids).toHaveLength(4);
     expect(axes).toHaveLength(4);
@@ -127,7 +199,7 @@ describe("KlineChart", () => {
       "D",
       "J",
     ]);
-    expect(kLine?.markLine?.data).toEqual([
+    expect(kLine?.markLine?.data).toEqual(expect.arrayContaining([
       expect.objectContaining({
         name: "20 超卖线",
         yAxis: 20,
@@ -140,15 +212,27 @@ describe("KlineChart", () => {
         lineStyle: expect.objectContaining({ color: "#e5484d", type: "dashed" }),
         label: expect.objectContaining({ position: "insideEndBottom" }),
       }),
-    ]);
+    ]));
     expect(kLine?.markArea?.data).toEqual([
       [expect.objectContaining({ name: "超卖区", yAxis: 0 }), { yAxis: 20 }],
       [expect.objectContaining({ name: "普通区", yAxis: 20 }), { yAxis: 80 }],
       [expect.objectContaining({ name: "超买区", yAxis: 80 }), { yAxis: 100 }],
     ]);
-    expect(kLine?.markPoint?.data).toEqual([
-      expect.objectContaining({ name: "金叉", coord: ["2026-08-04T15:00:00+08:00", 18.2] }),
-    ]);
+    expect(kLine?.markPoint).toBeUndefined();
+    const kdjGoldenLine = kLine?.markLine?.data.find((item) => item.name === "KDJ 金叉");
+    const kdjDeathLine = kLine?.markLine?.data.find((item) => item.name === "KDJ 死叉");
+    const macdGoldenLine = diffLine?.markLine?.data.find((item) => item.name === "MACD 金叉");
+    expect(kdjGoldenLine).toEqual(expect.objectContaining({
+      xAxis: "2026-08-04T15:00:00+08:00",
+      label: expect.objectContaining({ formatter: "金叉\n08-04", position: "end" }),
+      lineStyle: expect.objectContaining({ color: "#e5484d", type: "dashed" }),
+    }));
+    expect(kdjDeathLine).toEqual(expect.objectContaining({
+      xAxis: "2026-08-01T15:00:00+08:00",
+      label: expect.objectContaining({ formatter: "死叉\n08-01", position: "end" }),
+      lineStyle: expect.objectContaining({ color: "#16a36f", type: "dashed" }),
+    }));
+    expect(kdjGoldenLine?.lineStyle).toEqual(macdGoldenLine?.lineStyle);
   });
 
   test("KDJ 纵轴允许 J 超出 0 到 100 且提示框显示信号区域", () => {
