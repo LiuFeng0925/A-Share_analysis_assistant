@@ -279,6 +279,7 @@ describe("KlineChart", () => {
     );
     const grids = option.grid as unknown[];
     const axes = option.xAxis as unknown[];
+    const yAxes = option.yAxis as Array<{ position?: string }>;
     const zoom = option.dataZoom as Array<{ xAxisIndex?: number[] }>;
     const chartSeries = option.series as Array<{
       name: string;
@@ -303,6 +304,7 @@ describe("KlineChart", () => {
 
     expect(grids).toHaveLength(4);
     expect(axes).toHaveLength(4);
+    expect(yAxes[3].position).toBe("left");
     expect(zoom[0].xAxisIndex).toEqual([0, 1, 2, 3]);
     expect(chartSeries.map((item) => item.name)).toEqual([
       "K 线",
@@ -339,12 +341,20 @@ describe("KlineChart", () => {
     const macdGoldenLine = diffLine?.markLine?.data.find((item) => item.name.includes("MACD 金叉"));
     expect(kdjGoldenLine).toEqual(expect.objectContaining({
       xAxis: "2026-08-04T15:00:00+08:00",
-      label: expect.objectContaining({ show: false }),
+      label: expect.objectContaining({
+        show: true,
+        formatter: "金叉\n08-04",
+        position: "end",
+      }),
       lineStyle: expect.objectContaining({ color: "#e5484d", type: "dashed" }),
     }));
     expect(kdjDeathLine).toEqual(expect.objectContaining({
       xAxis: "2026-08-01T15:00:00+08:00",
-      label: expect.objectContaining({ show: false }),
+      label: expect.objectContaining({
+        show: true,
+        formatter: "死叉\n08-01",
+        position: "end",
+      }),
       lineStyle: expect.objectContaining({ color: "#16a36f", type: "dashed" }),
     }));
     expect(kdjGoldenLine?.lineStyle).toEqual(macdGoldenLine?.lineStyle);

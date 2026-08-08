@@ -427,7 +427,7 @@ export function buildKlineOption(
     "KDJ",
     activeKdj?.items ?? [],
     categories,
-  ).map((line) => ({ ...line, showLabel: false })));
+  ));
   const pricePivotMarks = [
     ...buildPlainPivotMarks(series),
     ...buildDivergencePriceMarks(divergences, categories),
@@ -593,7 +593,7 @@ export function buildKlineOption(
             {
               scale: true,
               gridIndex: kdjAxisIndex,
-              position: "right" as const,
+              position: "left" as const,
               min: (extent: { min: number }) => Math.min(0, Math.floor(extent.min - 5)),
               max: (extent: { max: number }) => Math.max(100, Math.ceil(extent.max + 5)),
               splitLine: { show: false },
