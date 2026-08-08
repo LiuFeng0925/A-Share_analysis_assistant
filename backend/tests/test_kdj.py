@@ -4,9 +4,15 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from a_share_radar.domain.indicators import KdjQuality, KdjSignal, KdjSignalZone, KdjZone
+from a_share_radar.domain.indicators import (
+    KdjPoint,
+    KdjQuality,
+    KdjSignal,
+    KdjSignalZone,
+    KdjZone,
+)
 from a_share_radar.domain.models import Bar, Market, QualityStatus
-from a_share_radar.services.kdj import calculate_kdj_series
+from a_share_radar.services.kdj import _signal, calculate_kdj_series
 from a_share_radar.storage.repository import StockQuoteRow
 
 TZ = ZoneInfo("Asia/Shanghai")
@@ -142,6 +148,29 @@ def test_kdj_records_high_death_cross():
     assert len(death_points) == 1
     assert death_points[0].signal_zone is KdjSignalZone.HIGH
     assert result.summary.signal_type is KdjSignal.DEATH_CROSS
+
+
+def test_kdj_signal_requires_j_line_to_join_the_same_cross():
+    previous = result_point(k_value=12.0, d_value=18.0, j_value=30.0)
+
+    assert _signal(previous, 19.0, 18.0, 21.0) is KdjSignal.NONE
+
+
+def result_point(*, k_value: float, d_value: float, j_value: float) -> KdjPoint:
+    return KdjPoint(
+        market=Market.SH,
+        code="600519",
+        period="1d",
+        bar_time=NOW,
+        k_value=k_value,
+        d_value=d_value,
+        j_value=j_value,
+        signal_type=KdjSignal.NONE,
+        signal_zone=KdjSignalZone.UNKNOWN,
+        current_zone=KdjZone.NEUTRAL,
+        is_intraday=False,
+        quality=KdjQuality.OK,
+    )
 
 
 def test_kdj_does_not_clamp_extreme_j_values():

@@ -111,13 +111,14 @@ test("详情页展示 MACD 结果并把日线指标传给 K 线副图", async ()
   );
 });
 
-test("详情页展示 KDJ 数值、区域、信号时间并传给副图", async () => {
+test("详情页用紧凑交互样式展示 KDJ 交叉、区域和信号时间", async () => {
   renderDetail();
 
   expect(await screen.findByText("KDJ 指标 · 日K")).toBeInTheDocument();
-  expect(screen.getByText("K 18.20")).toBeInTheDocument();
-  expect(screen.getByText("D 17.10")).toBeInTheDocument();
-  expect(screen.getByText("J 20.40")).toBeInTheDocument();
+  expect(screen.getByText("KDJ 交叉")).toBeInTheDocument();
+  expect(screen.queryByText("K 18.20")).not.toBeInTheDocument();
+  expect(screen.queryByText("D 17.10")).not.toBeInTheDocument();
+  expect(screen.queryByText("J 20.40")).not.toBeInTheDocument();
   expect(screen.getByText("超卖区")).toBeInTheDocument();
   expect(screen.getByText("低位")).toBeInTheDocument();
   expect(screen.getAllByText("盘中动态").length).toBeGreaterThanOrEqual(1);
@@ -240,11 +241,12 @@ test("KDJ 静默刷新失败时保留上次成功结果", async () => {
     .mockRejectedValueOnce(new Error("KDJ 临时失败"));
   renderDetail();
   await act(async () => Promise.resolve());
-  expect(screen.getByText("K 18.20")).toBeInTheDocument();
+  expect(screen.getByText("KDJ 交叉")).toBeInTheDocument();
+  expect(screen.getByText("盘中金叉")).toBeInTheDocument();
 
   await act(async () => vi.advanceTimersByTimeAsync(60_000));
 
-  expect(screen.getByText("K 18.20")).toBeInTheDocument();
+  expect(screen.getByText("盘中金叉")).toBeInTheDocument();
   expect(screen.getByText(/KDJ 刷新失败/)).toBeInTheDocument();
 });
 

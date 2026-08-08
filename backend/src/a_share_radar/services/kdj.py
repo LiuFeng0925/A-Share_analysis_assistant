@@ -71,7 +71,7 @@ def calculate_kdj_series(
         k_value = previous_k * 2 / 3 + rsv / 3
         d_value = previous_d * 2 / 3 + k_value / 3
         j_value = 3 * k_value - 2 * d_value
-        signal_type = _signal(previous_point, k_value, d_value)
+        signal_type = _signal(previous_point, k_value, d_value, j_value)
         is_intraday = has_intraday and index == len(calculation_bars) - 1
         point = KdjPoint(
             market=item.market,
@@ -168,12 +168,36 @@ def _insufficient_calculation(
     )
 
 
-def _signal(previous: KdjPoint | None, k_value: float, d_value: float) -> KdjSignal:
-    if previous is None or previous.k_value is None or previous.d_value is None:
+def _signal(
+    previous: KdjPoint | None,
+    k_value: float,
+    d_value: float,
+    j_value: float,
+) -> KdjSignal:
+    if (
+        previous is None
+        or previous.k_value is None
+        or previous.d_value is None
+        or previous.j_value is None
+    ):
         return KdjSignal.NONE
-    if previous.k_value <= previous.d_value and k_value > d_value:
+    previous_j_below_pair = previous.j_value <= min(previous.k_value, previous.d_value)
+    previous_j_above_pair = previous.j_value >= max(previous.k_value, previous.d_value)
+    current_j_above_pair = j_value >= max(k_value, d_value)
+    current_j_below_pair = j_value <= min(k_value, d_value)
+    if (
+        previous.k_value <= previous.d_value
+        and previous_j_below_pair
+        and k_value > d_value
+        and current_j_above_pair
+    ):
         return KdjSignal.GOLDEN_CROSS
-    if previous.k_value >= previous.d_value and k_value < d_value:
+    if (
+        previous.k_value >= previous.d_value
+        and previous_j_above_pair
+        and k_value < d_value
+        and current_j_below_pair
+    ):
         return KdjSignal.DEATH_CROSS
     return KdjSignal.NONE
 

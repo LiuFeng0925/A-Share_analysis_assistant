@@ -193,7 +193,8 @@ test("从全部股票搜索进入详情并查看今日一分钟 K", async ({ pag
   await expect(page.getByRole("heading", { name: "MACD 指标 · 日K" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "KDJ 指标 · 日K" })).toBeVisible();
   await expect.poll(() => dailyMacdHasDivergences).toBe(true);
-  await expect(page.getByLabel("KDJ 当前值")).toBeVisible();
+  await expect(page.getByLabel("KDJ 交叉")).toBeVisible();
+  await expect(page.locator(".kdj-card").getByText(/金叉|死叉|暂无/).first()).toBeVisible();
   await expect(page.getByText(/KDJ 虚线为 20\/80 区域边界/)).toBeVisible();
 
   await page.getByRole("button", { name: "周K" }).click();
@@ -249,7 +250,7 @@ test("从全部股票搜索进入详情并查看今日一分钟 K", async ({ pag
   await expect(thirtyMinuteChart).toBeVisible();
   await expect(page.getByRole("heading", { name: "MACD 指标 · 30分" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "KDJ 指标 · 30分" })).toBeVisible();
-  await expect(page.locator(".kdj-card").getByLabel("KDJ 当前值")).toBeVisible();
+  await expect(page.locator(".kdj-card").getByLabel("KDJ 交叉")).toBeVisible();
   const initialThirtyMinuteLabel = await thirtyMinuteChart.getAttribute("aria-label");
   const initialThirtyMinuteCount = Number(initialThirtyMinuteLabel?.match(/共 (\d+) 根/)?.[1]);
   const kdjRequestsBeforeThirtyMinuteRefresh = thirtyMinuteKdjRequestCount;

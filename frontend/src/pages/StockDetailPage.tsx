@@ -819,39 +819,38 @@ export function StockDetailPage() {
             <div className="indicator-state is-error" role="alert">{kdjError}</div>
           ) : kdjSummary ? (
             <>
-              <div className="kdj-values" aria-label="KDJ 当前值">
-                <strong>K {formatMarketNumber(kdjSummary.k_value)}</strong>
-                <strong>D {formatMarketNumber(kdjSummary.d_value)}</strong>
-                <strong>J {formatMarketNumber(kdjSummary.j_value)}</strong>
-              </div>
-              <strong className={`indicator-main-signal ${macdSignalTone(kdjSummary.signal_type)}`}>
-                {kdjSummary.recent_signal_label}
-              </strong>
-              <dl className="indicator-summary-tags kdj-summary-tags">
-                <div>
-                  <dt>当前区域</dt>
-                  <dd>{kdjZoneLabel(kdjSummary.current_zone)}</dd>
-                </div>
-                <div>
-                  <dt>交叉区域</dt>
-                  <dd>{kdjSignalZoneLabel(kdjSummary.signal_zone)}</dd>
-                </div>
-                <div>
-                  <dt>信号时间</dt>
-                  <dd>{formatShanghaiDateTime(kdjSummary.signal_time)}</dd>
-                </div>
-                <div>
-                  <dt>信号状态</dt>
-                  <dd>
+              <section className="indicator-result-group" aria-label="KDJ 交叉">
+                <span>KDJ 交叉</span>
+                <div className="indicator-result-tags">
+                  <strong className={`indicator-tag ${macdSignalTone(kdjSummary.signal_type)}`}>
+                    {kdjSummary.recent_signal_label}
+                  </strong>
+                  <strong className="indicator-tag is-neutral">
+                    {kdjSignalZoneLabel(kdjSummary.signal_zone)}
+                  </strong>
+                  <span className="indicator-meta-text">
+                    {kdjSummary.signal_type === "none" || !kdjSummary.signal_time
+                      ? "暂无信号时间"
+                      : formatShanghaiDateTime(kdjSummary.signal_time)}
+                  </span>
+                  <span className="indicator-meta-text">
                     {kdjSummary.signal_type === "none" || !kdjSummary.signal_time
                       ? "暂无信号"
                       : kdjSignalIsIntraday
                         ? "盘中动态"
                         : "已确认"}
-                  </dd>
+                  </span>
                 </div>
-              </dl>
-              {hasExtremeJ && <span className="kdj-extreme">短期动能极端</span>}
+              </section>
+              <section className="indicator-result-group" aria-label="KDJ 区域">
+                <span>KDJ 区域</span>
+                <div className="indicator-result-tags">
+                  <strong className="indicator-tag is-neutral">
+                    {kdjZoneLabel(kdjSummary.current_zone)}
+                  </strong>
+                  {hasExtremeJ && <strong className="indicator-tag is-neutral">短期动能极端</strong>}
+                </div>
+              </section>
               {kdjError && <span className="indicator-refresh-note" role="alert">{kdjError}</span>}
             </>
           ) : (
