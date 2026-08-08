@@ -421,12 +421,8 @@ export function StockListPage() {
         </div>
 
         <div className="indicator-filter-bar" aria-label="MACD 指标筛选">
-          <span className="indicator-filter-title">
-            <small>指标筛选</small>
-            日 K MACD 雷达
-          </span>
           <label className="indicator-filter">
-            <span>日 K MACD 信号</span>
+            <span className="sr-only">日 K MACD 信号</span>
             <select
               aria-label="日 K MACD 信号"
               value={macdSignalSelection}
@@ -500,15 +496,8 @@ export function StockListPage() {
         </div>
 
         <div className="indicator-filter-bar is-kdj" aria-label="KDJ 指标筛选">
-          <span className="indicator-filter-title">
-            <small>指标筛选</small>
-            日 K KDJ 雷达
-          </span>
-          <span className="indicator-filter-note">
-            按日 K 的 K、D 实际交叉筛选，可组合低位、中位或高位区域。
-          </span>
           <label className="indicator-filter">
-            <span>日 K KDJ 信号</span>
+            <span className="sr-only">日 K KDJ 信号</span>
             <select
               aria-label="日 K KDJ 信号"
               value={kdjSignal}

@@ -78,7 +78,7 @@ describe("KlineChart", () => {
     expect(series[4]).toEqual(expect.objectContaining({ type: "bar" }));
   });
 
-  test("MACD 背离只在副图标记，K 线主图只保留普通价格高低点", () => {
+  test("MACD 背离价格锚点标在 K 线主图，MACD 副图不显示前低新低文字", () => {
     const dailyBarsWithBothPivots = {
       ...dailyBarsFixture,
       items: [
@@ -140,16 +140,18 @@ describe("KlineChart", () => {
 
     expect(priceLines).toBeUndefined();
     expect(diffMarks).toBeUndefined();
-    expect(diffLines?.map((line) => line.label.formatter)).toEqual(expect.arrayContaining([
-      "前低1/前高1\n08-01",
-      "前低2/背离低点/确认/前高2/背离高点/金叉\n08-04",
-    ]));
+    expect(diffLines?.map((line) => line.label.formatter).join(" ")).not.toContain("前低");
+    expect(diffLines?.map((line) => line.label.formatter).join(" ")).not.toContain("新低");
     const priceMarkNames = priceMarks?.map((mark) => mark.name) ?? [];
-    expect(priceMarkNames).not.toEqual(expect.arrayContaining([
-      "底背离前低1",
-      "底背离前低2",
-      "底背离低点",
-      "底背离确认",
+    expect(priceMarkNames).toEqual(expect.arrayContaining([
+      "底背离前低",
+      "底背离新低",
+      "顶背离前高",
+      "顶背离新高",
+    ]));
+    expect(priceMarks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ coord: ["2026-08-01T15:00:00+08:00", 1315.04], value: "前低" }),
+      expect.objectContaining({ coord: ["2026-08-04T15:00:00+08:00", 1330.06], value: "新低" }),
     ]));
   });
 
@@ -281,15 +283,19 @@ describe("KlineChart", () => {
     const chartSeries = option.series as Array<{
       name: string;
       markLine?: {
+        label?: { show?: boolean };
         data: Array<{
           name: string;
           yAxis?: number;
           xAxis?: string;
           lineStyle: { color: string; type: string; opacity?: number };
-          label: { formatter?: string; position: string };
+          label?: { show?: boolean; formatter?: string; position: string };
         }>;
       };
-      markArea?: { data: Array<Array<{ name?: string; yAxis: number }>> };
+      markArea?: {
+        label?: { show?: boolean };
+        data: Array<Array<{ name?: string; yAxis: number }>>;
+      };
       markPoint?: { data: Array<{ name: string; coord: [string, number] }> };
     }>;
     const kLine = chartSeries.find((item) => item.name === "K");
@@ -313,32 +319,32 @@ describe("KlineChart", () => {
         name: "20 超卖线",
         yAxis: 20,
         lineStyle: expect.objectContaining({ color: "#16a36f", type: "dashed" }),
-        label: expect.objectContaining({ position: "insideEndTop" }),
       }),
       expect.objectContaining({
         name: "80 超买线",
         yAxis: 80,
         lineStyle: expect.objectContaining({ color: "#e5484d", type: "dashed" }),
-        label: expect.objectContaining({ position: "insideEndBottom" }),
       }),
     ]));
+    expect(kLine?.markLine?.label).toEqual(expect.objectContaining({ show: false }));
     expect(kLine?.markArea?.data).toEqual([
       [expect.objectContaining({ name: "超卖区", yAxis: 0 }), { yAxis: 20 }],
       [expect.objectContaining({ name: "普通区", yAxis: 20 }), { yAxis: 80 }],
       [expect.objectContaining({ name: "超买区", yAxis: 80 }), { yAxis: 100 }],
     ]);
+    expect(kLine?.markArea?.label).toEqual(expect.objectContaining({ show: false }));
     expect(kLine?.markPoint).toBeUndefined();
     const kdjGoldenLine = kLine?.markLine?.data.find((item) => item.name === "KDJ 金叉");
     const kdjDeathLine = kLine?.markLine?.data.find((item) => item.name === "KDJ 死叉");
     const macdGoldenLine = diffLine?.markLine?.data.find((item) => item.name.includes("MACD 金叉"));
     expect(kdjGoldenLine).toEqual(expect.objectContaining({
       xAxis: "2026-08-04T15:00:00+08:00",
-      label: expect.objectContaining({ formatter: "金叉\n08-04", position: "end" }),
+      label: expect.objectContaining({ show: false }),
       lineStyle: expect.objectContaining({ color: "#e5484d", type: "dashed" }),
     }));
     expect(kdjDeathLine).toEqual(expect.objectContaining({
       xAxis: "2026-08-01T15:00:00+08:00",
-      label: expect.objectContaining({ formatter: "死叉\n08-01", position: "end" }),
+      label: expect.objectContaining({ show: false }),
       lineStyle: expect.objectContaining({ color: "#16a36f", type: "dashed" }),
     }));
     expect(kdjGoldenLine?.lineStyle).toEqual(macdGoldenLine?.lineStyle);

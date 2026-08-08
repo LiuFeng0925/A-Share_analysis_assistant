@@ -158,7 +158,7 @@ test("从全部股票搜索进入详情并查看今日一分钟 K", async ({ pag
   await expect(page.getByRole("columnheader", { name: "今日区间" })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "更新时间" })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "日 K KDJ" })).toBeVisible();
-  await expect(page.getByText("日 K KDJ 雷达")).toBeVisible();
+  await expect(page.getByText("日 K KDJ 雷达")).toHaveCount(0);
 
   await page.getByLabel("日 K KDJ 信号").selectOption("golden_cross");
   await page.getByLabel("KDJ 交叉区域").selectOption("low");

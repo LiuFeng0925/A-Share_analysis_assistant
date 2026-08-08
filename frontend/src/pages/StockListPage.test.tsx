@@ -120,7 +120,9 @@ test("MACD 筛选收敛为单行控件并移除说明文案", async () => {
   );
 
   await screen.findByRole("row", { name: /贵州茅台/ });
-  expect(screen.getByText("日 K MACD 雷达")).toBeInTheDocument();
+  expect(screen.queryByText("指标筛选")).not.toBeInTheDocument();
+  expect(screen.queryByText("日 K MACD 雷达")).not.toBeInTheDocument();
+  expect(screen.getByText("日 K MACD 信号")).toHaveClass("sr-only");
   expect(screen.queryByText("近 5 个交易日内，按日 K 的最后一次 MACD 交叉信号筛选。")).not.toBeInTheDocument();
   expect(screen.getByRole("option", { name: "近 5 日金叉" })).toBeInTheDocument();
   expect(screen.getByRole("option", { name: "近 5 日死叉" })).toBeInTheDocument();
@@ -155,7 +157,9 @@ test("支持日 K KDJ 信号、交叉区域和最近出现时间组合筛选", a
   );
 
   await screen.findByRole("row", { name: /贵州茅台/ });
-  expect(screen.getByText("日 K KDJ 雷达")).toBeInTheDocument();
+  expect(screen.queryByText("日 K KDJ 雷达")).not.toBeInTheDocument();
+  expect(screen.queryByText("按日 K 的 K、D 实际交叉筛选，可组合低位、中位或高位区域。")).not.toBeInTheDocument();
+  expect(screen.getByText("日 K KDJ 信号")).toHaveClass("sr-only");
   fireEvent.change(screen.getByLabelText("日 K KDJ 信号"), {
     target: { value: "golden_cross" },
   });

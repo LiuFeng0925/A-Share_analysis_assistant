@@ -106,6 +106,7 @@ function namedMarkPoint({
   direction,
   weak = false,
   symbolSize = 7,
+  showLabel = false,
 }: {
   name: string;
   time: string;
@@ -114,12 +115,13 @@ function namedMarkPoint({
   direction: "bottom" | "top";
   weak?: boolean;
   symbolSize?: number;
+  showLabel?: boolean;
 }) {
   if (!isFiniteNumber(value)) return null;
   const tone = macdEventTone(direction);
   return {
     name,
-    coord: [time, value],
+    coord: [time, value] as [string, number],
     value: label,
     symbol: "circle",
     symbolSize,
@@ -129,7 +131,15 @@ function namedMarkPoint({
       borderWidth: 1,
     },
     label: {
-      show: false,
+      show: showLabel,
+      formatter: "{c}",
+      position: direction === "bottom" ? "bottom" as const : "top" as const,
+      color: tone.color,
+      fontSize: 10,
+      fontWeight: 800,
+      backgroundColor: "rgba(255, 255, 255, 0.88)",
+      borderRadius: 3,
+      padding: [2, 4] as [number, number],
     },
     tooltip: {
       formatter: `${name}<br />${formatShanghaiDateTime(time)}<br />数值 ${formatMarketNumber(value)}`,
@@ -143,6 +153,7 @@ interface VerticalLineDraft {
   label: string;
   direction: "bottom" | "top";
   weak?: boolean;
+  showLabel?: boolean;
 }
 
 function namedVerticalLine({
@@ -151,13 +162,14 @@ function namedVerticalLine({
   label,
   direction,
   weak = false,
+  showLabel = true,
 }: VerticalLineDraft) {
   const tone = macdEventTone(direction);
   return {
     name,
     xAxis: time,
     label: {
-      show: true,
+      show: showLabel,
       formatter: `${label}\n${shortShanghaiDate(time)}`,
       position: "end" as const,
       color: tone.color,
@@ -196,6 +208,7 @@ function mergeVerticalLines(lines: VerticalLineDraft[]) {
     if (!current.labels.includes(line.label)) current.labels.push(line.label);
     current.names.push(line.name);
     current.weak = current.weak && line.weak;
+    current.showLabel = (current.showLabel ?? true) && (line.showLabel ?? true);
   });
   return Array.from(byTime.values()).map((line) => namedVerticalLine({
     name: line.names.join(" / "),
@@ -203,6 +216,7 @@ function mergeVerticalLines(lines: VerticalLineDraft[]) {
     label: line.labels.join("/"),
     direction: line.direction,
     weak: line.weak,
+    showLabel: line.showLabel,
   }));
 }
 
@@ -273,46 +287,34 @@ function tooltipContent(
   ].filter(Boolean).join("<br />");
 }
 
-function buildDiffEventLines(events: MacdDivergence[], categories: string[]): VerticalLineDraft[] {
+function buildDivergencePriceMarks(events: MacdDivergence[], categories: string[]) {
   return events.flatMap((event) => {
     const directionName = event.direction === "bottom" ? "底背离" : "顶背离";
-    const anchorLabel = event.direction === "bottom"
-      ? { one: "前低1", two: "前低2", pivot: "背离低点" }
-      : { one: "前高1", two: "前高2", pivot: "背离高点" };
-    const confirmationTime = event.confirmed_at
-      ? chartTimeFor(event.confirmed_at, categories)
-      : null;
+    const labels = event.direction === "bottom"
+      ? { previous: "前低", fresh: "新低" }
+      : { previous: "前高", fresh: "新高" };
 
     return [
-      {
-        name: `${directionName}DIFF${anchorLabel.one}`,
+      namedMarkPoint({
+        name: `${directionName}${labels.previous}`,
         time: chartTimeFor(event.anchor_one_time, categories),
-        label: anchorLabel.one,
+        value: event.anchor_one_price,
+        label: labels.previous,
         direction: event.direction,
         weak: true,
-      },
-      {
-        name: `${directionName}DIFF${anchorLabel.two}`,
+        symbolSize: 6,
+        showLabel: true,
+      }),
+      namedMarkPoint({
+        name: `${directionName}${labels.fresh}`,
         time: chartTimeFor(event.anchor_two_time, categories),
-        label: anchorLabel.two,
+        value: event.anchor_two_price,
+        label: labels.fresh,
         direction: event.direction,
-        weak: true,
-      },
-      {
-        name: `${directionName}DIFF${anchorLabel.pivot}`,
-        time: chartTimeFor(event.pivot_time, categories),
-        label: anchorLabel.pivot,
-        direction: event.direction,
-      },
-      ...(confirmationTime
-        ? [{
-            name: `${directionName}DIFF确认`,
-            time: confirmationTime,
-            label: "确认",
-            direction: event.direction,
-          }]
-        : []),
-    ];
+        symbolSize: 7,
+        showLabel: true,
+      }),
+    ].filter((mark): mark is NonNullable<typeof mark> => mark !== null);
   });
 }
 
@@ -420,17 +422,17 @@ export function buildKlineOption(
   const dValues = categories.map((time) => kdjByTime.get(time)?.d_value ?? null);
   const jValues = categories.map((time) => kdjByTime.get(time)?.j_value ?? null);
   const kdjAxisIndex = hasMacd ? 3 : 2;
+  const divergences = series.period === "1d" ? activeMacd?.divergences ?? [] : [];
   const kdjCrossLines = mergeVerticalLines(buildIndicatorCrossLines(
     "KDJ",
     activeKdj?.items ?? [],
     categories,
-  ));
-  const divergences = series.period === "1d" ? activeMacd?.divergences ?? [] : [];
-  const pricePivotMarks = buildPlainPivotMarks(series);
-  const diffDivergenceLines = mergeVerticalLines([
-    ...buildDiffEventLines(divergences, categories),
-    ...buildMacdCrossLines(activeMacd, categories),
-  ]);
+  ).map((line) => ({ ...line, showLabel: false })));
+  const pricePivotMarks = [
+    ...buildPlainPivotMarks(series),
+    ...buildDivergencePriceMarks(divergences, categories),
+  ];
+  const diffDivergenceLines = mergeVerticalLines(buildMacdCrossLines(activeMacd, categories));
   const axisLabelFormatter = (value: string) =>
     formatShanghaiAxisLabel(value, series.period, series.range);
   const linkedAxes = Array.from({ length: 2 + Number(hasMacd) + Number(hasKdj) }, (_, i) => i);
@@ -684,33 +686,25 @@ export function buildKlineOption(
                 silent: true,
                 symbol: "none",
                 label: {
-                  show: true,
-                  color: "#596579",
-                  fontSize: 10,
-                  backgroundColor: "rgba(255, 255, 255, 0.9)",
-                  borderRadius: 3,
-                  padding: [2, 4],
-                  formatter: "{b}",
+                  show: false,
                 },
                 data: [
                   {
                     name: "20 超卖线",
                     yAxis: 20,
                     lineStyle: { type: "dashed" as const, width: 1.6, color: "#16a36f" },
-                    label: { position: "insideEndTop" as const },
                   },
                   {
                     name: "80 超买线",
                     yAxis: 80,
                     lineStyle: { type: "dashed" as const, width: 1.6, color: "#e5484d" },
-                    label: { position: "insideEndBottom" as const },
                   },
                   ...kdjCrossLines,
                 ],
               },
               markArea: {
                 silent: true,
-                label: { show: true, position: "insideLeft" as const, color: "#7b8494" },
+                label: { show: false },
                 data: [
                   [
                     { name: "超卖区", yAxis: 0, itemStyle: { color: "rgba(22, 163, 111, 0.08)" } },
